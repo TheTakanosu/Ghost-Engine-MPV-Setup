@@ -9,7 +9,9 @@
  */
 
 import { spawn } from "child_process";
-import { IpcMainInvokeEvent } from "electron";
+// A type-only import: Node strips it entirely, which is what lets the
+// validator below be imported by a test without pulling in Electron.
+import type { IpcMainInvokeEvent } from "electron";
 import { existsSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -45,7 +47,7 @@ const YOUTUBE_WATCH_RE = /^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{1
  *  and friends read from the local disk. Naming the two shapes that are allowed
  *  excludes all of them without guessing at a blocklist.
  */
-function entryAllowed(line: string): boolean {
+export function entryAllowed(line: string): boolean {
     // Control characters have no business in a URL and can confuse a parser.
     if (/[\u0000-\u001f\u007f]/.test(line)) return false;
 

@@ -1,0 +1,81 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validator:
+    name: playlist validator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run the validator tests
+        # No install step and no dependencies: Node strips the types and runs
+        # the same source the plugin ships, so the thing under test is the
+        # thing that gets installed.
+        run: node --test "tests/*.test.ts"
+
+  scripts:
+    name: installer scripts
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse the PowerShell with Windows PowerShell 5.1
+        # 5.1 is what ships with Windows and what install.bat invokes. Parsing
+        # with anything newer would accept syntax that fails on the machines
+        # this actually runs on.
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              $errors | ForEach-Object { Write-Host "::error file=$($_.Extent.File),line=$($_.Extent.StartLineNumber)::$($_.Message)" }
+            } else {
+              Write-Host "ok  $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: No binaries in the tree
+        # The whole point of this repo is that it ships no executables and
+        # fetches them from the projects that publish them, verified. A stray
+        # .exe would quietly undo that promise.
+        shell: powershell
+        run: |
+          $binaries = Get-ChildItem -Recurse -File |
+            Where-Object { $_.Extension -in ".exe", ".dll", ".7z", ".zip", ".msi", ".com" }
+          if ($binaries) {
+            $binaries | ForEach-Object { Write-Host "::error::$($_.FullName) is a binary and must not be committed" }
+            exit 1
+          }
+          Write-Host "no binaries committed"
+
+      - name: The installer has a payload to install
+        shell: powershell
+        run: |
+          $needed = @(
+            "mpv\mpv.conf",
+            "mpv\ghost_rpc.py",
+            "mpv\update.ps1",
+            "mpv\scripts\ghost.lua",
+            "mpv\scripts\rpc_exporter.lua",
+            "mpv\scripts\updatecheck.lua"
+          )
+          $missing = $needed | Where-Object { -not (Test-Path $_) }
+          if ($missing) {
+            $missing | ForEach-Object { Write-Host "::error::$_ is missing" }
+            exit 1
+          }
+          Write-Host "payload complete"

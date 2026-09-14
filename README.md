@@ -1,5 +1,7 @@
 # Ghost Engine MPV Setup
 
+[![tests](https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/actions/workflows/ci.yml/badge.svg)](https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/actions/workflows/ci.yml)
+
 Watch and listen to YouTube on your own machine instead of in a browser tab —
 on the second monitor, in the background, without a browser eating your RAM.
 
@@ -144,6 +146,12 @@ bot and this setup both work completely without it. Its README covers what it
 does, how to build it, and the threat model — it hands things from Discord to a
 local process, so who is allowed to trigger that is spelled out rather than
 assumed.
+
+The part of it that decides what may reach your player has its own tests, run on
+every push: nineteen hostile entries that must be refused — `file://`, `edl://`,
+UNC shares, a scheme smuggled behind `ytdl://` — and nine real ones that must
+keep working. `npm test`, or `node --test "tests/*.test.ts"`; no dependencies,
+because Node runs the plugin's own source.
 
 ---
 
