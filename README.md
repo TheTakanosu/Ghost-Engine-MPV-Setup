@@ -26,6 +26,16 @@ configuration that:
 2. Unpack it anywhere
 3. Double-click **`install.bat`**
 
+That is the whole list. There is exactly one thing to run, and the folder you
+unpack has exactly two things you might click — `install.bat` and
+`uninstall.bat`. Everything else is either the payload it installs or the
+PowerShell it calls, tucked into `lib/` so it is not in your way.
+
+`ghost_rpc.bat` and `update.bat` end up in the install folder afterwards. **You
+do not run those to set anything up** — the first prints what the presence agent
+is doing when you want to know why it is quiet, and mpv tells you when the
+second is worth running.
+
 It asks where to install (`C:\mpv` by default), whether you want node, Rich
 Presence and file associations, and then it is done. Takes under a minute on a
 normal connection. No administrator rights.
@@ -35,6 +45,28 @@ shipping `tar.exe`, which is what unpacks mpv.
 
 Undo it with **`uninstall.bat`**, which deletes the install folder and nothing
 else.
+
+### Linux and macOS
+
+The installer is Windows-only — it is a `.bat` that leans on `tar.exe` and the
+Windows mpv builds. **Everything it installs is not.** mpv, the Lua scripts, the
+Python presence agent and the `.m3u` files the bot produces all work the same on
+Linux and macOS, so the setup is a copy rather than an installer:
+
+```bash
+# mpv from your package manager, with yt-dlp beside it
+sudo apt install mpv yt-dlp        # or: brew install mpv yt-dlp
+pip install --user pypresence      # only if you want Rich Presence
+
+# then drop the payload into mpv's config folder
+mkdir -p ~/.config/mpv
+cp -r mpv/* ~/.config/mpv/
+```
+
+`rpc_exporter.lua` already looks for `python3` on those platforms, and GhostPlay
+already knows where mpv usually lives on each. A native installer for them is
+worth writing if people ask for it; until then this is four commands and it is
+the same set of files.
 
 ---
 
