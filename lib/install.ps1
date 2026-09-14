@@ -74,7 +74,11 @@ if (-not (Test-Path $tar)) {
     exit 1
 }
 
-$payload = Join-Path $PSScriptRoot "mpv"
+# This script lives in lib/ so that the folder people unpack has two
+# things in it they might click and both are .bat files. The payload is
+# one level up.
+$root = Split-Path $PSScriptRoot -Parent
+$payload = Join-Path $root "mpv"
 if (-not (Test-Path (Join-Path $payload "mpv.conf"))) {
     Say "Could not find the mpv folder next to this script." "Red"
     Say "Unpack the whole release zip and run install.bat from inside it." "Red"

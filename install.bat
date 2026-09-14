@@ -11,7 +11,7 @@ REM  yt-dlp is checked against its published SHA-256 before it is installed.
 REM
 REM  Undo it with uninstall.bat.
 REM ==========================================================================
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lib\install.ps1" %*
 if errorlevel 1 (
     echo.
     echo   Setup did not finish. The reason is printed above.
