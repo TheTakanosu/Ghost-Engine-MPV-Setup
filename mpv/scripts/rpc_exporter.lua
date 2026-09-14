@@ -93,7 +93,14 @@ local function start_agent(index)
 
     mp.command_native_async({
         name = "subprocess",
-        args = {INTERPRETERS[index], "-u", AGENT},
+        -- The bridge path is handed over rather than worked out twice.
+        -- `~~/` is mpv's *config* directory, which is %APPDATA%\mpv whenever
+        -- that folder exists - not the folder mpv.exe sits in. The agent
+        -- resolves paths relative to itself, so each side reached a different
+        -- file and the presence silently never appeared. Measured, not
+        -- guessed: expand-path returned %APPDATA%\mpv on two separate
+        -- installs while the agent was reading its own folder.
+        args = {INTERPRETERS[index], "-u", AGENT, BRIDGE},
         playback_only = false,
         detach = true,
     }, function(ok)
