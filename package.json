@@ -1,0 +1,11 @@
+{
+  "name": "ghost-engine-mpv-setup",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tests for the GhostPlay playlist validator. No dependencies: Node strips the types and runs the plugin source directly.",
+  "scripts": {
+    "test": "node --test tests/*.test.ts"
+  },
+  "license": "GPL-3.0-or-later"
+}
