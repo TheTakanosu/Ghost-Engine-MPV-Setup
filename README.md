@@ -142,6 +142,52 @@ usual answers are that Discord is not running, or `pypresence` is not installed
 
 ---
 
+## Design decisions
+
+Places where the obvious choice was rejected, and why. Most of these were measured against the real client rather than reasoned about.
+
+**Discord fits two RPC buttons on one row only under ~30 characters.** Measured:
+`Watch on YouTube` + `Discord Server` (30) sits in a row; adding a `▶` (32) stacks them.
+There is no API for asking. `Watch YouTube` would add margin but reads as watching the
+site rather than the video.
+
+**The Rich Presence timer anchors to playback, not to the track change.** yt-dlp takes
+several seconds to resolve a track, and mpv knows the title before audio starts —
+anchoring there counted the whole load and put the clock seconds ahead. The exporter
+reports `core-idle`, so the agent shows the track without a timer until sound actually
+starts, and re-anchors if the clock drifts more than 3 s.
+
+**mpv starts the Rich Presence agent; Windows does not.** The agent used to be
+installed as a Startup-folder shortcut, which meant it ran from sign-in to shut-down to
+serve a player that is closed most of the day — and Task Manager's Startup tab labelled
+the row `pythonw.exe`, because that tab names the program being launched rather than the
+shortcut. `rpc_exporter.lua` now spawns the agent when mpv opens, and the agent exits a
+few seconds after mpv is gone. There is no startup entry to recognise or to remove, and
+nothing to install.
+
+**The interpreter is not renamed for a prettier Task Manager row.** That was the other
+way to fix the label: copying `pythonw.exe` to `GhostEngineRPC.exe` works and does
+produce a nicer one — but renaming an interpreter to disguise it is a textbook malware
+technique that antivirus software flags. Shipping a compiled `.exe` instead trades a
+readable Python file for an unsigned binary a stranger should trust *less*.
+
+**The agent reads the player before it requires Discord.** The reconnect backoff ends in
+a `continue`, so checking the connection first meant an agent that could not reach
+Discord never got as far as reading the bridge — and would sit in that backoff forever
+waiting to report a player that had already closed, which is precisely the leftover
+process the design is meant to avoid. The same check covers the other end: an agent that
+has not seen a player within 30 seconds of starting leaves too, so there is no state in
+which it waits indefinitely for an mpv that is never coming. An advisory lock file,
+released by the operating system when its holder dies, keeps a second mpv window from
+starting a second agent.
+
+**Audio exports still get a window.** `#GHOST_AUDIO` sets `vid=no`, and with no video
+track mpv opens no window at all — leaving a playlist running with no way to seek, pause
+or change the volume short of a terminal nobody has open. `ghost.lua` sets `force-window`
+alongside it, so an audio list gets the usual window and on-screen controls.
+
+---
+
 ## Licence
 
 GPL-3.0, same as the bot. See [LICENSE](LICENSE).
