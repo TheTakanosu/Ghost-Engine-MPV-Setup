@@ -58,9 +58,39 @@ PIPE: int | None = int(_pipe) if _pipe.isdigit() else None
 # rpc_exporter.lua writes into the mpv config folder. Keeping this script in
 # that same folder needs no configuration at all; otherwise point
 # GHOST_RPC_BRIDGE at the file.
-BRIDGE_FILE = Path(
-    os.getenv("GHOST_RPC_BRIDGE") or (Path(__file__).resolve().parent / "ghost_rpc.txt")
-)
+def _bridge_path() -> Path:
+    """Where rpc_exporter.lua is writing.
+
+    In order: the path mpv handed over on the command line, the override
+    environment variable, this file's own folder, then mpv's config folder.
+
+    The argument is what makes this reliable. `~~/` in the exporter is mpv's
+    *config* directory, and on Windows that is %APPDATA%\\mpv whenever the
+    folder exists - not the folder mpv.exe lives in. Both sides working the
+    path out separately meant they could disagree, and when they did the
+    presence simply never appeared, with nothing on screen to say why.
+    """
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        return Path(sys.argv[1])
+
+    override = os.getenv("GHOST_RPC_BRIDGE")
+    if override:
+        return Path(override)
+
+    beside_me = Path(__file__).resolve().parent / "ghost_rpc.txt"
+    if beside_me.exists():
+        return beside_me
+
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        in_config = Path(appdata) / "mpv" / "ghost_rpc.txt"
+        if in_config.exists():
+            return in_config
+
+    return beside_me
+
+
+BRIDGE_FILE = _bridge_path()
 
 # One agent at a time. mpv launches the agent itself, so opening a second mpv
 # window would otherwise start a second agent pushing the same bridge file into

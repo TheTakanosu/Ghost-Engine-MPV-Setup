@@ -59,6 +59,29 @@ and says so rather than carrying on.
 changes its player often and yt-dlp ships fixes within days. A bundled copy
 would be broken within weeks, and it would look like *this* was what broke.
 
+### Staying current
+
+yt-dlp is the piece that breaks when YouTube changes its player, and it is also
+the one that is easy to forget about. So mpv checks — **at most once a day, in
+the background, never blocking playback** — whether the yt-dlp next to it has
+fallen behind, and puts a line on screen if it has:
+
+```
+yt-dlp is out of date (2026.08.19 → 2026.09.11)
+Videos may stop resolving. Run update.bat in your mpv folder.
+```
+
+`update.bat` in the install folder fetches the current yt-dlp under the same
+rules as the installer — from yt-dlp's own release, checked against its
+published SHA-256, and nothing is replaced if the sum does not match.
+
+**It never updates by itself.** A media player that silently replaces an
+executable on your disk because you opened a video is not a trade anyone agreed
+to, and on a metered connection it is worse than rude. It tells you; you decide.
+
+Turn the check off with `GHOST_NO_UPDATE_CHECK=1`, or by deleting
+`scripts/updatecheck.lua`.
+
 ---
 
 ## Using it
@@ -127,9 +150,9 @@ assumed.
 ## If something is wrong
 
 **Videos will not play.** Almost always yt-dlp being out of date against a
-YouTube change — re-run `install.bat`, it fetches the current one. If it still
-fails, node is worth installing; YouTube increasingly asks the player to run
-JavaScript.
+YouTube change — run `update.bat` in the install folder. mpv normally warns you
+about this on its own before it gets that far. If it still fails, node is worth
+installing; YouTube increasingly asks the player to run JavaScript.
 
 **No window on an audio playlist.** You are on an older copy of `ghost.lua`;
 re-run `install.bat`.
