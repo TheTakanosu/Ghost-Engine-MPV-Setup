@@ -1,0 +1,8 @@
+# Kept out of the release archive: these are for working on the project,
+# not for installing it. Someone who unpacks the zip should see two .bat
+# files and a README, not a test suite.
+tests/ export-ignore
+.github/ export-ignore
+package.json export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
