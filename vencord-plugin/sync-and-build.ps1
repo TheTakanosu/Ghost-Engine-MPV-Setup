@@ -19,8 +19,7 @@ if (-not (Test-Path (Join-Path $Vencord "package.json"))) {
 }
 
 New-Item -ItemType Directory -Force $target | Out-Null
-Copy-Item "$source\index.tsx","$source
-ative.ts" $target -Force
+Copy-Item (Join-Path $source "index.tsx"), (Join-Path $source "native.ts"), (Join-Path $source "validation.ts") $target -Force
 Write-Host "  Copied ghostPlay -> $target" -ForegroundColor Green
 
 Push-Location $Vencord
