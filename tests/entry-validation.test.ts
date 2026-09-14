@@ -21,7 +21,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { entryAllowed } from "../vencord-plugin/native.ts";
+import { entryAllowed } from "../vencord-plugin/validation.ts";
 
 /** Things that must never reach the player. */
 const HOSTILE: Array<[string, string]> = [

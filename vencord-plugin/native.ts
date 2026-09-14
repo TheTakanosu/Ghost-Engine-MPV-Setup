@@ -1,66 +1,41 @@
 /*
- * GhostPlay native side — runs in Electron's main process, where spawning a
- * local player is possible at all. Everything that reaches this file came out
- * of a Discord message, so it is treated as hostile input: the renderer's
- * allowlist decides *which* messages get a button, and the checks below decide
- * what is allowed to reach mpv's argv.
- *
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 TheTakanosu and contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+/*
+ * GhostPlay native side — runs in Electron's main process, where spawning a
+ * local player is possible at all. Everything that reaches this file came out
+ * of a Discord message, so it is treated as hostile input.
+ *
+ * The renderer does not filter by sender: anyone's playlist can reach this
+ * file. What may pass is decided by ./validation.ts, and it assumes that
+ * whoever posted the file chose every byte of it. This file only fetches,
+ * checks and starts mpv — its single export is the IPC handler, which is what
+ * Vencord's PluginNative type requires.
+ */
+
 import { spawn } from "child_process";
-// A type-only import: Node strips it entirely, which is what lets the
-// validator below be imported by a test without pulling in Electron.
+// A type-only import: Node strips it entirely, so nothing here drags Electron
+// into a plain `node --test` run.
 import type { IpcMainInvokeEvent } from "electron";
 import { existsSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+import { attachmentAllowed, validatePlaylist } from "./validation";
+
 interface PlayRequest {
     kind: "m3u" | "video";
     url: string;
     mpvPath: string;
-    richPresence: boolean;
+    companionScripts: boolean;
 }
 
 type PlayResult = { ok: true; } | { ok: false; error: string; };
 
-/** Discord's own CDN, and nothing else. An attachment URL from anywhere is a
- *  URL an attacker chose, and this one is about to be downloaded and played. */
-const ATTACHMENT_HOSTS = new Set([
-    "cdn.discordapp.com",
-    "media.discordapp.net",
-]);
-
 const YOUTUBE_WATCH_RE = /^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{11}$/;
-
-/** Whether one playlist entry may be handed to the player.
- *
- *  Checked by *scheme*, not by character. The first version of this filtered on
- *  a character class and rejected 19 of 28 entries in a real Spotify export:
- *  `ytdl://ytsearch1:MINESTYLE Vyzer, Lytra, wasty` is a perfectly ordinary
- *  track, and commas, brackets, `!` and non-ASCII letters are ordinary in music.
- *
- *  Shell metacharacters are not what makes an entry dangerous here — mpv is
- *  never started through a shell, so they are just text. What is dangerous is
- *  mpv's own protocol handlers: `file://`, `edl://`, `archive://`, `memory://`
- *  and friends read from the local disk. Naming the two shapes that are allowed
- *  excludes all of them without guessing at a blocklist.
- */
-export function entryAllowed(line: string): boolean {
-    // Control characters have no business in a URL and can confuse a parser.
-    if (/[\u0000-\u001f\u007f]/.test(line)) return false;
-
-    // A direct media link.
-    if (/^https?:\/\/\S/i.test(line)) return true;
-
-    const rest = /^ytdl:\/\/(.+)$/i.exec(line)?.[1];
-    if (!rest) return false;
-
-    return /^ytsearch\d*:/i.test(rest)        // Spotify imports resolve at play time
-        || /^[A-Za-z0-9_-]{11}$/.test(rest)   // a YouTube id
-        || /^https?:\/\/\S/i.test(rest);      // a URL handed to yt-dlp
-}
 
 const MPV_CANDIDATES: Record<string, string[]> = {
     win32: [
@@ -98,25 +73,8 @@ function findMpv(preferred: string): string | null {
     return null;
 }
 
-function validatePlaylist(text: string): string | null {
-    const lines = text.split(/\r?\n/);
-    if (!lines[0]?.startsWith("#EXTM3U")) return "That file is not an M3U playlist.";
-
-    let entries = 0;
-    for (const raw of lines) {
-        const line = raw.trim();
-        if (!line || line.startsWith("#")) continue;
-        if (!entryAllowed(line)) {
-            return "That playlist points somewhere unexpected, so it was not opened.";
-        }
-        entries++;
-    }
-    return entries ? null : "That playlist has no tracks.";
-}
-
 async function fetchPlaylist(url: string): Promise<string> {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" || !ATTACHMENT_HOSTS.has(parsed.hostname)) {
+    if (!attachmentAllowed(url)) {
         throw new Error("That attachment is not hosted on Discord.");
     }
 
@@ -169,7 +127,7 @@ export async function play(_event: IpcMainInvokeEvent, request: PlayRequest): Pr
             detached: true,
             stdio: "ignore",
             shell: false,
-            env: request.richPresence
+            env: request.companionScripts
                 ? process.env
                 // Read by scripts/rpc_exporter.lua, which skips starting the
                 // presence agent when it is set.

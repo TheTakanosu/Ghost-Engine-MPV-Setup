@@ -1,32 +1,30 @@
 /*
- * GhostPlay — hands a Takanosu YT-Indexer result to your local mpv.
- * Part of Takanosu YT-Indexer. Strictly optional; the bot works without it.
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 TheTakanosu and contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * GhostPlay — opens a YouTube link or an .m3u playlist posted in Discord in the
+ * mpv on your own machine, instead of Discord's embedded player.
  */
 
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import { Message } from "@vencord/discord-types";
-import { ChannelStore, showToast, Toasts } from "@webpack/common";
+import { Alerts, ChannelStore, showToast, Toasts } from "@webpack/common";
 
 const Native = VencordNative.pluginHelpers.GhostPlay as PluginNative<typeof import("./native")>;
-
-// The bot this plugin is built for. The button appears on messages from these
-// authors and nowhere else — see the threat model in ../README.md. Anyone in a
-// server can post a .m3u, and this plugin's whole job is handing a file to a
-// local process, so "which messages count" is the security boundary and it is
-// deliberately an allowlist rather than a blocklist.
-const DEFAULT_BOT_IDS = "1530546215303909518";
 
 const YOUTUBE_RE =
     /https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?(?:[^\s]*&)?v=([A-Za-z0-9_-]{11})|youtu\.be\/([A-Za-z0-9_-]{11}))/;
 
 const settings = definePluginSettings({
-    botIds: {
+    trustedSenders: {
         type: OptionType.STRING,
         description:
-            "Comma-separated user IDs whose messages get the play button. Leave the default unless you run your own bot.",
-        default: DEFAULT_BOT_IDS,
+            "Comma-separated user IDs whose playlists open without asking first. Everyone else gets a confirmation. Empty means always ask.",
+        default: "",
     },
     mpvPath: {
         type: OptionType.STRING,
@@ -34,17 +32,23 @@ const settings = definePluginSettings({
             "Full path to mpv. Leave empty to search the usual places and your PATH.",
         default: "",
     },
-    richPresence: {
+    companionScripts: {
         type: OptionType.BOOLEAN,
         description:
-            "Let mpv start the Ghost Engine Rich Presence agent, so what you play shows on your Discord profile.",
+            "Let mpv's own scripts run as configured. Turn this off to launch mpv with GHOST_RPC_DISABLE=1, which stops the optional Ghost Engine presence script from starting an agent.",
         default: true,
     },
 });
 
-function allowedAuthors(): Set<string> {
+/** Senders whose playlists skip the confirmation.
+ *
+ *  A convenience list, not the security boundary — native.ts checks every entry
+ *  of every playlist no matter who posted it. Being absent from this list costs
+ *  one extra click, not safety.
+ */
+function trustedSenders(): Set<string> {
     return new Set(
-        settings.store.botIds
+        settings.store.trustedSenders
             .split(",")
             .map(id => id.trim())
             .filter(id => /^\d{5,25}$/.test(id))
@@ -82,36 +86,54 @@ function GhostIcon(props: any) {
 export default definePlugin({
     name: "GhostPlay",
     description:
-        "Adds a play button to Takanosu YT-Indexer results that opens them in your local mpv.",
+        "Adds a button to YouTube links and .m3u playlists in Discord that opens them in your local mpv.",
     authors: [{ name: "TheTakanosu", id: 0n }],
     settings,
 
     messagePopoverButton: {
         icon: GhostIcon,
         render(message: Message) {
-            if (!allowedAuthors().has(message.author?.id)) return null;
-
             const target = playableTarget(message);
             if (!target) return null;
+
+            const open = async () => {
+                const result = await Native.play({
+                    kind: target.kind,
+                    url: target.url,
+                    mpvPath: settings.store.mpvPath.trim(),
+                    companionScripts: settings.store.companionScripts,
+                });
+
+                if (result.ok) {
+                    showToast(`Playing ${target.label} in mpv`, Toasts.Type.SUCCESS);
+                } else {
+                    showToast(result.error, Toasts.Type.FAILURE);
+                }
+            };
 
             return {
                 label: target.kind === "m3u" ? "Play playlist in mpv" : "Play in mpv",
                 icon: GhostIcon,
                 message,
                 channel: ChannelStore.getChannel(message.channel_id),
-                onClick: async () => {
-                    const result = await Native.play({
-                        kind: target.kind,
-                        url: target.url,
-                        mpvPath: settings.store.mpvPath.trim(),
-                        richPresence: settings.store.richPresence,
-                    });
-
-                    if (result.ok) {
-                        showToast(`Playing ${target.label} in mpv`, Toasts.Type.SUCCESS);
-                    } else {
-                        showToast(result.error, Toasts.Type.FAILURE);
+                onClick: () => {
+                    // A YouTube link is visible in the message and opens one
+                    // known video, so clicking the button is consent enough. A
+                    // playlist is a file: its contents are not on screen, and
+                    // anyone can attach one. Say who it came from before it
+                    // opens, unless the reader has already trusted that sender.
+                    if (target.kind === "video" || trustedSenders().has(message.author?.id)) {
+                        void open();
+                        return;
                     }
+
+                    Alerts.show({
+                        title: "Open this playlist in mpv?",
+                        body: `${target.label} — posted by ${message.author?.username ?? "someone"}. Every entry is checked before mpv starts, but the tracks are whatever that person put in the file.`,
+                        confirmText: "Open in mpv",
+                        cancelText: "Cancel",
+                        onConfirm: () => void open(),
+                    });
                 },
             };
         },
