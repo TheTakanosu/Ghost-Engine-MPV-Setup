@@ -15,6 +15,22 @@
  * handlers.
  */
 
+/** Text fit to put in the confirmation dialog.
+ *
+ *  The dialog names the file that is about to open, and that name comes from an
+ *  attachment somebody else uploaded — after `decodeURIComponent`, so `%0A` in
+ *  the upload name arrives as a real line break. Left alone, a file called
+ *  `song.m3u%0A%0APlayer:%20mpv%0AThis%20is%20safe` would draw extra lines in
+ *  the dialog that read like the dialog's own text.
+ *
+ *  Control characters go, and the rest is capped: the label is a hint about
+ *  what is opening, not a place for the sender to write a paragraph. */
+export function safeLabel(text: string): string {
+    const flattened = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim();
+    if (!flattened) return "(unnamed)";
+    return flattened.length > 120 ? flattened.slice(0, 117) + "..." : flattened;
+}
+
 /** Whether a path may be executed as the player.
  *
  *  `mpvPath` arrives from the renderer, and the renderer is inside the sandbox.
