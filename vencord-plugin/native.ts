@@ -6,25 +6,34 @@
 
 /*
  * GhostPlay native side — runs in Electron's main process, where spawning a
- * local player is possible at all. Everything that reaches this file came out
- * of a Discord message, so it is treated as hostile input.
+ * local player is possible at all.
  *
- * The renderer does not filter by sender: anyone's playlist can reach this
- * file. What may pass is decided by ./validation.ts, and it assumes that
- * whoever posted the file chose every byte of it. This file only fetches,
- * checks and starts mpv — its single export is the IPC handler, which is what
- * Vencord's PluginNative type requires.
+ * Everything that arrives here came over IPC from the renderer, and the
+ * renderer is inside the sandbox: another plugin, or script injected into
+ * Discord's page, can call this handler directly without ever touching our
+ * button. So nothing the renderer says is trusted, and the two decisions that
+ * matter are made on this side of the boundary:
+ *
+ *   1. WHAT may be launched — the executable must be an mpv binary, and the
+ *      playlist must pass ./validation.ts.
+ *   2. WHETHER to launch at all — a dialog drawn by the main process, which
+ *      renderer code cannot suppress, auto-confirm or click for the user.
+ *
+ * This file's single export is the IPC handler, which is what Vencord's
+ * PluginNative type requires.
  */
 
 import { spawn } from "child_process";
-// A type-only import: Node strips it entirely, so nothing here drags Electron
-// into a plain `node --test` run.
-import type { IpcMainInvokeEvent } from "electron";
-import { existsSync, writeFileSync } from "fs";
+// Electron is imported for real here, not just for types: the confirmation
+// dialog has to be drawn by this process to be worth anything. That is also
+// why the pure checks live in ./validation.ts — a test can import those
+// without Electron, but it could never import this file.
+import { app, dialog, type IpcMainInvokeEvent } from "electron";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { attachmentAllowed, validatePlaylist } from "./validation";
+import { attachmentAllowed, mpvBinaryAllowed, validatePlaylist } from "./validation";
 
 interface PlayRequest {
     kind: "m3u" | "video";
@@ -33,7 +42,9 @@ interface PlayRequest {
     companionScripts: boolean;
 }
 
-type PlayResult = { ok: true; } | { ok: false; error: string; };
+type PlayResult =
+    | { ok: true; }
+    | { ok: false; error: string; cancelled?: boolean; };
 
 const YOUTUBE_WATCH_RE = /^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{11}$/;
 
@@ -61,7 +72,10 @@ const MPV_CANDIDATES: Record<string, string[]> = {
 /** The platform is read here rather than asked of the user: this file runs in
  *  Node, so `process.platform` is authoritative and cannot be set wrong. */
 function findMpv(preferred: string): string | null {
-    if (preferred) return existsSync(preferred) ? preferred : null;
+    if (preferred) {
+        if (!mpvBinaryAllowed(preferred)) return null;
+        return existsSync(preferred) ? preferred : null;
+    }
 
     const candidates = MPV_CANDIDATES[process.platform] ?? MPV_CANDIDATES.linux;
     for (const candidate of candidates) {
@@ -71,6 +85,64 @@ function findMpv(preferred: string): string | null {
         if (candidate && existsSync(candidate)) return candidate;
     }
     return null;
+}
+
+/* ---------- the "don't ask again" preference ----------
+ *
+ * Kept in this process's own file rather than in Vencord's settings. Vencord
+ * settings live in the renderer, so renderer code can change them, and a
+ * switch that turns the confirmation off is exactly the switch an attacker
+ * would flip. Only the main process writes here, and only after the user
+ * ticked the box in a dialog the main process drew.
+ */
+
+function configPath(): string {
+    return join(app.getPath("userData"), "ghostplay.json");
+}
+
+function skipConfirmation(): boolean {
+    try {
+        return JSON.parse(readFileSync(configPath(), "utf8")).skipConfirmation === true;
+    } catch {
+        return false;
+    }
+}
+
+function rememberSkip(): void {
+    try {
+        writeFileSync(configPath(), JSON.stringify({ skipConfirmation: true }, null, 2), "utf8");
+    } catch {
+        // A preference that cannot be saved just means being asked again.
+    }
+}
+
+/** Ask, outside the sandbox, before anything is started.
+ *
+ *  `dialog.showMessageBox` is drawn by the main process, so renderer code can
+ *  neither hide it nor answer it. That is the whole point: a caller that
+ *  reached this handler without going through the button still cannot open
+ *  anything without the person at the keyboard agreeing. */
+async function confirmLaunch(mpv: string, target: string, kind: PlayRequest["kind"]): Promise<boolean> {
+    if (skipConfirmation()) return true;
+
+    const { response, checkboxChecked } = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["Cancel", "Open in mpv"],
+        defaultId: 1,
+        cancelId: 0,
+        noLink: true,
+        title: "GhostPlay",
+        message: kind === "m3u"
+            ? "Open this playlist in mpv?"
+            : "Open this video in mpv?",
+        detail: `${target}\n\nPlayer: ${mpv}`,
+        checkboxLabel: "Don't ask again",
+        checkboxChecked: false,
+    });
+
+    if (response !== 1) return false;
+    if (checkboxChecked) rememberSkip();
+    return true;
 }
 
 async function fetchPlaylist(url: string): Promise<string> {
@@ -87,13 +159,27 @@ async function fetchPlaylist(url: string): Promise<string> {
     return await response.text();
 }
 
+/** What to show the user in the dialog.
+ *
+ *  Derived here from the URL rather than taken from the renderer: a label the
+ *  caller supplies is a label the caller can lie about, and this one is the
+ *  only description of what is about to open. */
+function describe(url: string, kind: PlayRequest["kind"]): string {
+    if (kind === "video") return url;
+    try {
+        return decodeURIComponent(new URL(url).pathname.split("/").pop() || "playlist.m3u");
+    } catch {
+        return "playlist.m3u";
+    }
+}
+
 export async function play(_event: IpcMainInvokeEvent, request: PlayRequest): Promise<PlayResult> {
     const mpv = findMpv(request.mpvPath);
     if (!mpv) {
         return {
             ok: false,
             error: request.mpvPath
-                ? "No mpv at the path in GhostPlay's settings."
+                ? "GhostPlay's mpv path does not point at an mpv binary."
                 : "mpv was not found. Install it, or set its path in GhostPlay's settings.",
         };
     }
@@ -118,6 +204,12 @@ export async function play(_event: IpcMainInvokeEvent, request: PlayRequest): Pr
         }
     } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : "Could not read that playlist." };
+    }
+
+    // Checked first, asked second: a playlist that was going to be refused
+    // anyway should not cost the user a dialog.
+    if (!await confirmLaunch(mpv, describe(request.url, request.kind), request.kind)) {
+        return { ok: false, error: "", cancelled: true };
     }
 
     try {

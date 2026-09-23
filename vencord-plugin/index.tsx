@@ -7,12 +7,18 @@
 /*
  * GhostPlay — opens a YouTube link or an .m3u playlist posted in Discord in the
  * mpv on your own machine, instead of Discord's embedded player.
+ *
+ * This half only decides which messages get a button and what to show
+ * afterwards. It deliberately makes no security decision: it runs in the
+ * sandbox, so any check here can be skipped by code that calls the native
+ * handler directly. Everything that matters — what may run, and whether to run
+ * it at all — happens in ./native.ts.
  */
 
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import { Message } from "@vencord/discord-types";
-import { Alerts, ChannelStore, showToast, Toasts } from "@webpack/common";
+import { ChannelStore, showToast, Toasts } from "@webpack/common";
 
 const Native = VencordNative.pluginHelpers.GhostPlay as PluginNative<typeof import("./native")>;
 
@@ -20,16 +26,10 @@ const YOUTUBE_RE =
     /https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?(?:[^\s]*&)?v=([A-Za-z0-9_-]{11})|youtu\.be\/([A-Za-z0-9_-]{11}))/;
 
 const settings = definePluginSettings({
-    trustedSenders: {
-        type: OptionType.STRING,
-        description:
-            "Comma-separated user IDs whose playlists open without asking first. Everyone else gets a confirmation. Empty means always ask.",
-        default: "",
-    },
     mpvPath: {
         type: OptionType.STRING,
         description:
-            "Full path to mpv. Leave empty to search the usual places and your PATH.",
+            "Full path to mpv. Leave empty to search the usual places and your PATH. The file must be named mpv or mpv.exe — GhostPlay will not launch anything else.",
         default: "",
     },
     companionScripts: {
@@ -39,21 +39,6 @@ const settings = definePluginSettings({
         default: true,
     },
 });
-
-/** Senders whose playlists skip the confirmation.
- *
- *  A convenience list, not the security boundary — native.ts checks every entry
- *  of every playlist no matter who posted it. Being absent from this list costs
- *  one extra click, not safety.
- */
-function trustedSenders(): Set<string> {
-    return new Set(
-        settings.store.trustedSenders
-            .split(",")
-            .map(id => id.trim())
-            .filter(id => /^\d{5,25}$/.test(id))
-    );
-}
 
 /** What, if anything, this message can hand to mpv. */
 function playableTarget(message: Message) {
@@ -96,44 +81,29 @@ export default definePlugin({
             const target = playableTarget(message);
             if (!target) return null;
 
-            const open = async () => {
-                const result = await Native.play({
-                    kind: target.kind,
-                    url: target.url,
-                    mpvPath: settings.store.mpvPath.trim(),
-                    companionScripts: settings.store.companionScripts,
-                });
-
-                if (result.ok) {
-                    showToast(`Playing ${target.label} in mpv`, Toasts.Type.SUCCESS);
-                } else {
-                    showToast(result.error, Toasts.Type.FAILURE);
-                }
-            };
-
             return {
                 label: target.kind === "m3u" ? "Play playlist in mpv" : "Play in mpv",
                 icon: GhostIcon,
                 message,
                 channel: ChannelStore.getChannel(message.channel_id),
-                onClick: () => {
-                    // A YouTube link is visible in the message and opens one
-                    // known video, so clicking the button is consent enough. A
-                    // playlist is a file: its contents are not on screen, and
-                    // anyone can attach one. Say who it came from before it
-                    // opens, unless the reader has already trusted that sender.
-                    if (target.kind === "video" || trustedSenders().has(message.author?.id)) {
-                        void open();
+                onClick: async () => {
+                    const result = await Native.play({
+                        kind: target.kind,
+                        url: target.url,
+                        mpvPath: settings.store.mpvPath.trim(),
+                        companionScripts: settings.store.companionScripts,
+                    });
+
+                    if (result.ok) {
+                        showToast(`Playing ${target.label} in mpv`, Toasts.Type.SUCCESS);
                         return;
                     }
 
-                    Alerts.show({
-                        title: "Open this playlist in mpv?",
-                        body: `${target.label} — posted by ${message.author?.username ?? "someone"}. Every entry is checked before mpv starts, but the tracks are whatever that person put in the file.`,
-                        confirmText: "Open in mpv",
-                        cancelText: "Cancel",
-                        onConfirm: () => void open(),
-                    });
+                    // The native side asks before it starts anything. Saying no
+                    // there is a decision, not a failure, so it gets no toast.
+                    if (result.cancelled) return;
+
+                    showToast(result.error, Toasts.Type.FAILURE);
                 },
             };
         },
