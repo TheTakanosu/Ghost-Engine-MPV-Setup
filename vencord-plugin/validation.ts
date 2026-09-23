@@ -7,13 +7,27 @@
 /*
  * What GhostPlay will let reach a local media player.
  *
- * These three checks are the plugin's security boundary: the button is
- * content-based, so anyone's .m3u can arrive here, and nothing upstream has
- * filtered it. They live in their own file for two reasons. A test can import
- * them without pulling in Electron, and native.ts stays what Vencord's
+ * These checks are the plugin's security boundary: the button is content-based,
+ * so anyone's .m3u can arrive here, and the renderer that asked for it cannot
+ * be trusted either. They live in their own file for two reasons. A test can
+ * import them without pulling in Electron, and native.ts stays what Vencord's
  * PluginNative type requires it to be — a module whose exports are all IPC
  * handlers.
  */
+
+/** Whether a path may be executed as the player.
+ *
+ *  `mpvPath` arrives from the renderer, and the renderer is inside the sandbox.
+ *  Without this check the setting is "run this file for me", and a caller that
+ *  never touched the button could name any executable on the machine.
+ *
+ *  The last segment is taken by hand rather than with `path.basename`, which is
+ *  platform-specific: on Linux it would read all of `C:\mpv\mpv.exe` as the
+ *  file name. Both separators are split here whatever the platform. */
+export function mpvBinaryAllowed(path: string): boolean {
+    const name = path.split(/[\\/]/).pop() ?? "";
+    return /^mpv(\.exe)?$/i.test(name);
+}
 
 /** Discord's own CDN, and nothing else. An attachment URL from anywhere is a
  *  URL an attacker chose, and this one is about to be downloaded and played. */

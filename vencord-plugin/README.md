@@ -65,26 +65,34 @@ filtered, because mpv is never started through a shell and `AC/DC & Friends` is
 an ordinary track name. Filtering them is what an earlier version did, and it
 threw out 19 of 28 entries in a real Spotify export.
 
-**You are asked before a stranger's playlist opens.** A YouTube link is visible
-in the message and opens one known video, so the click is consent enough. A
-playlist is a file whose contents are not on screen, so opening one shows who
-posted it and what it is called first. Put an id in `trustedSenders` — your own
-bot, for instance — and its playlists open straight away.
+**You are asked outside the sandbox, every time.** Before anything starts, the
+main process draws a system dialog naming what is about to open and which mpv
+will open it. This is the one check that cannot be skipped by code: Discord's
+page — where every plugin and any injected script lives — can neither hide that
+dialog nor answer it. A "Don't ask again" box turns it off, and that preference
+is stored by the main process in its own file rather than in Vencord's settings,
+because a setting the renderer can write is a setting an attacker can flip.
+
+**Only an mpv binary is ever executed.** `mpvPath` is a plugin setting, so it
+reaches the native side as a string the renderer chose. The file name must be
+`mpv` or `mpv.exe`; anything else is refused before `spawn` is reached. Without
+this, the setting would read as "run this file for me" to anyone who could call
+the native handler.
 
 **mpv is never started through a shell.** `spawn(mpv, ["--", target], { shell: false })`
 passes an argv array, so a video title full of `&`, `;` or backticks is an
 argument and can never become a command. The `--` guards against a target that
 starts with a dash being read as an option.
 
-**The native half is as small as it can be.** Only `native.ts` runs with Node
-privileges, and its entire surface is one function taking a URL and a couple of
-settings. Everything else — deciding which messages qualify, reading settings,
-drawing the button — stays in the renderer, where it cannot spawn anything.
+**The renderer makes no security decision at all.** It decides which messages
+get a button and what toast to show; that is the whole of it. Every check above
+runs in `native.ts`, on the far side of the IPC boundary, because a check in the
+renderer is only a check for callers that agreed to go through the button.
 
-**All of it is tested.** [`tests/`](../tests) runs on every push: hostile entries,
-look-alike CDN hosts, malformed playlists, and the real exports that must keep
-working. No build step and no dependencies — Node strips the types and runs the
-source the plugin actually ships.
+**All of it is tested.** [`tests/`](../tests) runs on every push: hostile
+entries, look-alike CDN hosts, malformed playlists, executables dressed up to
+look like mpv, and the real exports that must keep working. No build step and no
+dependencies — Node strips the types and runs the source the plugin ships.
 
 ```bash
 node --test tests/*.test.ts
@@ -96,8 +104,7 @@ node --test tests/*.test.ts
 
 | Setting | Default | What it does |
 |---|---|---|
-| `trustedSenders` | *(empty)* | Comma-separated ids whose playlists open without asking. Empty means always ask |
-| `mpvPath` | *(empty)* | Full path to mpv. Empty means search the usual places, then `PATH` |
+| `mpvPath` | *(empty)* | Full path to mpv. Empty means search the usual places, then `PATH`. Must be named `mpv` or `mpv.exe` |
 | `companionScripts` | on | Whether mpv's own scripts may run as configured |
 
 `companionScripts` works through an environment variable rather than a flag: with
@@ -106,8 +113,9 @@ it off, mpv is launched with `GHOST_RPC_DISABLE=1`, and
 starting the presence agent. The bridge file is still written, so an agent you
 started yourself keeps working. Setting the variable by hand does the same thing.
 
-`trustedSenders` is a convenience, not a security control — it decides whether you
-are asked, never what is allowed. Everything in *Security* above runs either way.
+There is no setting that turns the checks off, and the confirmation is not one of
+these three: it is answered in the dialog itself, and remembered by the main
+process in `ghostplay.json` next to Discord's own user data.
 
 **Your operating system is detected, not configured.** `native.ts` runs in Node,
 so `process.platform` is authoritative — there is no "pick your OS" setting to get
