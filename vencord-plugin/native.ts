@@ -33,7 +33,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { attachmentAllowed, mpvBinaryAllowed, validatePlaylist } from "./validation";
+import { attachmentAllowed, mpvBinaryAllowed, safeLabel, validatePlaylist } from "./validation";
 
 interface PlayRequest {
     kind: "m3u" | "video";
@@ -163,11 +163,12 @@ async function fetchPlaylist(url: string): Promise<string> {
  *
  *  Derived here from the URL rather than taken from the renderer: a label the
  *  caller supplies is a label the caller can lie about, and this one is the
- *  only description of what is about to open. */
+ *  only description of what is about to open. It still comes from a file
+ *  somebody else named, so safeLabel flattens it before it is drawn. */
 function describe(url: string, kind: PlayRequest["kind"]): string {
-    if (kind === "video") return url;
+    if (kind === "video") return safeLabel(url);
     try {
-        return decodeURIComponent(new URL(url).pathname.split("/").pop() || "playlist.m3u");
+        return safeLabel(decodeURIComponent(new URL(url).pathname.split("/").pop() || ""));
     } catch {
         return "playlist.m3u";
     }
