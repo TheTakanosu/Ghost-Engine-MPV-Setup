@@ -87,23 +87,43 @@ export default definePlugin({
                 message,
                 channel: ChannelStore.getChannel(message.channel_id),
                 onClick: async () => {
-                    const result = await Native.play({
-                        kind: target.kind,
-                        url: target.url,
-                        mpvPath: settings.store.mpvPath.trim(),
-                        companionScripts: settings.store.companionScripts,
-                    });
+                    // Everything below the IPC call can fail in ways that never
+                    // reach a PlayResult: the native half may not be registered,
+                    // or it may throw before it can answer. Without this catch
+                    // the promise rejects into nothing and the button looks
+                    // simply dead — which is worse than any error message.
+                    try {
+                        if (!Native?.play) {
+                            showToast(
+                                "GhostPlay's native half did not load. Restart Discord; if it persists, rebuild the plugin.",
+                                Toasts.Type.FAILURE
+                            );
+                            return;
+                        }
 
-                    if (result.ok) {
-                        showToast(`Playing ${target.label} in mpv`, Toasts.Type.SUCCESS);
-                        return;
+                        const result = await Native.play({
+                            kind: target.kind,
+                            url: target.url,
+                            mpvPath: settings.store.mpvPath.trim(),
+                            companionScripts: settings.store.companionScripts,
+                        });
+
+                        if (result.ok) {
+                            showToast(`Playing ${target.label} in mpv`, Toasts.Type.SUCCESS);
+                            return;
+                        }
+
+                        // The native side asks before it starts anything. Saying
+                        // no there is a decision, not a failure, so no toast.
+                        if (result.cancelled) return;
+
+                        showToast(result.error, Toasts.Type.FAILURE);
+                    } catch (error) {
+                        showToast(
+                            `GhostPlay: ${error instanceof Error ? error.message : String(error)}`,
+                            Toasts.Type.FAILURE
+                        );
                     }
-
-                    // The native side asks before it starts anything. Saying no
-                    // there is a decision, not a failure, so it gets no toast.
-                    if (result.cancelled) return;
-
-                    showToast(result.error, Toasts.Type.FAILURE);
                 },
             };
         },
