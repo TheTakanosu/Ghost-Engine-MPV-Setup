@@ -109,6 +109,9 @@ STARTUP_GRACE = 30.0
 # Checking the timestamp replaces the old `tasklist` call, which spawned a
 # process on every single tick, forever.
 STALE_AFTER = 8.0
+# read_bridge() caught the exporter between emptying the file and refilling it.
+# The player is alive; this poll just has nothing to say.
+MID_WRITE = object()
 # A jump larger than this means a seek or a playlist loop, so the elapsed timer
 # has to be re-synced rather than left running.
 SEEK_THRESHOLD = 3.0
@@ -258,10 +261,17 @@ def _number(text: str, default: float = 0.0) -> float:
 
 
 def read_bridge():
-    """Current player state, or None when mpv is not running.
+    """Current player state, None when mpv is not running, or MID_WRITE.
 
     Freshness is judged by the file's mtime: the exporter rewrites it every
     2 seconds while mpv lives, and stops the moment it exits.
+
+    A fresh file that will not parse is not a closed player. The exporter
+    opens the bridge with "w", which empties it before the new lines go in, so
+    a read landing in that gap sees nothing or half a file. Both sides tick
+    every 2 seconds, so their phases drift into line eventually — reporting
+    that as None made the agent decide mpv had closed and exit, which is why
+    the presence vanished after the player sat idle for a while.
 
     Lines past the fourth were added later, so a bridge written by an older
     exporter still reads — it just reports "playing, unknown length, no id".
@@ -269,12 +279,16 @@ def read_bridge():
     try:
         if time.time() - BRIDGE_FILE.stat().st_mtime > STALE_AFTER:
             return None
-        lines = BRIDGE_FILE.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+    except OSError:
         return None
 
+    try:
+        lines = BRIDGE_FILE.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return MID_WRITE
+
     if len(lines) < 4:
-        return None
+        return MID_WRITE
 
     paused = _line(lines, 1).lower() in ("true", "yes")
     core_idle = _line(lines, 4, "no").lower() in ("true", "yes")
@@ -429,6 +443,11 @@ def run_advanced_ghost_presence() -> None:
         # waiting to report a player that had already closed. Which is exactly
         # the leftover process this agent is meant not to become.
         state = read_bridge()
+        if state is MID_WRITE:
+            # Retry shortly rather than a full poll later: the write it caught
+            # finishes within milliseconds.
+            time.sleep(0.25)
+            continue
 
         # Both questions about whether this process should still exist are
         # settled here, before Discord is involved at all: an unreachable
