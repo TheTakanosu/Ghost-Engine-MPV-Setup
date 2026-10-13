@@ -21,3 +21,26 @@ mp.add_hook("on_load", 50, function()
         end
     end
 end)
+
+-- YouTube now and then answers a freshly signed stream URL with 403 even
+-- though the next extraction of the same song plays fine. mpv treats that as
+-- a broken file and jumps to the next entry, so songs seemed to skip at
+-- random. Give each entry a couple of fresh extractions before moving on.
+local MAX_RETRIES = 2
+local retries = {}
+
+mp.register_event("end-file", function(event)
+    if event.reason ~= "error" or not event.playlist_entry_id then return end
+    local id = event.playlist_entry_id
+    local tried = retries[id] or 0
+    if tried >= MAX_RETRIES then return end
+
+    for index, entry in ipairs(mp.get_property_native("playlist", {})) do
+        if entry.id == id then
+            retries[id] = tried + 1
+            mp.msg.warn(string.format("Could not open this song, trying again (%d/%d)", tried + 1, MAX_RETRIES))
+            mp.commandv("playlist-play-index", tostring(index - 1))
+            return
+        end
+    end
+end)
