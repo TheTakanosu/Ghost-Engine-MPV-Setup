@@ -37,7 +37,10 @@ function export_advanced_presence()
     local vid = mp.get_property("vid", "no")
     local core_idle = mp.get_property("core-idle", "no")
     local duration = mp.get_property("duration", "")
-    local path = mp.get_property("path", "")
+    -- songmatch.lua plays a search entry from the video it picked, while
+    -- `path` keeps the search query; the picked video is the one with an id.
+    local source = mp.get_property_native("user-data/ghost/source")
+    local path = (type(source) == "string" and source ~= "") and source or mp.get_property("path", "")
     -- yt-dlp passes the channel through as an "uploader" tag.
     local uploader = mp.get_property("metadata/by-key/uploader", "")
 

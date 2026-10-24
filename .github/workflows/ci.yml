@@ -70,6 +70,8 @@ jobs:
             "mpv\ghost_rpc.py",
             "mpv\update.ps1",
             "mpv\scripts\ghost.lua",
+            "mpv\scripts\cookies.lua",
+            "mpv\scripts\songmatch.lua",
             "mpv\scripts\rpc_exporter.lua",
             "mpv\scripts\updatecheck.lua"
           )

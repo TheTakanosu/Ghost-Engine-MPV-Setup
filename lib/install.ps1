@@ -170,7 +170,7 @@ try {
     # -- the Ghost Engine layer ----------------------------------------------
     Step "4/5  Ghost Engine configuration"
     Copy-Item (Join-Path $payload "*") $InstallDir -Recurse -Force
-    Say "mpv.conf, scripts\ghost.lua, scripts\rpc_exporter.lua, ghost_rpc.py" "DarkGray"
+    Say "mpv.conf, scripts\*.lua, ghost_rpc.py" "DarkGray"
     Say "configuration installed" "Green"
 
     # -- Rich Presence --------------------------------------------------------
