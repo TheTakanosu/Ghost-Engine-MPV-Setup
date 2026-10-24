@@ -152,8 +152,8 @@ so `Asteriaarchive` matches uploads titled `asteria - <song>`, and the same goes
 for any other second account or `X Official` name. Once such a name has been
 seen, the artist's next songs that the Spotify name does not find are searched
 again under it. There is no per-artist list to keep up. Age-restricted songs
-are checked with your cookies.txt and still opened when the check asks for a
-login, so expired cookies show up as the cookie warning rather than a skip.
+are checked with your cookies.txt and still opened when YouTube refuses the
+check, so they reach the cookie retry below instead of being skipped.
 Rich Presence still gets the picked video's id, thumbnail and button.
 
 ### Getting playlists
@@ -191,6 +191,12 @@ normal playback — add one only if you hit age-restricted videos or rate
 limiting. Drop it next to `mpv.exe` and `mpv.conf`, and `scripts/cookies.lua`
 picks it up. It is in `.gitignore`, so it cannot end up in a commit.
 
+Songs are opened without it first, and only a song that fails is retried with
+cookies and node. That is on purpose: logged in, YouTube hands out stream links
+that mpv cannot open (see [Design decisions](#design-decisions)), so using the
+cookies for every song would break the ones that play fine without them. An
+age-restricted song fails its first try, then plays on the retry.
+
 **Cookies do not last.** Every cookie has an expiry date, and YouTube also
 replaces them early whenever you use the same account in your browser — the old
 file then stops working long before its dates say so. Either way the symptom is
@@ -202,7 +208,7 @@ Your YouTube cookies expired on 2026-09-30.
 Export a fresh cookies.txt from your browser and put it next to mpv.exe.
 ```
 
-or, when a song fails even after its retries while cookies are in use,
+or, when a song fails even after its retries with cookies,
 `A song would not open even with retries. If this keeps happening, your
 cookies.txt has probably expired.` Renewing means exporting a new file the
 same way you made the first one and replacing the old one; deleting it also
@@ -240,8 +246,9 @@ about this on its own before it gets that far. If it still fails, node is worth
 installing; YouTube increasingly asks the player to run JavaScript, and a song
 that fails is retried with node.
 
-**Songs fail only when cookies.txt is there.** The cookies have expired or been
-replaced by YouTube — see [cookies.txt](#cookiestxt).
+**Age-restricted songs fail even with cookies.txt.** The cookies have expired or
+been replaced by YouTube — see [cookies.txt](#cookiestxt). The retry needs node
+too, so install it if you skipped it.
 
 **No window on an audio playlist.** You are on an older copy of `ghost.lua`;
 re-run `install.bat`.
@@ -304,6 +311,14 @@ songs resolved without node played. So `cookies.lua` leaves node out at first an
 it only when ghost.lua retries an entry that failed. Its hook runs at priority 5,
 ahead of mpv's own ytdl_hook at 10: at 40 it had been setting options that only reached
 the *next* file.
+
+**Cookies are the retry too.** With valid cookies, YouTube gives yt-dlp only web-client
+stream URLs. Those need node, and they answer 403 unless they are fetched in ranged chunks
+the way yt-dlp downloads. mpv asks for the whole file. Measured on one song: yt-dlp
+downloaded it with cookies and node, mpv got 403 for the same URL, and the same URL played
+with a `range=` added. The song played without cookies too. So cookies join node on the
+retry, where they are what an age-restricted song needs, and that retry gets a TV-client
+URL that opens.
 
 **Config files are found with `find_config_file`, not `~~/`.** The installer puts
 everything next to `mpv.exe`, but `~~/` means `%APPDATA%\mpv` as soon as that folder
