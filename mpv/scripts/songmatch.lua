@@ -186,9 +186,12 @@ end
 -- -J rather than --print: printed text goes out in the console code page and
 -- loses Turkish letters, JSON escapes them.
 -- With cookies when there are any: an age-restricted song tells nothing about
--- itself to a logged-out request. When it still asks for a login the pick is
--- kept unchecked - it opens with valid cookies, and when they have expired
--- the failed song is what makes cookies.lua say so, where a skip would not.
+-- itself to a logged-out request. When it still refuses - asking for a login,
+-- or, even logged in, saying "age-restricted" because yt-dlp needs node for
+-- such videos and this check runs without it - the pick is kept unchecked.
+-- Playback then fails once, ghost.lua retries it with node (cookies.lua) and
+-- it opens; with expired cookies the failures are what makes cookies.lua say
+-- so, where a skip would not.
 local function credited(id, artist, done)
     if not artist then done(true) return end
     local args = {YTDLP, "--no-warnings", "-J"}
@@ -207,7 +210,8 @@ local function credited(id, artist, done)
     }, function(ok, result)
         local info = ok and result and result.status == 0 and utils.parse_json(result.stdout or "")
         if not info then
-            done(has(result and result.stderr or "", "confirm your age"))
+            local said = result and result.stderr or ""
+            done(has(said, "confirm your age") or has(said, "age-restricted"))
             return
         end
         done(same_artist(table.concat({info.artist or "", info.uploader or "", info.channel or ""}, "|"), artist))

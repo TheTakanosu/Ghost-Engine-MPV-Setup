@@ -15,17 +15,24 @@
 -- Cookies do not last. Each one carries an expiry date, and YouTube also
 -- rotates them early whenever the same account is used in the browser. Both
 -- end the same way, with songs that will not open, so mpv says which it is:
--- the dates are checked when the file is first read, and the first song that
--- fails while cookies are in use is asked again with yt-dlp's warnings on.
+-- the dates are checked when the first song loads, and the first song that
+-- fails is asked again with the cookies and yt-dlp's warnings on.
 
 local utils = require 'mp.utils'
 
 -- node lets yt-dlp solve YouTube's JS challenges, but the stream URLs it gets
 -- that way can answer mpv with 403 while the same song plays fine without it
--- (seen with yt-dlp 2026.10.21: every playlist entry failed). So the first try
--- goes without node, and an entry that failed is retried with it - ghost.lua
--- replays it, this file just remembers which entries need node.
-local needs_node = {}
+-- (seen with yt-dlp 2026.10.21: every playlist entry failed). Cookies do the
+-- same: logged in, YouTube only hands out web-client URLs, which need node and
+-- answer 403 unless fetched in ranged chunks the way yt-dlp downloads - mpv
+-- asks for the whole file. Measured on one song: without cookies and node it
+-- plays, with both mpv gets 403 while yt-dlp downloads it fine.
+--
+-- So the first try goes without either, which is how almost every song
+-- plays, and an entry that failed is retried with cookies and node - an
+-- age-restricted song needs both, and gets a URL that does open. ghost.lua
+-- replays the entry, this file just remembers which entries failed.
+local needs_login = {}
 
 -- The account cookies YouTube signs a session with. Preference and consent
 -- cookies expire too, but they do not decide whether a song opens.
@@ -78,19 +85,17 @@ end
 
 local function resolve_raw_options()
     local options = {}
-
-    if cookies then
-        options[#options + 1] = "cookies=" .. cookies
-        mp.msg.verbose("cookies.txt found, using " .. cookies)
-        check_dates()
-    else
-        mp.msg.verbose("no cookies.txt - continuing without cookies")
-    end
+    if cookies then check_dates() end
 
     local id = current_entry_id()
-    if id and needs_node[id] then
+    if id and needs_login[id] then
+        if cookies then
+            options[#options + 1] = "cookies=" .. cookies
+            mp.msg.info("retrying with cookies.txt and node")
+        else
+            mp.msg.info("retrying with node for YouTube's JS challenges")
+        end
         options[#options + 1] = "js-runtimes=node"
-        mp.msg.info("retrying with node for YouTube's JS challenges")
     end
 
     mp.set_property("ytdl-raw-options", table.concat(options, ","))
@@ -127,7 +132,7 @@ end
 
 -- yt-dlp only says so while it still recognises the file as an account login,
 -- so the plain fact is the dependable signal: a song that failed its first try
--- and both of ghost.lua's retries, with cookies in use.
+-- and both of ghost.lua's retries, which used the cookies.
 local GIVE_UP = 3
 local failures = {}
 local hinted = false
@@ -135,7 +140,7 @@ local hinted = false
 mp.register_event("end-file", function(event)
     if event.reason ~= "error" or not event.playlist_entry_id then return end
     local id = event.playlist_entry_id
-    needs_node[id] = true
+    needs_login[id] = true
     ask_youtube_about_cookies(entry_url(id))
 
     failures[id] = (failures[id] or 0) + 1
