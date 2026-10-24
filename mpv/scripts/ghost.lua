@@ -6,8 +6,12 @@ mp.add_hook("on_load", 50, function()
         if file then
             local content = file:read(256)
             file:close()
-            
-            if content and string.match(content, "#GHOST_AUDIO") then
+
+            local audio = content and string.match(content, "#GHOST_AUDIO") ~= nil
+            -- songmatch.lua asks YouTube Music for songs in audio lists.
+            mp.set_property_native("user-data/ghost/audio", audio or false)
+
+            if audio then
                 mp.set_property("vid", "no")
                 mp.set_property("ytdl-format", "bestaudio")
                 -- Without a video track mpv opens no window at all, which

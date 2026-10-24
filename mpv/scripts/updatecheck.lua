@@ -26,16 +26,10 @@ if (os.getenv("GHOST_NO_UPDATE_CHECK") or "") ~= "" then
     return
 end
 
-local function exists(path)
-    local file = io.open(path, "r")
-    if file then file:close() return true end
-    return false
-end
-
--- The portable install keeps yt-dlp next to mpv. Falling back to the bare name
--- lets a system-wide yt-dlp on PATH be checked too.
-local YTDLP = mp.command_native({"expand-path", "~~/yt-dlp.exe"})
-if not exists(YTDLP) then YTDLP = "yt-dlp" end
+-- The portable install keeps yt-dlp next to mpv. find_config_file looks there
+-- too, where "~~/" would only mean %APPDATA%\mpv once that folder exists.
+-- Falling back to the bare name lets a system-wide yt-dlp on PATH be checked.
+local YTDLP = mp.find_config_file("yt-dlp.exe") or "yt-dlp"
 
 local function checked_recently()
     local file = io.open(STAMP, "r")

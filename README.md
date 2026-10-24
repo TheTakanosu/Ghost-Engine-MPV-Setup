@@ -81,7 +81,7 @@ from the project that publishes it, at install time:
 | `yt-dlp.exe` | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | ✅ SHA-256, against the sum yt-dlp publishes with the release |
 | `node.exe` *(optional)* | [nodejs.org](https://nodejs.org/dist/latest/win-x64/) | — |
 
-Only the small stuff is ours: `mpv.conf`, three Lua scripts and a Python agent,
+Only the small stuff is ours: `mpv.conf`, a handful of Lua scripts and a Python agent,
 all of which you can read in this repo in about five minutes.
 
 This is on purpose. An installer that hands you binaries asks you to trust
@@ -131,6 +131,31 @@ Useful keys once it is playing: <kbd>Space</kbd> pause, <kbd>&larr;</kbd>
 <kbd>&rarr;</kbd> seek, <kbd>&uarr;</kbd> <kbd>&darr;</kbd> volume,
 <kbd>&lt;</kbd> <kbd>&gt;</kbd> previous / next track, <kbd>q</kbd> quit.
 
+### Spotify imports play the song, not a live version
+
+A Spotify playlist has no YouTube ids, so the bot writes each track as a search
+and, left alone, whatever YouTube ranks first would play — now and then a live
+set, a slowed + reverb edit or a cover. `scripts/songmatch.lua` picks instead:
+audio lists ask YouTube Music for songs first, and a result is used only when its
+title has the track name, it carries no variant word (live, slowed, cover,
+remix, acoustic...) the track itself lacks, and the video names the expected
+artist. When nothing passes, YouTube's first result still plays if it is the
+same song in another version (`bye - super slowed` as a slowed + reverb edit);
+if it is some other song, or YouTube has nothing, the entry is skipped with a
+short on-screen note instead of playing the wrong track. The next track is
+resolved while the current one plays, so it adds no wait between songs. Turn it
+off with `GHOST_NO_SONGMATCH=1`.
+
+The artist check knows that some artists use a longer name on Spotify than on
+YouTube: a YouTube name the Spotify one starts with counts as the same artist,
+so `Asteriaarchive` matches uploads titled `asteria - <song>`, and the same goes
+for any other second account or `X Official` name. Once such a name has been
+seen, the artist's next songs that the Spotify name does not find are searched
+again under it. There is no per-artist list to keep up. Age-restricted songs
+are checked with your cookies.txt and still opened when the check asks for a
+login, so expired cookies show up as the cookie warning rather than a skip.
+Rich Presence still gets the picked video's id, thumbnail and button.
+
 ### Getting playlists
 
 Add the bot to your Discord server:
@@ -163,7 +188,27 @@ To see what the agent is doing — or why it cannot reach Discord — run
 Optional, and **never share it**: it holds live Google session cookies, and
 anyone who gets that file can sign into your account. You do not need one for
 normal playback — add one only if you hit age-restricted videos or rate
-limiting. Drop it next to `mpv.conf` and `scripts/cookies.lua` picks it up.
+limiting. Drop it next to `mpv.exe` and `mpv.conf`, and `scripts/cookies.lua`
+picks it up. It is in `.gitignore`, so it cannot end up in a commit.
+
+**Cookies do not last.** Every cookie has an expiry date, and YouTube also
+replaces them early whenever you use the same account in your browser — the old
+file then stops working long before its dates say so. Either way the symptom is
+the same: songs that will not open, while the same videos still play without
+cookies. mpv tells you when this is the likely reason:
+
+```
+Your YouTube cookies expired on 2026-09-30.
+Export a fresh cookies.txt from your browser and put it next to mpv.exe.
+```
+
+or, when a song fails even after its retries while cookies are in use,
+`A song would not open even with retries. If this keeps happening, your
+cookies.txt has probably expired.` Renewing means exporting a new file the
+same way you made the first one and replacing the old one; deleting it also
+works and plays everything that does not need a login. yt-dlp writes the
+cookies it got back into the same file after each song, so do not be surprised
+when its date changes.
 
 ---
 
@@ -192,7 +237,11 @@ because Node runs the plugin's own source.
 **Videos will not play.** Almost always yt-dlp being out of date against a
 YouTube change — run `update.bat` in the install folder. mpv normally warns you
 about this on its own before it gets that far. If it still fails, node is worth
-installing; YouTube increasingly asks the player to run JavaScript.
+installing; YouTube increasingly asks the player to run JavaScript, and a song
+that fails is retried with node.
+
+**Songs fail only when cookies.txt is there.** The cookies have expired or been
+replaced by YouTube — see [cookies.txt](#cookiestxt).
 
 **No window on an audio playlist.** You are on an older copy of `ghost.lua`;
 re-run `install.bat`.
@@ -248,6 +297,18 @@ starting a second agent.
 track mpv opens no window at all — leaving a playlist running with no way to seek, pause
 or change the volume short of a terminal nobody has open. `ghost.lua` sets `force-window`
 alongside it, so an audio list gets the usual window and on-screen controls.
+
+**node is the retry, not the first try.** With yt-dlp 2026.10.21, stream URLs resolved
+with node's help answered mpv with 403 for every entry of a playlist, while the same
+songs resolved without node played. So `cookies.lua` leaves node out at first and adds
+it only when ghost.lua retries an entry that failed. Its hook runs at priority 5,
+ahead of mpv's own ytdl_hook at 10: at 40 it had been setting options that only reached
+the *next* file.
+
+**Config files are found with `find_config_file`, not `~~/`.** The installer puts
+everything next to `mpv.exe`, but `~~/` means `%APPDATA%\mpv` as soon as that folder
+exists, and mpv creates it itself. A `cookies.txt` next to `mpv.exe` was silently never
+used, and the update check could miss the yt-dlp beside it.
 
 ---
 
