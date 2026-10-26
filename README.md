@@ -81,7 +81,7 @@ from the project that publishes it, at install time:
 |---|---|---|
 | `mpv.exe` | [shinchiro's Windows builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases) — the ones mpv.io points at | — |
 | `yt-dlp.exe` | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | ✅ SHA-256, against the sum yt-dlp publishes with the release |
-| `node.exe` *(optional)* | [nodejs.org](https://nodejs.org/dist/latest/win-x64/) | — |
+| `node.exe` *(optional, skipped if a node 22+ is already there)* | [nodejs.org](https://nodejs.org/dist/), the current LTS | ✅ SHA-256, against the sums node publishes |
 | Python *(only for Rich Presence, only if missing)* | [python.org](https://www.python.org/downloads/windows/) | ✅ Authenticode signature of the Python Software Foundation |
 
 Only the small stuff is ours: `mpv.conf`, a handful of Lua scripts and a Python agent,
@@ -119,6 +119,8 @@ Run update.bat in your mpv folder.
   `mpv.conf.bak`. `cookies.txt` is never touched.
 - **yt-dlp:** fetched from yt-dlp's own release and checked against its
   published SHA-256, the same rules as the installer.
+- **node:** left alone while yt-dlp accepts it (22 or newer). An older one is
+  replaced with the current LTS, checked against node's published SHA-256.
 - **mpv:** replaced with the latest Windows build when the one installed is
   more than a month behind it (close mpv first). The installer keeps an mpv
   that is already there, so this is what stops an old build lingering: a
