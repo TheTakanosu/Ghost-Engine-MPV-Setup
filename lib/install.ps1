@@ -47,6 +47,57 @@ function Ask([string]$Question, [bool]$Default = $true) {
     return $answer -match '^(y|e|yes|evet)$'
 }
 
+# pypresence needs 3.9; the agent is tested on 3.14.
+$MIN_PYTHON     = [version]"3.9"
+$PYTHON_VERSION = "3.14.10"
+$PYTHON_EXE     = "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-amd64.exe"
+
+# A Python that actually runs, with its version, or $null. Asking it to print
+# its version is the test because Windows ships a python.exe in WindowsApps
+# that is only a Microsoft Store shortcut: Get-Command finds it, it runs
+# nothing, and the old check took it for Python.
+function Find-Python {
+    foreach ($name in "py.exe", "python.exe") {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
+        # Windows PowerShell turns a native program's stderr into a terminating
+        # error under "Stop", and the Store shortcut writes to stderr.
+        try { $out = & $cmd.Source -c "import sys; print('%d.%d.%d' % sys.version_info[:3])" 2>$null }
+        catch { continue }
+        if ($LASTEXITCODE -eq 0 -and "$out" -match '^\d+\.\d+\.\d+$') {
+            return [pscustomobject]@{ Path = $cmd.Source; Version = [version]"$out" }
+        }
+    }
+    return $null
+}
+
+# Per-user install, so no administrator prompt. The installer is checked the
+# way Windows checks it: a valid Authenticode signature from the Python
+# Software Foundation, or it is not run.
+function Install-Python([string]$Temp) {
+    $setup = Join-Path $Temp "python-setup.exe"
+    Fetch $PYTHON_EXE $setup "Python $PYTHON_VERSION"
+    $sig = Get-AuthenticodeSignature $setup
+    if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+        Say "The Python installer is not signed by the Python Software Foundation; not running it." "Red"
+        return $null
+    }
+    Say "signature verified" "Green"
+    Say "installing Python (a minute or so) ..."
+    $p = Start-Process $setup -Wait -PassThru -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=1", "Include_test=0"
+    if ($p.ExitCode -ne 0) {
+        Say "The Python installer stopped with code $($p.ExitCode)." "Red"
+        return $null
+    }
+    # The installer adds Python to PATH for programs started from now on;
+    # this window still has the old PATH, so read it back from the registry.
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [Environment]::GetEnvironmentVariable("Path", "User")
+    $py = Find-Python
+    if ($py) { Say "Python $($py.Version) installed" "Green" }
+    return $py
+}
+
 function Get-Json([string]$Url) {
     Invoke-RestMethod -Uri $Url -Headers @{
         "Accept"     = "application/vnd.github+json"
@@ -107,7 +158,8 @@ try {
     if (-not $skipMpv) {
         $release = (Get-Json $MPV_RELEASES)[0]
         $asset = $release.assets |
-            Where-Object { $_.name -like "mpv-x86_64-*.7z" -and $_.name -notlike "*dev*" } |
+            # Not the -v3 build (needs AVX2) or the -dev one (libraries only).
+            Where-Object { $_.name -match '^mpv-x86_64-\d{8}-git-[0-9a-f]+\.7z$' } |
             Select-Object -First 1
         if (-not $asset) { throw "No x86_64 mpv build in release $($release.tag_name)." }
 
@@ -177,17 +229,27 @@ try {
     Step "5/5  Discord Rich Presence  (optional)"
     Say "mpv starts the presence agent itself; it needs one Python package." "DarkGray"
     if (-not $SkipRichPresence -and (Ask "Set up Rich Presence?" $true)) {
-        # Written out rather than with ??, which Windows PowerShell 5.1 - the
-        # one that ships with Windows - does not have.
-        $py = Get-Command py.exe -ErrorAction SilentlyContinue
-        if (-not $py) { $py = Get-Command python.exe -ErrorAction SilentlyContinue }
-        if ($py) {
-            & $py.Source -m pip install --quiet --disable-pip-version-check pypresence
+        $py = Find-Python
+        if ($py -and $py.Version -ge $MIN_PYTHON) {
+            Say "Python $($py.Version)" "DarkGray"
+        } else {
+            # Saying yes to the presence and getting no presence is what
+            # happened to people without Python: the agent needs it, and the
+            # old message scrolled past. So it is offered here, defaulting to
+            # yes, since the presence cannot work without it.
+            if ($py) { Say "Python $($py.Version) is too old for the presence agent (needs $MIN_PYTHON or newer)." "Yellow" }
+            else     { Say "The presence agent runs on Python, and there is none on this PC." "Yellow" }
+            if (Ask "Install Python $PYTHON_VERSION from python.org?" $true) {
+                $py = Install-Python $temp
+            }
+        }
+        if ($py -and $py.Version -ge $MIN_PYTHON) {
+            & $py.Path -m pip install --quiet --disable-pip-version-check pypresence
             if ($LASTEXITCODE -eq 0) { Say "pypresence installed" "Green" }
             else { Say "pip failed. Run 'py -m pip install pypresence' yourself." "Yellow" }
         } else {
-            Say "No Python found. Install it from python.org with 'Add Python to" "Yellow"
-            Say "PATH' ticked, then run ghost_rpc.bat once." "Yellow"
+            Say "No Rich Presence until Python is installed: python.org, with 'Add" "Yellow"
+            Say "Python to PATH' ticked, then run ghost_rpc.bat once." "Yellow"
         }
     } else {
         Say "skipped - playback still works, only the Discord card is missing" "DarkGray"
