@@ -1,84 +1,280 @@
 # =============================================================================
-#  Updates yt-dlp in place.
+#  Updates Ghost Engine, mpv and yt-dlp in place.
 # =============================================================================
-#  yt-dlp is the piece that resolves YouTube links, and it breaks whenever
-#  YouTube changes its player. scripts/updatecheck.lua notices and puts a line
-#  on screen; this is what that line asks you to run.
+#  scripts/updatecheck.lua notices when either has fallen behind and puts a
+#  line on screen; this is what that line asks you to run.
 #
-#  Same contract as the installer: fetched from yt-dlp's own release and
-#  checked against the SHA-256 they publish with it. A mismatch replaces
-#  nothing.
+#  Ghost Engine: a newer release is installed straight away - running this is
+#  the decision. A newer pre-release, a test build, is installed only if you
+#  say yes. The zip is checked against the SHA-256 GitHub records for it.
+#
+#  mpv: replaced with the latest build when the one here is over a month
+#  behind it, from the same Windows builds the installer uses.
+#
+#  yt-dlp: fetched from yt-dlp's own release and checked against the SHA-256
+#  they publish with it, the same contract as the installer.
+#
+#  A checksum mismatch replaces nothing.
 # =============================================================================
 param([switch]$Unattended)
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 function Say([string]$T, [string]$C = "Gray") { Write-Host "  $T" -ForegroundColor $C }
+function Ask([string]$Question, [bool]$Default) {
+    if ($Unattended) { return $Default }
+    $hint = if ($Default) { "[Y/n]" } else { "[y/N]" }
+    $answer = Read-Host "  $Question $hint"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return $answer -match '^(y|e|yes|evet)$'
+}
+function Get-Json([string]$Url) {
+    Invoke-RestMethod -Uri $Url -Headers @{
+        "Accept" = "application/vnd.github+json"; "User-Agent" = "Ghost-Engine-MPV-Setup"
+    }
+}
+function Temp-Path([string]$Name) {
+    Join-Path ([System.IO.Path]::GetTempPath()) ("ghost-" + [guid]::NewGuid().ToString("N").Substring(0, 8) + $Name)
+}
 
-$target = Join-Path $PSScriptRoot "yt-dlp.exe"
-$api = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+# "v1.3.0-beta.2" -> core 1.3.0, pre "beta.2". A release sorts after its own
+# pre-releases, which is the only ordering the tags here need.
+function Read-Tag([string]$Tag) {
+    $core, $pre = ($Tag.Trim() -replace '^v', '') -split '-', 2
+    try { $v = [version]$core } catch { return $null }
+    [pscustomobject]@{ Tag = $Tag.Trim(); Core = $v; Pre = "$pre" }
+}
+function Is-Newer($A, $B) {
+    if (-not $B) { return $true }
+    if ($A.Core -ne $B.Core) { return $A.Core -gt $B.Core }
+    if ($A.Pre -eq $B.Pre) { return $false }
+    if (-not $A.Pre) { return $true }
+    if (-not $B.Pre) { return $false }
+    return [string]::CompareOrdinal($A.Pre, $B.Pre) -gt 0
+}
 
 Write-Host ""
-Say "yt-dlp update" "Magenta"
-Write-Host ""
+Say "Ghost Engine update" "Magenta"
 
-if (Test-Path $target) {
-    $current = (& $target --version 2>$null) -join ""
+# -- Ghost Engine -------------------------------------------------------------
+$versionFile = Join-Path $PSScriptRoot "VERSION"
+$installed = if (Test-Path $versionFile) { Read-Tag (Get-Content $versionFile -Raw) } else { $null }
+Write-Host ""
+Say "Ghost Engine" "Cyan"
+Say "installed: $(if ($installed) { $installed.Tag } else { 'unknown (before 1.2.5)' })" "DarkGray"
+
+try {
+    # Stored first: Windows PowerShell hands a JSON array down a pipeline as
+    # one object, and every release would have been filtered out together.
+    $all = Get-Json "https://api.github.com/repos/TheTakanosu/Ghost-Engine-MPV-Setup/releases?per_page=20"
+    $releases = @($all | Where-Object { -not $_.draft })
+} catch {
+    Say "Could not reach GitHub: $($_.Exception.Message)" "Yellow"
+    $releases = @()
+}
+
+$stable = $null; $preview = $null
+foreach ($r in $releases) {
+    $tag = Read-Tag $r.tag_name
+    if (-not $tag) { continue }
+    $tag | Add-Member -NotePropertyName Release -NotePropertyValue $r
+    if ($r.prerelease) { if (Is-Newer $tag $preview) { $preview = $tag } }
+    else               { if (Is-Newer $tag $stable)  { $stable  = $tag } }
+}
+
+$target = $null
+if ($stable -and (Is-Newer $stable $installed)) {
+    Say "latest   : $($stable.Tag)" "DarkGray"
+    $target = $stable
+} elseif ($preview -and (Is-Newer $preview $installed)) {
+    Say "latest   : $(if ($stable) { $stable.Tag } else { 'none' })  - you have it" "DarkGray"
+    Say "$($preview.Tag) is a PRE-RELEASE: a test build that may still have problems." "Yellow"
+    if (Ask "Install the pre-release?" $false) { $target = $preview }
+    else { Say "staying on $($installed.Tag)" "DarkGray" }
+} elseif ($releases.Count) {
+    Say "Already current." "Green"
+}
+
+if ($target) {
+    $asset = $target.Release.assets | Where-Object { $_.name -eq "Ghost-Engine-MPV-Setup.zip" } | Select-Object -First 1
+    if (-not $asset) {
+        Say "$($target.Tag) has no Ghost-Engine-MPV-Setup.zip - nothing changed." "Red"
+    } else {
+        $zip = Temp-Path ".zip"
+        $unpacked = Temp-Path ""
+        try {
+            Say "downloading $($target.Tag) ..."
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
+            $expected = "$($asset.digest)" -replace '^sha256:', ''
+            $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+            if (-not $expected -or $actual -ne $expected.ToLower()) {
+                throw "checksum mismatch (expected $expected, got $actual)"
+            }
+            Say "checksum verified" "Green"
+
+            Expand-Archive $zip $unpacked -Force
+            $payload = Join-Path $unpacked "mpv"
+            if (-not (Test-Path (Join-Path $payload "mpv.conf"))) { throw "the zip has no mpv folder" }
+
+            # Someone may have edited mpv.conf by hand. It is kept as
+            # mpv.conf.bak rather than lost when the new one differs.
+            $conf = Join-Path $PSScriptRoot "mpv.conf"
+            if ((Test-Path $conf) -and
+                (Get-FileHash $conf).Hash -ne (Get-FileHash (Join-Path $payload "mpv.conf")).Hash) {
+                Copy-Item $conf "$conf.bak" -Force
+                Say "your old mpv.conf is saved as mpv.conf.bak" "DarkGray"
+            }
+            # cookies.txt, yt-dlp, node and mpv itself are not in the zip and
+            # stay as they are. Lua scripts are read when mpv starts, so a
+            # player that is open keeps the old ones until it is reopened.
+            Copy-Item (Join-Path $payload "*") $PSScriptRoot -Recurse -Force
+            # The zip carries its own VERSION, but the tag is what was asked
+            # for and what the next check compares against.
+            [System.IO.File]::WriteAllText($versionFile, ($target.Tag -replace '^v', '') + "`n")
+            Say "Ghost Engine updated to $($target.Tag). Reopen mpv to use it." "Green"
+        } catch {
+            Say "Ghost Engine was not updated: $($_.Exception.Message)" "Red"
+        } finally {
+            Remove-Item $zip, $unpacked -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# -- mpv ------------------------------------------------------------------------
+# The installer keeps an mpv that is already there, so without this an install
+# runs the build it started with forever. That bit for real: a December 2025
+# build's console.lua crashed when the window was minimised during a song
+# change, and the playlist menu, console and stats stayed dead until mpv was
+# reopened. mpv fixed it six days after that build. A build more than a month
+# behind the latest is replaced; nightly churn alone is not worth 30 MB.
+$mpvExe = Join-Path $PSScriptRoot "mpv.exe"
+Write-Host ""
+Say "mpv" "Cyan"
+if (Test-Path $mpvExe) {
+    $built = $null
+    $line = (& $mpvExe --version 2>$null | Select-String "built on" | Select-Object -First 1)
+    if ($line -and "$line" -match 'built on (\w{3})\s+(\d{1,2})\s+(\d{4})') {
+        $built = [datetime]::ParseExact("$($Matches[1]) $($Matches[2]) $($Matches[3])", "MMM d yyyy",
+                                        [System.Globalization.CultureInfo]::InvariantCulture)
+        Say "installed: built $($built.ToString('yyyy-MM-dd'))" "DarkGray"
+    }
+    try {
+        $mpvRelease = (Get-Json "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases?per_page=1")[0]
+    } catch {
+        Say "Could not reach GitHub: $($_.Exception.Message)" "Yellow"
+        $mpvRelease = $null
+    }
+    $latestDate = $null
+    if ($mpvRelease -and $mpvRelease.tag_name -match '^\d{8}$') {
+        $latestDate = [datetime]::ParseExact($mpvRelease.tag_name, "yyyyMMdd", $null)
+        Say "latest   : built $($latestDate.ToString('yyyy-MM-dd'))" "DarkGray"
+    }
+    if ($latestDate -and $built -and ($latestDate - $built).TotalDays -le 30) {
+        Say "Recent enough." "Green"
+    } elseif ($latestDate) {
+        $running = @(Get-Process mpv -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -and (Split-Path $_.Path -Parent) -eq $PSScriptRoot })
+        $asset = $mpvRelease.assets | Where-Object { $_.name -match '^mpv-x86_64-\d{8}-git-[0-9a-f]+\.7z$' } |
+            Select-Object -First 1
+        $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+        if ($running.Count) {
+            Say "mpv is open, so it cannot be replaced. Close it and run this again." "Yellow"
+        } elseif (-not $asset -or -not (Test-Path $tar)) {
+            Say "No x86_64 build in that release (or no tar.exe) - mpv left as it is." "Yellow"
+        } else {
+            $archive = Temp-Path ".7z"
+            $unpacked = Temp-Path ""
+            try {
+                Say "downloading $($asset.name) ..."
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive -UseBasicParsing
+                New-Item -ItemType Directory -Force $unpacked | Out-Null
+                & $tar -xf $archive -C $unpacked
+                if ($LASTEXITCODE -ne 0) { throw "tar could not unpack the archive" }
+                if (-not (Test-Path (Join-Path $unpacked "mpv.exe"))) { throw "no mpv.exe in the archive" }
+                Copy-Item (Join-Path $unpacked "*") $PSScriptRoot -Recurse -Force
+                Say "mpv updated" "Green"
+            } catch {
+                Say "mpv was not updated: $($_.Exception.Message)" "Red"
+            } finally {
+                Remove-Item $archive, $unpacked -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+# -- yt-dlp ---------------------------------------------------------------------
+$exePath = Join-Path $PSScriptRoot "yt-dlp.exe"
+Write-Host ""
+Say "yt-dlp" "Cyan"
+
+if (Test-Path $exePath) {
+    $current = (& $exePath --version 2>$null) -join ""
     Say "installed: $current" "DarkGray"
 }
 
-$release = Invoke-RestMethod -Uri $api -Headers @{
-    "Accept" = "application/vnd.github+json"; "User-Agent" = "Ghost-Engine-MPV-Setup"
-}
-Say "latest   : $($release.tag_name)" "DarkGray"
-
-if ($current -and $current -eq $release.tag_name) {
-    Say "Already current - nothing to do." "Green"
-    Write-Host ""
-    if (-not $Unattended) { Read-Host "  Press Enter to close" | Out-Null }
-    exit 0
-}
-
-$exe = $release.assets | Where-Object { $_.name -eq "yt-dlp.exe" } | Select-Object -First 1
-$sum = $release.assets | Where-Object { $_.name -eq "SHA2-256SUMS" } | Select-Object -First 1
-if (-not $exe) { Say "yt-dlp.exe is missing from that release." "Red"; exit 1 }
-
-$temp = Join-Path ([System.IO.Path]::GetTempPath()) ("ytdlp-" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".exe")
-Say "downloading ..."
-Invoke-WebRequest -Uri $exe.browser_download_url -OutFile $temp -UseBasicParsing
-
-if ($sum) {
-    $sumFile = "$temp.sums"
-    Invoke-WebRequest -Uri $sum.browser_download_url -OutFile $sumFile -UseBasicParsing
-    $expected = (Get-Content $sumFile | Where-Object { $_ -match '\s+yt-dlp\.exe$' } |
-                 Select-Object -First 1) -split '\s+' | Select-Object -First 1
-    $actual = (Get-FileHash $temp -Algorithm SHA256).Hash.ToLower()
-    Remove-Item $sumFile -Force -ErrorAction SilentlyContinue
-    if (-not $expected -or $actual -ne $expected.ToLower()) {
-        Remove-Item $temp -Force -ErrorAction SilentlyContinue
-        Say "Checksum mismatch - nothing was replaced." "Red"
-        Say "  expected $expected" "DarkGray"
-        Say "  got      $actual" "DarkGray"
-        exit 1
-    }
-    Say "checksum verified" "Green"
-}
-
-# mpv holds no lock on yt-dlp between tracks, but a copy that is mid-download
-# does. Closing mpv first is the reliable path, so say so rather than failing
-# with a permissions error nobody can read.
 try {
-    Move-Item $temp $target -Force
+    $release = Get-Json "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 } catch {
-    Remove-Item $temp -Force -ErrorAction SilentlyContinue
-    Say "Could not replace yt-dlp.exe - close mpv and run this again." "Red"
-    exit 1
+    Say "Could not reach GitHub: $($_.Exception.Message)" "Yellow"
+    $release = $null
+}
+
+if ($release) {
+    Say "latest   : $($release.tag_name)" "DarkGray"
+    if ($current -and $current -eq $release.tag_name) {
+        Say "Already current." "Green"
+    } else {
+        $exe = $release.assets | Where-Object { $_.name -eq "yt-dlp.exe" } | Select-Object -First 1
+        $sum = $release.assets | Where-Object { $_.name -eq "SHA2-256SUMS" } | Select-Object -First 1
+        if (-not $exe) {
+            Say "yt-dlp.exe is missing from that release." "Red"
+        } else {
+            $temp = Temp-Path ".exe"
+            Say "downloading ..."
+            Invoke-WebRequest -Uri $exe.browser_download_url -OutFile $temp -UseBasicParsing
+
+            $ok = $true
+            if ($sum) {
+                $sumFile = "$temp.sums"
+                Invoke-WebRequest -Uri $sum.browser_download_url -OutFile $sumFile -UseBasicParsing
+                $expected = (Get-Content $sumFile | Where-Object { $_ -match '\s+yt-dlp\.exe$' } |
+                             Select-Object -First 1) -split '\s+' | Select-Object -First 1
+                $actual = (Get-FileHash $temp -Algorithm SHA256).Hash.ToLower()
+                Remove-Item $sumFile -Force -ErrorAction SilentlyContinue
+                if (-not $expected -or $actual -ne $expected.ToLower()) {
+                    Remove-Item $temp -Force -ErrorAction SilentlyContinue
+                    Say "Checksum mismatch - nothing was replaced." "Red"
+                    Say "  expected $expected" "DarkGray"
+                    Say "  got      $actual" "DarkGray"
+                    $ok = $false
+                } else {
+                    Say "checksum verified" "Green"
+                }
+            }
+
+            # mpv holds no lock on yt-dlp between tracks, but a copy that is
+            # mid-download does. Closing mpv first is the reliable path, so
+            # say so rather than failing with a permissions error nobody can read.
+            if ($ok) {
+                try {
+                    Move-Item $temp $exePath -Force
+                    Say "updated to $($release.tag_name)" "Green"
+                } catch {
+                    Remove-Item $temp -Force -ErrorAction SilentlyContinue
+                    Say "Could not replace yt-dlp.exe - close mpv and run this again." "Red"
+                }
+            }
+        }
+    }
 }
 
 # Let the freshness check ask again next time rather than trusting yesterday's
-# answer now that the answer has changed.
-Remove-Item (Join-Path $PSScriptRoot ".ytdlp-checked") -Force -ErrorAction SilentlyContinue
+# answer now that the answer may have changed. updatecheck.lua keeps its stamp
+# in mpv's config folder, %APPDATA%\mpv once that exists; older versions of
+# this script looked next to itself, so both are cleared.
+foreach ($dir in $PSScriptRoot, (Join-Path $env:APPDATA "mpv")) {
+    Remove-Item (Join-Path $dir ".ytdlp-checked") -Force -ErrorAction SilentlyContinue
+}
 
-Say "updated to $($release.tag_name)" "Green"
 Write-Host ""
 if (-not $Unattended) { Read-Host "  Press Enter to close" | Out-Null }

@@ -26,6 +26,40 @@ mp.add_hook("on_load", 50, function()
     end
 end)
 
+-- Opening a song means a YouTube search and an extraction, 3-4 s on a good
+-- connection and over 20 s on a slow laptop, and mpv shows nothing meanwhile.
+-- An unchanged window reads as a frozen player, so say what is happening.
+-- Only once it has taken over a second: a song already resolved opens
+-- without a flash of text. It is an overlay of its own rather than an OSD
+-- message, so it never covers the cookie or "skipped" notices the other
+-- scripts put up meanwhile.
+local loading_timer
+local loading = mp.create_osd_overlay("ass-events")
+
+local function stop_loading()
+    if loading_timer then loading_timer:kill() loading_timer = nil end
+    loading:remove()
+end
+
+local function ass_escape(text)
+    return (text:gsub("\\", "\\\226\129\160"):gsub("{", "\\{"):gsub("\n", " "))
+end
+
+mp.register_event("start-file", function()
+    stop_loading()
+    local pos = mp.get_property_number("playlist-playing-pos", -1)
+    local title = pos >= 0 and mp.get_property("playlist/" .. pos .. "/title") or nil
+    loading_timer = mp.add_timeout(1, function()
+        loading_timer = nil
+        -- Top left: the bottom belongs to the on-screen controls.
+        loading.data = "{\\an7\\fs28\\bord2}Loading" ..
+            (title and (": " .. ass_escape(title:match("^%s*(.-)%s*$"))) or "") .. " ..."
+        loading:update()
+    end)
+end)
+mp.register_event("file-loaded", stop_loading)
+mp.register_event("end-file", stop_loading)
+
 -- YouTube now and then answers a freshly signed stream URL with 403 even
 -- though the next extraction of the same song plays fine. mpv treats that as
 -- a broken file and jumps to the next entry, so songs seemed to skip at

@@ -37,7 +37,9 @@ is doing when you want to know why it is quiet, and mpv tells you when the
 second is worth running.
 
 It asks where to install (`C:\mpv` by default), whether you want node, Rich
-Presence and file associations, and then it is done. Takes under a minute on a
+Presence and file associations, and then it is done. Rich Presence runs on
+Python: if there is none on the PC, or it is older than 3.9, the installer
+offers to install it for you (per user, from python.org). Takes under a minute on a
 normal connection. No administrator rights.
 
 **Windows 10 (1803 or newer) or Windows 11.** That is the version that started
@@ -80,6 +82,7 @@ from the project that publishes it, at install time:
 | `mpv.exe` | [shinchiro's Windows builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases) — the ones mpv.io points at | — |
 | `yt-dlp.exe` | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | ✅ SHA-256, against the sum yt-dlp publishes with the release |
 | `node.exe` *(optional)* | [nodejs.org](https://nodejs.org/dist/latest/win-x64/) | — |
+| Python *(only for Rich Presence, only if missing)* | [python.org](https://www.python.org/downloads/windows/) | ✅ Authenticode signature of the Python Software Foundation |
 
 Only the small stuff is ours: `mpv.conf`, a handful of Lua scripts and a Python agent,
 all of which you can read in this repo in about five minutes.
@@ -95,25 +98,44 @@ would be broken within weeks, and it would look like *this* was what broke.
 
 ### Staying current
 
-yt-dlp is the piece that breaks when YouTube changes its player, and it is also
-the one that is easy to forget about. So mpv checks — **at most once a day, in
-the background, never blocking playback** — whether the yt-dlp next to it has
-fallen behind, and puts a line on screen if it has:
+Two things fall behind: yt-dlp, which breaks when YouTube changes its player,
+and Ghost Engine itself. mpv checks both — **at most once a day, in the
+background, never blocking playback** — and puts a line on screen when either
+has a newer release:
 
 ```
 yt-dlp is out of date (2026.08.19 → 2026.09.11)
-Videos may stop resolving. Run update.bat in your mpv folder.
+Videos may stop resolving.
+Ghost Engine 1.3.0 is out (you have 1.2.5).
+Run update.bat in your mpv folder.
 ```
 
-`update.bat` in the install folder fetches the current yt-dlp under the same
-rules as the installer — from yt-dlp's own release, checked against its
-published SHA-256, and nothing is replaced if the sum does not match.
+`update.bat` in the install folder then does the rest:
 
-**It never updates by itself.** A media player that silently replaces an
-executable on your disk because you opened a video is not a trade anyone agreed
-to, and on a metered connection it is worse than rude. It tells you; you decide.
+- **Ghost Engine:** a newer release is installed straight away; the zip is
+  checked against the SHA-256 GitHub records for it. A newer **pre-release** (a
+  test build) is only offered: it is labelled as one and installs only if you
+  answer yes. If you edited `mpv.conf` yourself, your copy is kept as
+  `mpv.conf.bak`. `cookies.txt` is never touched.
+- **yt-dlp:** fetched from yt-dlp's own release and checked against its
+  published SHA-256, the same rules as the installer.
+- **mpv:** replaced with the latest Windows build when the one installed is
+  more than a month behind it (close mpv first). The installer keeps an mpv
+  that is already there, so this is what stops an old build lingering: a
+  December 2025 build lost its playlist menu, console and stats until restart
+  whenever the window was minimised during a song change, and mpv fixed that a
+  week later.
 
-Turn the check off with `GHOST_NO_UPDATE_CHECK=1`, or by deleting
+Nothing is replaced when a checksum does not match. Reopen mpv afterwards; an
+open player keeps the scripts it started with.
+
+**It never updates by itself.** A media player that silently replaces files on
+your disk because you opened a video is not a trade anyone agreed to, and on a
+metered connection it is worse than rude. It tells you; you run `update.bat`.
+
+The Ghost Engine check needs an install from 1.2.5 or later, which writes a
+`VERSION` file; older installs only hear about yt-dlp until they are installed
+once more. Turn the checks off with `GHOST_NO_UPDATE_CHECK=1`, or by deleting
 `scripts/updatecheck.lua`.
 
 ---

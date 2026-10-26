@@ -45,6 +45,7 @@ local SKIP = {}
 
 local resolved = {}   -- query -> video id, SKIP, or false to play it as is
 local pending = {}    -- query -> list of callbacks waiting for that search
+local candidate = {}  -- query -> YouTube Music pick still being checked
 local known_as = {}   -- compacted Spotify artist -> shorter name seen on YouTube
 
 -- Lua's lower() only knows ASCII, and Turkish letters are two bytes each.
@@ -282,6 +283,7 @@ local function resolve(query, title, audio, done)
         local id = pick(entries, query, title, true)
         mp.msg.verbose("youtube music for '" .. query .. "': " .. tostring(id))
         if not id then plain_search() return end
+        candidate[query] = id
         credited(id, artist, function(yes)
             if yes then finish(query, id) return end
             mp.msg.verbose(id .. " is not by " .. artist .. ", searching youtube")
@@ -346,7 +348,11 @@ mp.add_hook("on_load", 8, function(hook)
     end
 
     hook:defer()
-    mp.add_timeout(GIVE_UP_AFTER, function() use(nil) end)
+    -- A slow machine can still be checking the artist when time runs out
+    -- (measured: 8.6 s per yt-dlp call on a laptop at 9% battery). The
+    -- YouTube Music pick is then a better bet than YouTube's own first
+    -- result, which costs one more yt-dlp call and played another upload.
+    mp.add_timeout(GIVE_UP_AFTER, function() use(candidate[query]) end)
     resolve(query, title, is_audio_list(), use)
 end)
 
