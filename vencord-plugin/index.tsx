@@ -72,7 +72,7 @@ export default definePlugin({
     name: "GhostPlay",
     description:
         "Adds a button to YouTube links and .m3u playlists in Discord that opens them in your local mpv.",
-    authors: [{ name: "TheTakanosu", id: 0n }],
+    authors: [{ name: "TheTakanosu", id: 279614390163210241n }],
     settings,
 
     messagePopoverButton: {

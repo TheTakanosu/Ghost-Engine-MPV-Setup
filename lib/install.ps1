@@ -33,7 +33,7 @@ $ProgressPreference = "SilentlyContinue"
 
 $MPV_RELEASES  = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases?per_page=1"
 $YTDLP_RELEASE = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
-$NODE_EXE      = "https://nodejs.org/dist/latest/win-x64/node.exe"
+$NODE_INDEX    = "https://nodejs.org/dist/index.json"
 $DISCORD       = "https://discord.gg/w6cR8JU3qP"
 $BOT_INVITE    = "https://discord.com/oauth2/authorize?client_id=1530546215303909518&permissions=117760&scope=bot"
 
@@ -98,6 +98,44 @@ function Install-Python([string]$Temp) {
     return $py
 }
 
+# yt-dlp refuses node older than 22 (MIN_SUPPORTED_VERSION in its
+# _jsruntime.py). Anything at or above that is left alone: node keeps old code
+# working, so a newer one is not worth 100 MB, and an older one is the risk.
+$MIN_NODE = 22
+
+function Find-Node([string]$Dir) {
+    foreach ($path in @((Join-Path $Dir "node.exe"),
+                        (Get-Command node.exe -ErrorAction SilentlyContinue).Source)) {
+        if (-not $path -or -not (Test-Path $path)) { continue }
+        try { $v = & $path --version 2>$null } catch { continue }
+        if ($LASTEXITCODE -eq 0 -and "$v" -match '^v(\d+)\.') {
+            return [pscustomobject]@{ Path = $path; Version = "$v"; Major = [int]$Matches[1] }
+        }
+    }
+    return $null
+}
+
+# The newest LTS line rather than the newest release: LTS is the one node
+# itself calls stable. Checked against the SHA-256 node publishes with it.
+function Install-Node([string]$Target, [string]$Temp) {
+    $index = Invoke-RestMethod -Uri $NODE_INDEX -UseBasicParsing
+    $lts = @($index | Where-Object { $_.lts })[0].version
+    $base = "https://nodejs.org/dist/$lts"
+    $file = Join-Path $Temp "node.exe"
+    Fetch "$base/win-x64/node.exe" $file "node $lts (LTS)"
+    $sums = Invoke-WebRequest -Uri "$base/SHASUMS256.txt" -UseBasicParsing
+    $expected = (("$($sums.Content)" -split "`n") | Where-Object { $_ -match '\swin-x64/node\.exe\s*$' } |
+                 Select-Object -First 1) -split '\s+' | Select-Object -First 1
+    $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+    if (-not $expected -or $actual -ne $expected.ToLower()) {
+        Say "node.exe does not match its published checksum - not installed." "Red"
+        return
+    }
+    Say "checksum verified" "Green"
+    Copy-Item $file $Target -Force
+    Say "node installed" "Green"
+}
+
 function Get-Json([string]$Url) {
     Invoke-RestMethod -Uri $Url -Headers @{
         "Accept"     = "application/vnd.github+json"
@@ -149,8 +187,20 @@ New-Item -ItemType Directory -Force $temp | Out-Null
 try {
     # -- mpv ------------------------------------------------------------------
     Step "1/5  mpv"
-    if (Test-Path (Join-Path $InstallDir "mpv.exe")) {
-        if (-not (Ask "mpv.exe is already there. Download it again?" $false)) {
+    $existingMpv = Join-Path $InstallDir "mpv.exe"
+    if (Test-Path $existingMpv) {
+        # An old build is worth replacing: a December 2025 one lost its
+        # playlist menu whenever the window was minimised during a song
+        # change. So the default flips to yes once it is over a month old.
+        $stale = $false
+        $line = (& $existingMpv --version 2>$null | Select-String "built on" | Select-Object -First 1)
+        if ($line -and "$line" -match 'built on (\w{3})\s+(\d{1,2})\s+(\d{4})') {
+            $built = [datetime]::ParseExact("$($Matches[1]) $($Matches[2]) $($Matches[3])", "MMM d yyyy",
+                                            [System.Globalization.CultureInfo]::InvariantCulture)
+            $stale = ((Get-Date) - $built).TotalDays -gt 30
+            Say "the mpv there was built $($built.ToString('yyyy-MM-dd'))$(if ($stale) { ' - over a month old' })" "DarkGray"
+        }
+        if (-not (Ask "mpv.exe is already there. Download it again?" $stale)) {
             Say "keeping the mpv you have" "DarkGray"
             $skipMpv = $true
         }
@@ -212,11 +262,25 @@ try {
     Step "3/5  node  (optional)"
     Say "YouTube increasingly asks the player to run JavaScript. Without node," "DarkGray"
     Say "some videos fail to resolve." "DarkGray"
-    if (-not $SkipNode -and (Ask "Install node?" $true)) {
-        Fetch $NODE_EXE (Join-Path $InstallDir "node.exe") "node"
-        Say "node installed" "Green"
-    } else {
+    # yt-dlp finds node beside it or on PATH, so either one already there
+    # saves a 100 MB download, as long as yt-dlp accepts it.
+    $node = Find-Node $InstallDir
+    if ($SkipNode) {
         Say "skipped" "DarkGray"
+    } elseif ($node -and $node.Major -ge $MIN_NODE) {
+        Say "node $($node.Version) at $($node.Path)" "DarkGray"
+        if (Ask "node is already there. Download it again?" $false) {
+            Install-Node (Join-Path $InstallDir "node.exe") $temp
+        } else {
+            Say "keeping the node you have" "DarkGray"
+        }
+    } else {
+        if ($node) { Say "node $($node.Version) is too old for yt-dlp (needs $MIN_NODE or newer)." "Yellow" }
+        if (Ask "Install node?" $true) {
+            Install-Node (Join-Path $InstallDir "node.exe") $temp
+        } else {
+            Say "skipped" "DarkGray"
+        }
     }
 
     # -- the Ghost Engine layer ----------------------------------------------

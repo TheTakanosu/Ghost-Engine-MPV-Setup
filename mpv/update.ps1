@@ -148,9 +148,9 @@ if ($target) {
 # reopened. mpv fixed it six days after that build. A build more than a month
 # behind the latest is replaced; nightly churn alone is not worth 30 MB.
 $mpvExe = Join-Path $PSScriptRoot "mpv.exe"
-Write-Host ""
-Say "mpv" "Cyan"
 if (Test-Path $mpvExe) {
+    Write-Host ""
+    Say "mpv" "Cyan"
     $built = $null
     $line = (& $mpvExe --version 2>$null | Select-String "built on" | Select-Object -First 1)
     if ($line -and "$line" -match 'built on (\w{3})\s+(\d{1,2})\s+(\d{4})') {
@@ -198,6 +198,41 @@ if (Test-Path $mpvExe) {
             } finally {
                 Remove-Item $archive, $unpacked -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+}
+
+# -- node -----------------------------------------------------------------------
+# Only the node.exe the installer put here, and only when yt-dlp would refuse
+# it (below 22, its MIN_SUPPORTED_VERSION). A working node is left alone: a
+# newer one buys nothing and is one more thing that could change.
+$nodeExe = Join-Path $PSScriptRoot "node.exe"
+if (Test-Path $nodeExe) {
+    $nodeVersion = $null
+    try { $nodeVersion = "$(& $nodeExe --version 2>$null)" } catch { }
+    if ($nodeVersion -match '^v(\d+)\.' -and [int]$Matches[1] -lt 22) {
+        Write-Host ""
+        Say "node" "Cyan"
+        Say "installed: $nodeVersion - too old for yt-dlp (needs 22 or newer)" "Yellow"
+        $file = Temp-Path ".exe"
+        try {
+            $index = Get-Json "https://nodejs.org/dist/index.json"
+            $lts = @($index | Where-Object { $_.lts })[0].version
+            $base = "https://nodejs.org/dist/$lts"
+            Say "downloading node $lts (LTS) ..."
+            Invoke-WebRequest -Uri "$base/win-x64/node.exe" -OutFile $file -UseBasicParsing
+            $sums = Invoke-WebRequest -Uri "$base/SHASUMS256.txt" -UseBasicParsing
+            $expected = (("$($sums.Content)" -split "`n") | Where-Object { $_ -match '\swin-x64/node\.exe\s*$' } |
+                         Select-Object -First 1) -split '\s+' | Select-Object -First 1
+            if (-not $expected -or (Get-FileHash $file -Algorithm SHA256).Hash.ToLower() -ne $expected.ToLower()) {
+                throw "checksum mismatch"
+            }
+            Move-Item $file $nodeExe -Force
+            Say "node updated to $lts" "Green"
+        } catch {
+            Say "node was not updated: $($_.Exception.Message)" "Red"
+        } finally {
+            Remove-Item $file -Force -ErrorAction SilentlyContinue
         }
     }
 }
