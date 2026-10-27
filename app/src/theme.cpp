@@ -90,7 +90,7 @@ void apply(QApplication &app)
         QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
         QLineEdit#nameEdit { background: rgba(0,0,0,90); border: 1px solid rgb(176,127,224); border-radius: 8px;
                              padding: 0 6px; font-weight: 800; color: white; }
-        QLineEdit#songSearch { border-radius: 16px; padding: 6px 14px; }
+        QLineEdit#songSearch { border-radius: 16px; padding: 0 14px; min-height: 32px; max-height: 32px; }
         QLabel#heroInfo { color: rgb(225,223,232); font-size: 10pt; }
         QLabel#panelTitle { font-size: 11.5pt; font-weight: 700; color: rgb(220,218,228); }
         QListWidget#library, QListWidget#songs { background: transparent; border: none; outline: none; }
@@ -109,12 +109,12 @@ void apply(QApplication &app)
         }
         QPushButton#chrome:hover { background: rgb(40,39,50); color: white; }
         QPushButton#chromeClose:hover { background: rgb(196,43,28); color: white; }
-        QLineEdit#topSearch { background: rgb(33,32,41); border-radius: 17px; padding: 7px 16px; }
-        QPushButton#chip { border-radius: 14px; padding: 5px 12px; font-size: 9pt; }
+        QLineEdit#topSearch { background: rgb(33,32,41); border-radius: 17px; padding: 0 16px; min-height: 34px; max-height: 34px; }
+        QPushButton#chip { border-radius: 14px; padding: 0 12px; min-height: 28px; max-height: 28px; font-size: 9pt; }
         QPushButton#chip:checked { background: rgb(236,236,241); border-color: rgb(236,236,241); color: rgb(22,21,27); }
         QPushButton#primary {
             background: rgb(176,127,224); border: none; color: rgb(24,18,34); font-weight: 700;
-            border-radius: 20px; padding: 10px 28px;
+            border-radius: 20px; padding: 0 28px; min-height: 40px; max-height: 40px;
         }
         QPushButton#primary:hover { background: rgb(192,148,236); }
         QLabel#kicker { color: rgb(154,152,166); font-size: 8.5pt; font-weight: 700; letter-spacing: 1px; }
@@ -150,7 +150,7 @@ void apply(QApplication &app)
         QPushButton:hover { background: rgb(42,40,53); }
         QLineEdit {
             background: rgb(33,32,41); border: 1px solid rgb(52,50,64);
-            border-radius: 18px; padding: 8px 16px; selection-background-color: rgb(176,127,224);
+            border-radius: 18px; padding: 0 16px; min-height: 36px; selection-background-color: rgb(176,127,224);
         }
         QLineEdit:focus { border-color: rgb(176,127,224); }
         QSplitter::handle { background: rgb(12,11,15); }
@@ -172,13 +172,18 @@ void apply(QApplication &app)
         QMenu::item { padding: 6px 18px; border-radius: 6px; }
         QMenu::item:selected { background: rgb(60,48,84); }
     )");
-    // Point sizes in the sheet follow the zoom too.
-    static const QRegularExpression pt(QStringLiteral(R"((\d+(?:\.\d+)?)pt)"));
+    // Point sizes and pixel lengths in the sheet follow the zoom too. Radii must shrink
+    // with the boxes: Qt draws a square box once the radius is more than half its height.
+    static const QRegularExpression unit(QStringLiteral(R"((\d+(?:\.\d+)?)(pt|px))"));
     QString scaled;
     qsizetype last = 0;
-    for (auto it = pt.globalMatch(css); it.hasNext();) {
+    for (auto it = unit.globalMatch(css); it.hasNext();) {
         const auto m = it.next();
-        scaled += css.mid(last, m.capturedStart() - last) + QString::number(m.captured(1).toDouble() * g_zoom, 'f', 1) + "pt";
+        const qreal v = m.captured(1).toDouble() * g_zoom;
+        const QString n = m.captured(2) == QLatin1String("pt")
+            ? QString::number(v, 'f', 1)
+            : QString::number(v > 0 ? qMax(1, qRound(v)) : 0);
+        scaled += css.mid(last, m.capturedStart() - last) + n + m.captured(2);
         last = m.capturedEnd();
     }
     app.setStyleSheet(scaled + css.mid(last));
