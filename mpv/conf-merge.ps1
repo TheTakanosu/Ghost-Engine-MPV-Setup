@@ -14,6 +14,9 @@
 #  This is what git does with a three-way merge, one "key=value" line at a
 #  time, and it means volume=20 survives an update that also adds new options.
 #
+#  An mpv.conf.bak left by the 1.2.5/1.2.6 update.bat is the user's file when
+#  the mpv.conf beside it is untouched; see Install-MpvConf.
+#
 #  Before .mpv.conf.shipped existed (installs before 1.2.7) there is no base.
 #  mpv.conf had never changed in any release until then, so the new one stands
 #  in for it: every difference is then the user's and is kept.
@@ -103,6 +106,8 @@ function Merge-MpvConf([string]$Base, [string]$New, [string]$User) {
 function Install-MpvConf([string]$NewConf, [string]$Dir) {
     $target = Join-Path $Dir "mpv.conf"
     $shipped = Join-Path $Dir ".mpv.conf.shipped"
+    $bak = "$target.bak"
+    $checked = Join-Path $Dir ".mpv.conf.bak-checked"
     $new = [System.IO.File]::ReadAllText($NewConf)
     $message = $null
 
@@ -112,17 +117,35 @@ function Install-MpvConf([string]$NewConf, [string]$Dir) {
         $user = [System.IO.File]::ReadAllText($target)
         $base = if (Test-Path $shipped) { [System.IO.File]::ReadAllText($shipped) } else { $new }
         $norm = { param($t) ($t -replace "`r`n", "`n").TrimEnd() }
-        if ((& $norm $user) -eq (& $norm $base)) {
+        $recovered = $false
+
+        # The update.bat of 1.2.5 and 1.2.6 knew no merge: it saved a changed
+        # mpv.conf as mpv.conf.bak and put the shipped one in its place. That
+        # left an untouched mpv.conf with the user's real one beside it. Their
+        # changes are taken from the .bak, once per install, so someone who
+        # later goes back to the defaults on purpose is not undone by an old
+        # backup.
+        if (-not (Test-Path $checked) -and (Test-Path $bak) -and
+            (& $norm $user) -eq (& $norm $base)) {
+            $old = [System.IO.File]::ReadAllText($bak)
+            if ((& $norm $old) -ne (& $norm $user)) { $user = $old; $recovered = $true }
+        }
+
+        if (-not $recovered -and (& $norm $user) -eq (& $norm $base)) {
             # Untouched since we wrote it: the new one goes in as shipped,
             # comments and all.
             [System.IO.File]::WriteAllText($target, $new)
         } else {
             $merged = Merge-MpvConf $base $new $user
-            if ((& $norm $merged.Text) -ne (& $norm $user)) {
-                Copy-Item $target "$target.bak" -Force
+            if ($recovered) {
+                # The .bak stays as it is: it is the user's file.
+                [System.IO.File]::WriteAllText($target, $merged.Text)
+            } elseif ((& $norm $merged.Text) -ne (& $norm $user)) {
+                Copy-Item $target $bak -Force
                 [System.IO.File]::WriteAllText($target, $merged.Text)
             }
             $parts = @()
+            if ($recovered)      { $parts += "brought back your changes from mpv.conf.bak" }
             if ($merged.Kept)    { $parts += "kept your " + ($merged.Kept -join ", ") }
             if ($merged.Updated) { $parts += "updated " + ($merged.Updated -join ", ") }
             if ($merged.Added)   { $parts += "added " + ($merged.Added -join ", ") }
@@ -131,5 +154,6 @@ function Install-MpvConf([string]$NewConf, [string]$Dir) {
         }
     }
     [System.IO.File]::WriteAllText($shipped, $new)
+    [System.IO.File]::WriteAllText($checked, "")
     return $message
 }

@@ -121,6 +121,8 @@ Run update.bat in your mpv folder.
   you left alone follow the release; a line you deleted stays deleted. The
   file from before the merge is kept as `mpv.conf.bak`, and the installer
   handles a second run the same way.
+  An update from 1.2.5 or 1.2.6 replaced a changed `mpv.conf` once and left
+  yours as `mpv.conf.bak`; the next update brings those changes back from it.
 - **yt-dlp:** fetched from yt-dlp's own release and checked against its
   published SHA-256, the same rules as the installer.
 - **node:** left alone while yt-dlp accepts it (22 or newer). An older one is
