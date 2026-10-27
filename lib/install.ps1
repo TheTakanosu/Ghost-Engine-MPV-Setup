@@ -285,7 +285,12 @@ try {
 
     # -- the Ghost Engine layer ----------------------------------------------
     Step "4/5  Ghost Engine configuration"
-    Copy-Item (Join-Path $payload "*") $InstallDir -Recurse -Force
+    # mpv.conf goes through the merge, so running the installer again keeps
+    # what someone changed in it (volume=20 stays 20).
+    Copy-Item (Join-Path $payload "*") $InstallDir -Recurse -Force -Exclude "mpv.conf"
+    . (Join-Path $payload "conf-merge.ps1")
+    $confNote = Install-MpvConf (Join-Path $payload "mpv.conf") $InstallDir
+    if ($confNote) { Say $confNote "Yellow" }
     Say "mpv.conf, scripts\*.lua, ghost_rpc.py" "DarkGray"
     Say "configuration installed" "Green"
 

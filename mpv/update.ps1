@@ -116,18 +116,28 @@ if ($target) {
             $payload = Join-Path $unpacked "mpv"
             if (-not (Test-Path (Join-Path $payload "mpv.conf"))) { throw "the zip has no mpv folder" }
 
-            # Someone may have edited mpv.conf by hand. It is kept as
-            # mpv.conf.bak rather than lost when the new one differs.
-            $conf = Join-Path $PSScriptRoot "mpv.conf"
-            if ((Test-Path $conf) -and
-                (Get-FileHash $conf).Hash -ne (Get-FileHash (Join-Path $payload "mpv.conf")).Hash) {
-                Copy-Item $conf "$conf.bak" -Force
-                Say "your old mpv.conf is saved as mpv.conf.bak" "DarkGray"
-            }
             # cookies.txt, yt-dlp, node and mpv itself are not in the zip and
             # stay as they are. Lua scripts are read when mpv starts, so a
             # player that is open keeps the old ones until it is reopened.
-            Copy-Item (Join-Path $payload "*") $PSScriptRoot -Recurse -Force
+            Copy-Item (Join-Path $payload "*") $PSScriptRoot -Recurse -Force -Exclude "mpv.conf"
+            # mpv.conf is merged rather than replaced: what someone changed in
+            # theirs stays, what the release adds is added. The merge comes
+            # from the new release, so it can learn things this script cannot.
+            $mergeScript = Join-Path $payload "conf-merge.ps1"
+            if (Test-Path $mergeScript) {
+                . $mergeScript
+                $confNote = Install-MpvConf (Join-Path $payload "mpv.conf") $PSScriptRoot
+                if ($confNote) { Say $confNote "Yellow" }
+            } else {
+                # A release from before the merge existed: the old way.
+                $conf = Join-Path $PSScriptRoot "mpv.conf"
+                if ((Test-Path $conf) -and
+                    (Get-FileHash $conf).Hash -ne (Get-FileHash (Join-Path $payload "mpv.conf")).Hash) {
+                    Copy-Item $conf "$conf.bak" -Force
+                    Say "your old mpv.conf is saved as mpv.conf.bak" "DarkGray"
+                }
+                Copy-Item (Join-Path $payload "mpv.conf") $PSScriptRoot -Force
+            }
             # The zip carries its own VERSION, but the tag is what was asked
             # for and what the next check compares against.
             [System.IO.File]::WriteAllText($versionFile, ($target.Tag -replace '^v', '') + "`n")
