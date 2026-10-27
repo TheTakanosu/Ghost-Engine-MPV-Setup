@@ -23,6 +23,7 @@ public:
     QString name;         // file name without .m3u
     bool audio = false;   // "#GHOST_AUDIO" near the top: the bot's song lists
     int count = 0;        // entries, counted while peeking
+    QStringList preview;  // the first few entries, where a cover is looked for
     QDateTime modified;
 
     QVector<PlaylistEntry> readEntries() const;

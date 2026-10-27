@@ -1,14 +1,17 @@
 #pragma once
 
 #include "library.h"
+#include "resolver.h"
+#include "thumbnails.h"
+#include "youtube.h"
 
 #include <QMainWindow>
 
+class CoverView;
+class QButtonGroup;
 class QLabel;
 class QLineEdit;
 class QListWidget;
-class QTreeWidget;
-class QTreeWidgetItem;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -19,7 +22,8 @@ public:
 private slots:
     void rescan();
     void refill();
-    void playSelected();
+    void showSelection();
+    void play(bool shuffle = false);
     void addFolder();
     void showSelectedInFolder();
     void showContextMenu(const QPoint &pos);
@@ -27,13 +31,21 @@ private slots:
 private:
     enum class Category { All, Songs, Videos };
 
-    Category currentCategory() const;
     const Playlist *selectedPlaylist() const;
+    QString coverId(const Playlist &p);
     QString findMpv() const;
 
     Library m_library;
-    QListWidget *m_categories = nullptr;
+    ThumbnailCache m_covers;
+    youtube::Matches m_matches;
+    CoverResolver m_resolver;
+    Category m_category = Category::All;
+
+    QButtonGroup *m_chips = nullptr;
     QLineEdit *m_search = nullptr;
-    QTreeWidget *m_lists = nullptr;
+    QListWidget *m_cards = nullptr;
+    CoverView *m_hero = nullptr;
+    QLabel *m_title = nullptr;
+    QLabel *m_subtitle = nullptr;
     QLabel *m_status = nullptr;
 };

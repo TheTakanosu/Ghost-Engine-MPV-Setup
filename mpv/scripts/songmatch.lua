@@ -219,7 +219,21 @@ local function credited(id, artist, done)
     end)
 end
 
+-- Every match is also written down, one "query<TAB>id" line each, so the
+-- Ghost Engine app can show a cover for a search entry: the search has no
+-- video id of its own until this script finds one.
+local MATCHES = mp.command_native({"expand-path", "~~/ghost-matches.tsv"})
+
+local function remember_match(query, id)
+    local file = io.open(MATCHES, "a")
+    if file then
+        file:write((query:gsub("[\t\r\n]", " ")), "\t", id, "\n")
+        file:close()
+    end
+end
+
 local function finish(query, id)
+    if type(id) == "string" and resolved[query] == nil then remember_match(query, id) end
     resolved[query] = id or false
     local waiting = pending[query] or {}
     pending[query] = nil

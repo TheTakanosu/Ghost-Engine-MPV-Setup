@@ -10,6 +10,10 @@ namespace {
 // with the player on which lists are songs.
 constexpr qint64 kMarkerWindow = 256;
 
+// Enough entries to find one with a cover even when the first few are
+// searches nobody has played yet.
+constexpr int kPreviewEntries = 12;
+
 bool isEntryLine(const QString &line)
 {
     return !line.isEmpty() && !line.startsWith('#');
@@ -33,8 +37,12 @@ Playlist Playlist::peek(const QString &path)
     QTextStream in(&file);
     in.setEncoding(QStringConverter::Utf8);
     while (!in.atEnd()) {
-        if (isEntryLine(in.readLine().trimmed()))
-            ++p.count;
+        const QString line = in.readLine().trimmed();
+        if (!isEntryLine(line))
+            continue;
+        if (p.preview.size() < kPreviewEntries)
+            p.preview << line;
+        ++p.count;
     }
     return p;
 }
