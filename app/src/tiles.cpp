@@ -165,10 +165,22 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         bg.addRoundedRect(row, 8, 8);
         painter->fillPath(bg, selected ? theme::cardSelected() : theme::cardHover());
     }
-    painter->setFont(option.font);
-    painter->setPen(theme::muted());
+    // The number column: the song's number, a play mark under the mouse, and
+    // a speaker on the song mpv is playing.
+    const bool playing = index.data(kPlayingRole).toBool();
     const QRectF number(row.left(), row.top(), 44, row.height());
-    painter->drawText(number, Qt::AlignCenter, index.data(kNumberRole).toString());
+    if (playing || hover) {
+        QFont icons(QStringLiteral("Segoe Fluent Icons"));
+        icons.setFamilies({QStringLiteral("Segoe Fluent Icons"), QStringLiteral("Segoe MDL2 Assets")});
+        icons.setPointSizeF(option.font.pointSizeF());
+        painter->setFont(icons);
+        painter->setPen(playing ? theme::accent() : theme::text());
+        painter->drawText(number, Qt::AlignCenter, QString(QChar(playing ? 0xE767 : 0xE768)));
+    } else {
+        painter->setFont(option.font);
+        painter->setPen(theme::muted());
+        painter->drawText(number, Qt::AlignCenter, index.data(kNumberRole).toString());
+    }
 
     const qreal side = row.height() - 12;
     const QRectF cover(number.right() + 4, row.top() + 6, side * 16 / 9, side);
@@ -179,7 +191,7 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     QFont titleFont = option.font;
     titleFont.setWeight(QFont::DemiBold);
     painter->setFont(titleFont);
-    painter->setPen(selected ? theme::accentText() : theme::text());
+    painter->setPen(playing ? theme::accent() : selected ? theme::accentText() : theme::text());
     painter->drawText(text, Qt::AlignLeft | Qt::AlignTop,
                       QFontMetrics(titleFont).elidedText(track, Qt::ElideRight, int(text.width())));
     painter->setFont(option.font);

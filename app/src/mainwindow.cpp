@@ -19,6 +19,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPainterPath>
 #include <QProcess>
 #include <QPushButton>
 #include <QScrollArea>
@@ -105,18 +106,43 @@ std::pair<QString, QString> splitTitle(const QString &title)
 
 } // namespace
 
-// The playlist page's big cover: the same 2x2 collage as everywhere else.
-class CollageView : public QWidget {
+// The top of a playlist page: its collage, and behind it a wash of the
+// covers' own colour fading into the page, the way Spotify tints a playlist.
+class PlaylistHeader : public QWidget {
 public:
     using Source = std::function<QVector<QPixmap>()>;
-    CollageView(Source source) : m_source(std::move(source)) { setFixedSize(200, 200); }
+    explicit PlaylistHeader(Source source) : m_source(std::move(source)) {}
     void setName(const QString &name) { m_name = name; update(); }
+    QRect coverRect() const { return {28, 28, 208, 208}; }
 
 protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter p(this);
-        tiles::paintCollage(p, rect(), m_source(), m_name, 12);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QVector<QPixmap> covers = m_source();
+        QColor tint = theme::placeholderFor(m_name);
+        if (!covers.isEmpty() && !covers.first().isNull()) {
+            // The first cover's average colour, kept dark enough for white
+            // text on top.
+            const QColor avg = covers.first().toImage()
+                .scaled(1, 1, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).pixelColor(0, 0);
+            tint = QColor::fromHsv(avg.hsvHue(), qMin(avg.hsvSaturation(), 150), qBound(70, avg.value(), 120));
+        }
+        QLinearGradient wash(0, 0, 0, height());
+        wash.setColorAt(0, tint);
+        wash.setColorAt(1, QColor(22, 21, 27, 0));
+        QPainterPath top;
+        top.addRoundedRect(QRectF(rect()).adjusted(0, 0, 0, 20), 12, 12);
+        p.fillPath(top, wash);
+        // A soft shadow under the cover lifts it off the wash.
+        const QRect c = coverRect();
+        for (int i = 1; i <= 6; ++i) {
+            QPainterPath shadow;
+            shadow.addRoundedRect(QRectF(c).adjusted(-i, -i + 4, i, i + 4), 10 + i, 10 + i);
+            p.fillPath(shadow, QColor(0, 0, 0, 14));
+        }
+        tiles::paintCollage(p, c, covers, m_name, 10);
     }
 
 private:
@@ -145,11 +171,18 @@ MainWindow::MainWindow()
     m_pages->addWidget(buildHome());
     m_pages->addWidget(buildPlaylistPage());
 
+    auto *mainPanel = new QWidget;
+    mainPanel->setObjectName("panel");
+    mainPanel->setAttribute(Qt::WA_StyledBackground);
+    auto *mainBox = new QVBoxLayout(mainPanel);
+    mainBox->setContentsMargins(0, 0, 0, 0);
+    mainBox->addWidget(m_pages);
+
     m_split = new QSplitter(Qt::Horizontal);
     m_split->addWidget(buildLibrary());
-    m_split->addWidget(m_pages);
+    m_split->addWidget(mainPanel);
     m_split->setStretchFactor(1, 1);
-    m_split->setHandleWidth(6);
+    m_split->setHandleWidth(8);
     m_split->setChildrenCollapsible(false);
     m_split->setSizes({300, 940});
     connect(m_split, &QSplitter::splitterMoved, this, [this] {
@@ -162,7 +195,11 @@ MainWindow::MainWindow()
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
     root->addWidget(buildTopBar());
-    root->addWidget(m_split, 1);
+    // The same gap on every side of the two panels.
+    auto *body = new QHBoxLayout;
+    body->setContentsMargins(8, 0, 8, 0);
+    body->addWidget(m_split);
+    root->addLayout(body, 1);
     root->addWidget(m_nowPlaying);
     auto *central = new QWidget;
     central->setObjectName("central");
@@ -184,9 +221,11 @@ MainWindow::MainWindow()
     connect(&m_resolver, &CoverResolver::resolved, this, repaint);
     connect(&m_covers, &ThumbnailCache::ready, this, repaint);
     // A song played since the last look may have given a list its cover.
-    connect(&m_mpv, &MpvClient::propertyChanged, this, [repaint](const QString &name) {
+    connect(&m_mpv, &MpvClient::propertyChanged, this, [this, repaint](const QString &name) {
         if (name == "user-data/ghost/source")
             QTimer::singleShot(500, repaint);
+        if (name == "playlist-pos" || name == "playlist-path")
+            markPlaying();
     });
 
     rescan();
@@ -273,7 +312,13 @@ QWidget *MainWindow::buildTopBar()
     m_maxButton = glyphButton(kIconMax, "Maximize", "chrome");
     auto *close = glyphButton(kIconClose, "Close", "chromeClose");
     connect(minimize, &QPushButton::clicked, this, &MainWindow::showMinimized);
-    connect(m_maxButton, &QPushButton::clicked, this, [this] { isMaximized() ? showNormal() : showMaximized(); });
+    // Through Windows itself rather than Qt's showMaximized(): Qt resizes a
+    // frameless window to the screen, so Windows took the full size for the
+    // normal one, and dragging the window off maximised kept it full size.
+    connect(m_maxButton, &QPushButton::clicked, this, [this] {
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    });
     connect(close, &QPushButton::clicked, this, &MainWindow::close);
     m_chromeButtons = {home, m_search, minimize, m_maxButton, close};
 
@@ -427,7 +472,7 @@ QWidget *MainWindow::buildHome()
     m_recentPlayedTitle = sectionTitle("Jump back in");
 
     auto *page = new QWidget;
-    page->setObjectName("page");
+    page->setObjectName("home");
     auto *box = new QVBoxLayout(page);
     box->setContentsMargins(28, 22, 28, 16);
     box->setSpacing(12);
@@ -478,46 +523,62 @@ QListWidget *MainWindow::makeShelf()
 
 QWidget *MainWindow::buildPlaylistPage()
 {
-    auto *cover = new CollageView([this] { return coversFor(m_open); });
-    m_playlistCover = cover;
+    auto *header = new PlaylistHeader([this] { return coversFor(m_open); });
+    m_playlistCover = header;
+    header->setFixedHeight(264);
     m_playlistKind = new QLabel;
     m_playlistKind->setObjectName("kicker");
     m_playlistName = new QLabel;
     m_playlistName->setObjectName("bigTitle");
-    m_playlistName->setWordWrap(true);
     m_playlistInfo = new QLabel;
-    m_playlistInfo->setObjectName("statLabel");
+    m_playlistInfo->setObjectName("heroInfo");
+    auto *text = new QVBoxLayout;
+    text->setSpacing(4);
+    text->addStretch();
+    text->addWidget(m_playlistKind);
+    text->addWidget(m_playlistName);
+    text->addWidget(m_playlistInfo);
+    auto *headRow = new QHBoxLayout(header);
+    headRow->setContentsMargins(header->coverRect().right() + 26, 28, 28, 28);
+    headRow->addLayout(text, 1);
 
-    auto *playButton = new QPushButton("Play");
-    playButton->setObjectName("primary");
-    playButton->setCursor(Qt::PointingHandCursor);
-    auto *shuffleButton = new QPushButton("Shuffle");
-    shuffleButton->setCursor(Qt::PointingHandCursor);
+    auto *playButton = glyphButton(QChar(0xE768), "Play", "bigPlay");
+    auto *shuffleButton = glyphButton(QChar(0xE8B1), "Shuffle", "bigGlyph");
+    auto *folderButton = glyphButton(QChar(0xE838), "Show in folder", "bigGlyph");
     connect(playButton, &QPushButton::clicked, this, [this] {
         if (m_open >= 0) play(m_library.playlists()[m_open].path);
     });
     connect(shuffleButton, &QPushButton::clicked, this, [this] {
         if (m_open >= 0) play(m_library.playlists()[m_open].path, true);
     });
-    auto *buttons = new QHBoxLayout;
-    buttons->setSpacing(10);
-    buttons->addWidget(playButton);
-    buttons->addWidget(shuffleButton);
-    buttons->addStretch();
+    connect(folderButton, &QPushButton::clicked, this, [this] {
+        if (m_open >= 0)
+            QProcess::startDetached("explorer.exe",
+                {"/select,", QDir::toNativeSeparators(m_library.playlists()[m_open].path)});
+    });
+    auto *actions = new QHBoxLayout;
+    actions->setContentsMargins(28, 4, 28, 4);
+    actions->setSpacing(18);
+    actions->addWidget(playButton);
+    actions->addWidget(shuffleButton);
+    actions->addWidget(folderButton);
+    actions->addStretch();
 
-    auto *text = new QVBoxLayout;
-    text->setSpacing(6);
-    text->addStretch();
-    text->addWidget(m_playlistKind);
-    text->addWidget(m_playlistName);
-    text->addWidget(m_playlistInfo);
-    text->addSpacing(8);
-    text->addLayout(buttons);
-
-    auto *header = new QHBoxLayout;
-    header->setSpacing(24);
-    header->addWidget(cover);
-    header->addLayout(text, 1);
+    // "#  Title" over the songs, with a hairline under it.
+    auto *columns = new QWidget;
+    columns->setObjectName("columns");
+    columns->setAttribute(Qt::WA_StyledBackground);
+    auto *colRow = new QHBoxLayout(columns);
+    colRow->setContentsMargins(0, 6, 0, 8);
+    auto *hash = new QLabel("#");
+    hash->setObjectName("columnLabel");
+    hash->setFixedWidth(44);
+    hash->setAlignment(Qt::AlignCenter);
+    auto *titleLabel = new QLabel("Title");
+    titleLabel->setObjectName("columnLabel");
+    colRow->addWidget(hash);
+    colRow->addSpacing(4);
+    colRow->addWidget(titleLabel, 1);
 
     m_songs = new QListWidget;
     m_songs->setObjectName("songs");
@@ -532,14 +593,32 @@ QWidget *MainWindow::buildPlaylistPage()
             play(m_library.playlists()[m_open].path, false, m_songs->row(item));
     });
 
+    auto *list = new QVBoxLayout;
+    list->setContentsMargins(20, 0, 16, 0);
+    list->setSpacing(4);
+    list->addWidget(columns);
+    list->addWidget(m_songs, 1);
+
     auto *page = new QWidget;
-    page->setObjectName("page");
     auto *box = new QVBoxLayout(page);
-    box->setContentsMargins(28, 22, 20, 8);
-    box->setSpacing(18);
-    box->addLayout(header);
-    box->addWidget(m_songs, 1);
+    box->setContentsMargins(0, 0, 0, 6);
+    box->setSpacing(8);
+    box->addWidget(header);
+    box->addLayout(actions);
+    box->addLayout(list, 1);
     return page;
+}
+
+void MainWindow::markPlaying()
+{
+    // The song mpv is on, when the list open here is the one it plays.
+    const auto &all = m_library.playlists();
+    const bool same = m_open >= 0 && m_open < all.size() && m_mpv.connected() &&
+        QFileInfo(m_mpv.property("playlist-path").toString()).absoluteFilePath()
+            .compare(QFileInfo(all[m_open].path).absoluteFilePath(), Qt::CaseInsensitive) == 0;
+    const int pos = same ? m_mpv.property("playlist-pos").toInt() : -1;
+    for (int row = 0; row < m_songs->count(); ++row)
+        m_songs->item(row)->setData(tiles::kPlayingRole, row == pos);
 }
 
 void MainWindow::showHome()
@@ -556,11 +635,11 @@ void MainWindow::openPlaylist(int index)
         return;
     m_open = index;
     const Playlist &p = all[index];
-    m_playlistKind->setText(p.audio ? "SONG LIST" : "VIDEO LIST");
+    m_playlistKind->setText(p.audio ? "PLAYLIST  ·  SONGS" : "PLAYLIST  ·  VIDEOS");
     m_playlistName->setText(p.name);
     m_playlistInfo->setText(subtitleFor(p) + QStringLiteral("  ·  added ") +
                             QLocale().toString(p.modified.date(), QLocale::ShortFormat));
-    static_cast<CollageView *>(m_playlistCover)->setName(p.name);
+    static_cast<PlaylistHeader *>(m_playlistCover)->setName(p.name);
 
     m_songs->clear();
     int number = 1;
@@ -572,6 +651,7 @@ void MainWindow::openPlaylist(int index)
         row->setData(tiles::kArtistRole, artist);
         m_songs->addItem(row);
     }
+    markPlaying();
     m_pages->setCurrentIndex(1);
 }
 

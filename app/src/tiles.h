@@ -60,6 +60,7 @@ private:
 // A song in a playlist page: number, cover, track and artist.
 constexpr int kNumberRole = Qt::UserRole + 2;
 constexpr int kArtistRole = Qt::UserRole + 3;
+constexpr int kPlayingRole = Qt::UserRole + 4;   // the song mpv is on
 
 class SongDelegate : public QStyledItemDelegate {
 public:

@@ -67,9 +67,22 @@ void apply(QApplication &app)
     app.setStyleSheet(QStringLiteral(R"(
         QWidget#central { background: rgb(12,11,15); }
         QWidget#topBar { background: rgb(12,11,15); }
-        QWidget#libraryPanel, QWidget#page, QScrollArea > QWidget > QWidget#page {
-            background: rgb(22,21,27); border-radius: 12px;
+        QWidget#libraryPanel, QWidget#panel { background: rgb(22,21,27); border-radius: 12px; }
+        QWidget#home, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }
+        QPushButton#bigPlay {
+            font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: rgb(176,127,224); border: none;
+            color: rgb(24,18,34); border-radius: 27px; font-size: 15pt;
+            min-width: 54px; max-width: 54px; min-height: 54px; max-height: 54px; padding: 0;
         }
+        QPushButton#bigPlay:hover { background: rgb(196,152,240); }
+        QPushButton#bigGlyph {
+            font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: transparent; border: none;
+            color: rgb(170,168,182); font-size: 17pt; padding: 4px;
+        }
+        QPushButton#bigGlyph:hover { color: white; }
+        QWidget#columns { border-bottom: 1px solid rgb(44,42,54); }
+        QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
+        QLabel#heroInfo { color: rgb(225,223,232); font-size: 10pt; }
         QLabel#panelTitle { font-size: 11.5pt; font-weight: 700; color: rgb(220,218,228); }
         QListWidget#library, QListWidget#songs { background: transparent; border: none; outline: none; }
         QPushButton#glyph, QPushButton#pill, QPushButton#chrome, QPushButton#chromeClose {
@@ -96,7 +109,7 @@ void apply(QApplication &app)
         }
         QPushButton#primary:hover { background: rgb(192,148,236); }
         QLabel#kicker { color: rgb(154,152,166); font-size: 8.5pt; font-weight: 700; letter-spacing: 1px; }
-        QLabel#bigTitle { font-size: 30pt; font-weight: 800; }
+        QLabel#bigTitle { font-size: 40pt; font-weight: 800; }
         QListWidget#grid { background: transparent; border: none; outline: none; }
         QLabel#pageTitle { font-size: 22pt; font-weight: 700; }
         QLabel#sectionTitle { font-size: 14pt; font-weight: 600; padding-top: 6px; }

@@ -48,6 +48,7 @@ private:
     void fillShelf(QListWidget *shelf, const QVector<int> &indices);
     void openPlaylist(int index);
     void showHome();
+    void markPlaying();
     void setLibraryCompact(bool compact);
     void play(const QString &path, bool shuffle = false, int startAt = 0);
     void addFolder();
