@@ -5,6 +5,8 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 
+#include <windows.h>
+
 namespace {
 
 // One window, however many .m3u files are double-clicked: a second start
@@ -26,6 +28,10 @@ bool handOver(const QStringList &files)
 
 int main(int argc, char *argv[])
 {
+    // No Windows error boxes from the tools this starts (yt-dlp, and through
+    // it ffmpeg): children inherit this, and a missing DLL in one of them
+    // should fail quietly, not stack up dialogs.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
     QApplication app(argc, argv);
     QApplication::setOrganizationName("TheTakanosu");
     QApplication::setApplicationName("Ghost Engine");

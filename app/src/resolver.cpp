@@ -101,7 +101,15 @@ void CoverResolver::startNext()
         ++m_running;
         connect(process, &QProcess::finished, this, [this, process, query] {
             static const QRegularExpression line(QStringLiteral(R"(^([A-Za-z0-9_-]{11})\s+(\S*)$)"));
-            const auto m = line.match(QString::fromUtf8(process->readAllStandardOutput()).trimmed());
+            // Several lines for an id search: keep the one that is that video.
+            const QString wanted = query.startsWith(QStringLiteral("id:")) ? query.mid(3) : QString();
+            QRegularExpressionMatch m;
+            for (const QString &out : QString::fromUtf8(process->readAllStandardOutput()).split('\n')) {
+                m = line.match(out.trimmed());
+                if (m.hasMatch() && (wanted.isEmpty() || m.captured(1) == wanted))
+                    break;
+                m = QRegularExpressionMatch();
+            }
             const QString id = m.hasMatch() ? m.captured(1) : QString();
             const int seconds = m.hasMatch() ? int(m.captured(2).toDouble()) : 0;
             process->deleteLater();
@@ -118,9 +126,13 @@ void CoverResolver::startNext()
             startNext();
         });
         // A flat search result carries the length too, at no extra cost.
+        // A known video's length comes from a flat search for its id: no
+        // format selection, so yt-dlp neither extracts the video nor goes
+        // looking for ffmpeg (a broken ffmpeg.exe beside it popped up a
+        // Windows error box per song).
         if (query.startsWith(QStringLiteral("id:")))
-            process->start(m_ytdlp, {"--no-warnings", "--skip-download", "--print", "%(id)s %(duration)s",
-                                     "https://www.youtube.com/watch?v=" + query.mid(3)});
+            process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "%(id)s %(duration)s",
+                                     "ytsearch3:" + query.mid(3)});
         else
             process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "%(id)s %(duration)s",
                                      "ytsearch1:" + query});
