@@ -96,6 +96,7 @@ private:
 
     // library panel
     QSplitter *m_split = nullptr;
+    QWidget *m_libraryPanel = nullptr;
     QWidget *m_libraryHead = nullptr;
     QLabel *m_libraryTitle = nullptr;
     QPushButton *m_collapse = nullptr;

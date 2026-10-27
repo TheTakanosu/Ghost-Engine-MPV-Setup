@@ -520,6 +520,11 @@ QWidget *MainWindow::buildLibrary()
     panel->setObjectName("libraryPanel");
     panel->setAttribute(Qt::WA_StyledBackground);
     panel->setMinimumWidth(kCompactWidth);
+    // Compact or not follows the panel's real width, judged whenever it
+    // changes: read in the constructor it was not laid out yet, looked
+    // narrow, and the panel opened compact at full width.
+    panel->installEventFilter(this);
+    m_libraryPanel = panel;
     auto *box = new QVBoxLayout(panel);
     box->setContentsMargins(10, 14, 6, 10);
     box->setSpacing(10);
@@ -948,6 +953,11 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_libraryPanel && event->type() == QEvent::Resize && m_rowDelegate) {
+        const bool compact = m_libraryPanel->width() < kCompactBelow;
+        if (compact != m_compact)
+            setLibraryCompact(compact);
+    }
     if (watched == m_nameEdit && event->type() == QEvent::KeyPress &&
         static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
         m_renameCancelled = true;
