@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "icons.h"
 #include "nowplaying.h"
 #include "theme.h"
 #include "tiles.h"
@@ -13,6 +14,9 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QRegularExpression>
+#include <QResizeEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -39,7 +43,9 @@ namespace {
 constexpr int kTile = 168;          // cover size on the Home shelves
 constexpr int kShelfCount = 8;      // tiles on each Home shelf
 constexpr int kMinutesPerSong = 3;  // for the "hours of music" estimate
-constexpr int kTopBar = 44;         // height of the draggable strip
+constexpr int kTopBar = 50;         // height of the draggable strip: 8 px under the search box
+constexpr int kHeaderTall = 264;    // playlist header, scrolled to the top
+constexpr int kHeaderShort = 92;    // ... and once the songs are scrolled
 constexpr int kCompactWidth = 84;   // the library panel, covers only
 constexpr int kCompactBelow = 150;  // narrower than this, the panel goes compact
 
@@ -113,7 +119,14 @@ public:
     using Source = std::function<QVector<QPixmap>()>;
     explicit PlaylistHeader(Source source) : m_source(std::move(source)) {}
     void setName(const QString &name) { m_name = name; update(); }
-    QRect coverRect() const { return {28, 28, 208, 208}; }
+    // The cover fills the header's height less its margins, so shrinking the
+    // header on scroll shrinks the cover with it.
+    QRect coverRect() const
+    {
+        const int margin = height() > 160 ? 28 : 14;
+        const int side = height() - 2 * margin;
+        return {margin + 4, margin, side, side};
+    }
 
 protected:
     void paintEvent(QPaintEvent *) override
@@ -187,6 +200,7 @@ MainWindow::MainWindow()
     m_split->setSizes({300, 940});
     connect(m_split, &QSplitter::splitterMoved, this, [this] {
         setLibraryCompact(m_split->sizes().value(0) < kCompactBelow);
+        syncSearchWidth();
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
@@ -327,7 +341,7 @@ QWidget *MainWindow::buildTopBar()
     m_topBar->setAttribute(Qt::WA_StyledBackground);
     m_topBar->setFixedHeight(kTopBar);
     auto *row = new QHBoxLayout(m_topBar);
-    row->setContentsMargins(12, 0, 0, 0);
+    row->setContentsMargins(8, 0, 0, 0);
     row->setSpacing(8);
     row->addWidget(home);
     row->addWidget(m_search);
@@ -409,10 +423,14 @@ QWidget *MainWindow::buildLibrary()
         QMenu menu(this);
         menu.addAction("Play", this, [this, path] { play(path); });
         menu.addAction("Shuffle", this, [this, path] { play(path, true); });
+        const int index = item->data(tiles::kIndexRole).toInt();
         menu.addSeparator();
+        menu.addAction("Rename...", this, [this, index] { renamePlaylist(index); });
         menu.addAction("Show in folder", this, [path] {
             QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
         });
+        menu.addSeparator();
+        menu.addAction("Delete", this, [this, index] { deletePlaylist(index); });
         menu.exec(m_libraryList->viewport()->mapToGlobal(pos));
     });
 
@@ -438,6 +456,8 @@ void MainWindow::setLibraryCompact(bool compact)
     m_collapse->setText(QString(compact ? kIconExpand : kIconCollapse));
     m_collapse->setToolTip(compact ? "Expand library" : "Collapse library");
     m_rowDelegate->setCompact(compact);
+    // A scroll bar in a cover-wide panel would cut the covers off.
+    m_libraryList->setVerticalScrollBarPolicy(compact ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
     m_libraryList->doItemsLayout();
 }
 
@@ -525,11 +545,15 @@ QWidget *MainWindow::buildPlaylistPage()
 {
     auto *header = new PlaylistHeader([this] { return coversFor(m_open); });
     m_playlistCover = header;
-    header->setFixedHeight(264);
+    header->setFixedHeight(kHeaderTall);
     m_playlistKind = new QLabel;
     m_playlistKind->setObjectName("kicker");
     m_playlistName = new QLabel;
     m_playlistName->setObjectName("bigTitle");
+    m_playlistName->setToolTip("Double-click to rename");
+    m_playlistName->installEventFilter(this);
+    m_playlistName->setMinimumWidth(10);
+    m_playlistName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_playlistInfo = new QLabel;
     m_playlistInfo->setObjectName("heroInfo");
     auto *text = new QVBoxLayout;
@@ -538,20 +562,20 @@ QWidget *MainWindow::buildPlaylistPage()
     text->addWidget(m_playlistKind);
     text->addWidget(m_playlistName);
     text->addWidget(m_playlistInfo);
-    auto *headRow = new QHBoxLayout(header);
-    headRow->setContentsMargins(header->coverRect().right() + 26, 28, 28, 28);
-    headRow->addLayout(text, 1);
+    m_headRow = new QHBoxLayout(header);
+    m_headRow->addLayout(text, 1);
 
-    auto *playButton = glyphButton(QChar(0xE768), "Play", "bigPlay");
-    auto *shuffleButton = glyphButton(QChar(0xE8B1), "Shuffle", "bigGlyph");
-    auto *folderButton = glyphButton(QChar(0xE838), "Show in folder", "bigGlyph");
-    connect(playButton, &QPushButton::clicked, this, [this] {
+    auto *playButton = new icons::IconButton(icons::Icon::Play, 56, "Play");
+    playButton->setRound(theme::accent(), theme::accentText(), QColor(24, 18, 34));
+    auto *shuffleButton = new icons::IconButton(icons::Icon::Shuffle, 40, "Shuffle");
+    auto *folderButton = new icons::IconButton(icons::Icon::Folder, 40, "Show in folder");
+    connect(playButton, &QAbstractButton::clicked, this, [this] {
         if (m_open >= 0) play(m_library.playlists()[m_open].path);
     });
-    connect(shuffleButton, &QPushButton::clicked, this, [this] {
+    connect(shuffleButton, &QAbstractButton::clicked, this, [this] {
         if (m_open >= 0) play(m_library.playlists()[m_open].path, true);
     });
-    connect(folderButton, &QPushButton::clicked, this, [this] {
+    connect(folderButton, &QAbstractButton::clicked, this, [this] {
         if (m_open >= 0)
             QProcess::startDetached("explorer.exe",
                 {"/select,", QDir::toNativeSeparators(m_library.playlists()[m_open].path)});
@@ -588,6 +612,13 @@ QWidget *MainWindow::buildPlaylistPage()
     m_songs->setItemDelegate(new tiles::SongDelegate([this](const QModelIndex &index) {
         return m_covers.get(idForTarget(index.data(Qt::UserRole).toString()), ThumbnailCache::Size::Card);
     }, m_songs));
+    // Scrolling the songs folds the header into a slim bar, as Spotify does:
+    // the cover and title shrink over the first 170 px of scrolling.
+    connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
+        const qreal t = qBound(0.0, value / 170.0, 1.0);
+        m_playlistCover->setFixedHeight(int(kHeaderTall - t * (kHeaderTall - kHeaderShort)));
+        layoutHeader();
+    });
     connect(m_songs, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
         if (m_open >= 0)
             play(m_library.playlists()[m_open].path, false, m_songs->row(item));
@@ -607,6 +638,128 @@ QWidget *MainWindow::buildPlaylistPage()
     box->addLayout(actions);
     box->addLayout(list, 1);
     return page;
+}
+
+void MainWindow::layoutHeader()
+{
+    if (!m_playlistCover || !m_headRow)
+        return;   // a resize while the window is still being built
+    auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
+    const QRect cover = header->coverRect();
+    const bool tall = header->height() > 160;
+    m_headRow->setContentsMargins(cover.right() + (tall ? 26 : 16), cover.top(), 28, cover.top());
+    m_playlistKind->setVisible(tall);
+    m_playlistInfo->setVisible(header->height() > 120);
+    fitTitle();
+    header->update();
+}
+
+void MainWindow::fitTitle()
+{
+    // The largest size the name fits at, from the header's size down to a
+    // floor; a name too long even then is cut with an ellipsis.
+    if (m_open < 0)
+        return;
+    const QString name = m_library.playlists()[m_open].name;
+    const auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
+    const int available = header->width() - header->coverRect().right() - 60;
+    const qreal t = qBound(0.0, qreal(kHeaderTall - header->height()) / (kHeaderTall - kHeaderShort), 1.0);
+    qreal size = 40 - t * 20;
+    QFont font = m_playlistName->font();
+    font.setWeight(QFont::ExtraBold);
+    for (; size > 18; size -= 1) {
+        font.setPointSizeF(size);
+        if (QFontMetrics(font).horizontalAdvance(name) <= available)
+            break;
+    }
+    font.setPointSizeF(size);
+    m_playlistName->setStyleSheet(QStringLiteral("font-size: %1pt;").arg(size));
+    m_playlistName->setText(QFontMetrics(font).elidedText(name, Qt::ElideRight, qMax(40, available)));
+}
+
+void MainWindow::renamePlaylist(int index)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const Playlist p = all[index];
+    bool ok = false;
+    const QString typed = QInputDialog::getText(this, "Rename playlist", "Name", QLineEdit::Normal, p.name, &ok).trimmed();
+    if (!ok || typed.isEmpty() || typed == p.name)
+        return;
+    static const QRegularExpression forbidden(QStringLiteral(R"([\\/:*?"<>|])"));
+    if (typed.contains(forbidden)) {
+        QMessageBox::warning(this, "Rename playlist", "A name can't contain \\ / : * ? \" < > |");
+        return;
+    }
+    const QFileInfo file(p.path);
+    const QString target = file.absoluteDir().filePath(typed + '.' + file.suffix());
+    if (QFileInfo::exists(target) || !QFile::rename(p.path, target)) {
+        QMessageBox::warning(this, "Rename playlist", "There's already a playlist with that name here.");
+        return;
+    }
+    // Keep it in "Jump back in" under its new name.
+    QSettings settings;
+    QStringList played = settings.value("recent/played").toStringList();
+    for (QString &path : played)
+        if (path.compare(p.path, Qt::CaseInsensitive) == 0)
+            path = target;
+    settings.setValue("recent/played", played);
+    reopenAfter(target);
+}
+
+void MainWindow::deletePlaylist(int index)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const Playlist p = all[index];
+    if (QMessageBox::question(this, "Delete playlist",
+            QStringLiteral("Move \"%1\" to the Recycle Bin?").arg(p.name)) != QMessageBox::Yes)
+        return;
+    if (!QFile::moveToTrash(p.path)) {
+        QMessageBox::warning(this, "Delete playlist", "Windows wouldn't move it to the Recycle Bin.");
+        return;
+    }
+    if (index == m_open)
+        showHome();
+    rescan();
+}
+
+void MainWindow::reopenAfter(const QString &path)
+{
+    m_library.rescan();
+    m_open = -1;
+    refill();
+    const auto &all = m_library.playlists();
+    for (int i = 0; i < all.size(); ++i)
+        if (all[i].path.compare(path, Qt::CaseInsensitive) == 0)
+            openPlaylist(i);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_playlistName && event->type() == QEvent::MouseButtonDblClick) {
+        renamePlaylist(m_open);
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    layoutHeader();
+    syncSearchWidth();
+}
+
+void MainWindow::syncSearchWidth()
+{
+    // The search box spans the library panel below it, edge to edge.
+    if (!m_search || !m_split)
+        return;
+    const int panel = m_split->sizes().value(0);
+    m_search->setFixedWidth(qMax(220, panel - 42));   // less the Home button and its gap
 }
 
 void MainWindow::markPlaying()
@@ -636,7 +789,6 @@ void MainWindow::openPlaylist(int index)
     m_open = index;
     const Playlist &p = all[index];
     m_playlistKind->setText(p.audio ? "PLAYLIST  ·  SONGS" : "PLAYLIST  ·  VIDEOS");
-    m_playlistName->setText(p.name);
     m_playlistInfo->setText(subtitleFor(p) + QStringLiteral("  ·  added ") +
                             QLocale().toString(p.modified.date(), QLocale::ShortFormat));
     static_cast<PlaylistHeader *>(m_playlistCover)->setName(p.name);
@@ -653,6 +805,13 @@ void MainWindow::openPlaylist(int index)
     }
     markPlaying();
     m_pages->setCurrentIndex(1);
+    m_songs->scrollToTop();
+    m_playlistCover->setFixedHeight(kHeaderTall);
+    layoutHeader();
+    // Ask for every song's cover now rather than as each row scrolls into
+    // view, so the list fills in while it is being looked at.
+    for (int row = 0; row < m_songs->count(); ++row)
+        m_covers.get(idForTarget(m_songs->item(row)->data(Qt::UserRole).toString()), ThumbnailCache::Size::Card);
 }
 
 // -- content -------------------------------------------------------------------

@@ -1,31 +1,23 @@
 #include "nowplaying.h"
 
+#include "icons.h"
 #include "mpvclient.h"
 #include "theme.h"
 #include "thumbnails.h"
 #include "tiles.h"
 #include "youtube.h"
 
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
-#include <QPushButton>
 #include <QSlider>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 namespace {
 
-// Segoe Fluent Icons on Windows 11, MDL2 Assets on 10: same code points.
-const QChar kPrev(0xE892), kPlay(0xE768), kPause(0xE769), kNext(0xE893), kVolume(0xE767);
-
-QPushButton *iconButton(QChar glyph, const QString &tip, bool big = false)
-{
-    auto *b = new QPushButton(QString(glyph));
-    b->setObjectName(big ? "transportBig" : "transport");
-    b->setToolTip(tip);
-    b->setCursor(Qt::PointingHandCursor);
-    return b;
-}
+constexpr int kVolumeStep = 5;   // per wheel notch on the volume slider
 
 QString clock(double seconds)
 {
@@ -47,6 +39,25 @@ QPixmap rounded(const QPixmap &cover, const QString &name, int size)
     return out;
 }
 
+// Volume icon drawn like the rest: a speaker and two arcs.
+class SpeakerIcon : public QWidget {
+public:
+    SpeakerIcon() { setFixedSize(20, 20); }
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(theme::muted(), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(theme::muted());
+        QPolygonF body({{3, 8}, {7, 8}, {11, 4}, {11, 16}, {7, 12}, {3, 12}});
+        p.drawPolygon(body);
+        p.setBrush(Qt::NoBrush);
+        p.drawArc(QRectF(9, 6, 6, 8), -60 * 16, 120 * 16);
+        p.drawArc(QRectF(9, 3, 10, 14), -60 * 16, 120 * 16);
+    }
+};
+
 } // namespace
 
 NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
@@ -54,10 +65,10 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
 {
     setObjectName("nowPlaying");
     setAttribute(Qt::WA_StyledBackground);
-    setFixedHeight(88);
+    setFixedHeight(90);
 
     m_cover = new QLabel;
-    m_cover->setFixedSize(60, 60);
+    m_cover->setFixedSize(58, 58);
     m_title = new QLabel;
     m_title->setObjectName("npTitle");
     m_subtitle = new QLabel;
@@ -68,16 +79,21 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     info->addWidget(m_title);
     info->addWidget(m_subtitle);
     info->addStretch();
-    auto *left = new QHBoxLayout;
+    auto *leftBox = new QWidget;
+    auto *left = new QHBoxLayout(leftBox);
+    left->setContentsMargins(0, 0, 0, 0);
     left->setSpacing(12);
     left->addWidget(m_cover);
     left->addLayout(info, 1);
 
-    auto *prev = iconButton(kPrev, "Previous");
-    m_playPause = iconButton(kPlay, "Play / pause", true);
-    auto *next = iconButton(kNext, "Next");
+    auto *prev = new icons::IconButton(icons::Icon::Previous, 32, "Previous");
+    m_playPause = new icons::IconButton(icons::Icon::Play, 40, "Play / pause");
+    m_playPause->setRound(theme::text(), Qt::white, theme::window());
+    auto *next = new icons::IconButton(icons::Icon::Next, 32, "Next");
+    for (auto *b : {prev, next})
+        b->setColors(QColor(200, 198, 210), Qt::white);
     auto *buttons = new QHBoxLayout;
-    buttons->setSpacing(14);
+    buttons->setSpacing(20);
     buttons->addStretch();
     buttons->addWidget(prev);
     buttons->addWidget(m_playPause);
@@ -88,37 +104,54 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     m_total = new QLabel("--:--");
     m_elapsed->setObjectName("npTime");
     m_total->setObjectName("npTime");
+    m_elapsed->setFixedWidth(44);
+    m_total->setFixedWidth(44);
+    m_elapsed->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_position = new QSlider(Qt::Horizontal);
+    m_position->setObjectName("seek");
     m_position->setRange(0, 1000);
+    m_position->installEventFilter(this);
     auto *timeline = new QHBoxLayout;
     timeline->setSpacing(10);
     timeline->addWidget(m_elapsed);
     timeline->addWidget(m_position, 1);
     timeline->addWidget(m_total);
-    auto *center = new QVBoxLayout;
-    center->setSpacing(4);
+    auto *centerBox = new QWidget;
+    auto *center = new QVBoxLayout(centerBox);
+    center->setContentsMargins(0, 0, 0, 0);
+    center->setSpacing(6);
     center->addLayout(buttons);
     center->addLayout(timeline);
 
-    auto *volumeIcon = new QLabel(QString(kVolume));
-    volumeIcon->setObjectName("npIcon");
     m_volume = new QSlider(Qt::Horizontal);
     m_volume->setRange(0, 130);
     m_volume->setFixedWidth(120);
-    auto *right = new QHBoxLayout;
+    m_volume->installEventFilter(this);
+    auto *rightBox = new QWidget;
+    auto *right = new QHBoxLayout(rightBox);
+    right->setContentsMargins(0, 0, 0, 0);
     right->addStretch();
-    right->addWidget(volumeIcon);
+    right->addWidget(new SpeakerIcon);
     right->addWidget(m_volume);
 
-    auto *row = new QHBoxLayout(this);
-    row->setContentsMargins(16, 10, 20, 10);
-    row->addLayout(left, 3);
-    row->addLayout(center, 4);
-    row->addLayout(right, 3);
+    // Equal side columns keep the controls on the window's centre line,
+    // whatever the title on the left is.
+    auto *grid = new QGridLayout(this);
+    grid->setContentsMargins(16, 8, 20, 10);
+    grid->setHorizontalSpacing(16);
+    grid->addWidget(leftBox, 0, 0);
+    grid->addWidget(centerBox, 0, 1);
+    grid->addWidget(rightBox, 0, 2);
+    grid->setColumnStretch(0, 3);
+    grid->setColumnStretch(1, 4);
+    grid->setColumnStretch(2, 3);
+    leftBox->setMinimumWidth(0);
+    leftBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    rightBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
-    connect(prev, &QPushButton::clicked, this, [this] { m_mpv->command({"playlist-prev"}); });
-    connect(next, &QPushButton::clicked, this, [this] { m_mpv->command({"playlist-next"}); });
-    connect(m_playPause, &QPushButton::clicked, this, [this] { m_mpv->command({"cycle", "pause"}); });
+    connect(prev, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-prev"}); });
+    connect(next, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-next"}); });
+    connect(m_playPause, &QAbstractButton::clicked, this, [this] { m_mpv->command({"cycle", "pause"}); });
     connect(m_position, &QSlider::sliderPressed, this, [this] { m_dragging = true; });
     connect(m_position, &QSlider::sliderReleased, this, [this] {
         m_dragging = false;
@@ -126,16 +159,28 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
         if (duration > 0)
             m_mpv->command({"seek", duration * m_position->value() / 1000.0, "absolute"});
     });
-    connect(m_volume, &QSlider::valueChanged, this, [this](int v) {
-        if (m_volume->isSliderDown())
-            m_mpv->setProperty("volume", v);
-    });
+    connect(m_volume, &QSlider::sliderMoved, this, [this](int v) { m_mpv->setProperty("volume", v); });
     connect(m_mpv, &MpvClient::propertyChanged, this, [this](const QString &name) { onProperty(name); });
     connect(m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
         if (!on)
             showIdle();
     });
     showIdle();
+}
+
+bool NowPlayingBar::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() != QEvent::Wheel)
+        return QWidget::eventFilter(watched, event);
+    // The wheel moved the seek bar's handle without moving the song. It now
+    // does nothing there, and turns the volume up and down on its slider.
+    if (watched == m_volume) {
+        const int notches = static_cast<QWheelEvent *>(event)->angleDelta().y() / 120;
+        const int v = qBound(0, m_volume->value() + notches * kVolumeStep, m_volume->maximum());
+        m_volume->setValue(v);
+        m_mpv->setProperty("volume", v);
+    }
+    return true;
 }
 
 void NowPlayingBar::showIdle()
@@ -145,8 +190,8 @@ void NowPlayingBar::showIdle()
     m_elapsed->setText("--:--");
     m_total->setText("--:--");
     m_position->setValue(0);
-    m_playPause->setText(QString(kPlay));
-    m_cover->setPixmap(rounded({}, "G", 60));
+    m_playPause->setIcon(icons::Icon::Play);
+    m_cover->setPixmap(rounded({}, "G", 58));
 }
 
 void NowPlayingBar::refreshCover()
@@ -157,14 +202,15 @@ void NowPlayingBar::refreshCover()
     if (id.isEmpty())
         id = youtube::videoId(m_mpv->property("path").toString());
     const QString title = m_mpv->property("media-title").toString();
-    m_cover->setPixmap(rounded(m_covers->get(id, ThumbnailCache::Size::Card), title, 60));
+    m_cover->setPixmap(rounded(m_covers->get(id, ThumbnailCache::Size::Card), title, 58));
 }
 
 void NowPlayingBar::onProperty(const QString &name)
 {
     if (name == "media-title" || name == "metadata/by-key/uploader" || name == "playlist-pos" || name == "playlist-count") {
         const QString title = m_mpv->property("media-title").toString();
-        m_title->setText(QFontMetrics(m_title->font()).elidedText(title, Qt::ElideRight, m_title->width() > 50 ? m_title->width() : 260));
+        m_title->setText(QFontMetrics(m_title->font()).elidedText(title, Qt::ElideRight, qMax(120, m_title->width())));
+        m_title->setToolTip(title);
         const QString uploader = m_mpv->property("metadata/by-key/uploader").toString();
         const int pos = m_mpv->property("playlist-pos").toInt(), count = m_mpv->property("playlist-count").toInt();
         QString sub = count > 0 ? QStringLiteral("%1 of %2").arg(pos + 1).arg(count) : QString();
@@ -175,7 +221,7 @@ void NowPlayingBar::onProperty(const QString &name)
     if (name == "media-title" || name == "user-data/ghost/source" || name == "path")
         refreshCover();
     if (name == "pause")
-        m_playPause->setText(QString(m_mpv->property("pause").toBool() ? kPlay : kPause));
+        m_playPause->setIcon(m_mpv->property("pause").toBool() ? icons::Icon::Play : icons::Icon::Pause);
     if (name == "time-pos" || name == "duration") {
         const double pos = m_mpv->property("time-pos").isValid() ? m_mpv->property("time-pos").toDouble() : -1;
         const double duration = m_mpv->property("duration").isValid() ? m_mpv->property("duration").toDouble() : -1;

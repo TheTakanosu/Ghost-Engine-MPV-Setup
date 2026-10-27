@@ -1,5 +1,6 @@
 #include "tiles.h"
 
+#include "icons.h"
 #include "theme.h"
 
 #include <QPainter>
@@ -170,12 +171,9 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const bool playing = index.data(kPlayingRole).toBool();
     const QRectF number(row.left(), row.top(), 44, row.height());
     if (playing || hover) {
-        QFont icons(QStringLiteral("Segoe Fluent Icons"));
-        icons.setFamilies({QStringLiteral("Segoe Fluent Icons"), QStringLiteral("Segoe MDL2 Assets")});
-        icons.setPointSizeF(option.font.pointSizeF());
-        painter->setFont(icons);
-        painter->setPen(playing ? theme::accent() : theme::text());
-        painter->drawText(number, Qt::AlignCenter, QString(QChar(playing ? 0xE767 : 0xE768)));
+        const QRectF mark(number.center().x() - 8, number.center().y() - 8, 16, 16);
+        icons::paint(*painter, playing ? icons::Icon::Playing : icons::Icon::Play, mark,
+                     playing ? theme::accent() : theme::text());
     } else {
         painter->setFont(option.font);
         painter->setPen(theme::muted());

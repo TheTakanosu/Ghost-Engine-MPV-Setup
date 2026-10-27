@@ -5,8 +5,8 @@
 class MpvClient;
 class ThumbnailCache;
 class QLabel;
-class QPushButton;
 class QSlider;
+namespace icons { class IconButton; }
 
 // The strip along the bottom: what mpv is playing, its cover, the position
 // and the controls. It drives mpv over IPC, so it works for an mpv started
@@ -19,6 +19,9 @@ public:
 
     void refreshCover();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     void onProperty(const QString &name);
     void showIdle();
@@ -30,7 +33,7 @@ private:
     QLabel *m_subtitle;
     QLabel *m_elapsed;
     QLabel *m_total;
-    QPushButton *m_playPause;
+    icons::IconButton *m_playPause;
     QSlider *m_position;
     QSlider *m_volume;
     bool m_dragging = false;

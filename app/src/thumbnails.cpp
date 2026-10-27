@@ -12,6 +12,40 @@ namespace {
 // hero covers before the oldest are dropped, some 30 MB at most.
 constexpr int kMemoryBudgetKb = 30 * 1024;
 
+// YouTube letterboxes: a square album cover in a 16:9 video comes with black
+// bars at the sides, a 4:3 one with bars above and below. Rows and columns
+// that are almost all near-black at the edges are cut away, up to a third of
+// the picture from each side, so the cover fills its frame.
+bool darkLine(const QImage &image, int index, bool column)
+{
+    const int length = column ? image.height() : image.width();
+    int dark = 0, samples = 0;
+    for (int i = 0; i < length; i += qMax(1, length / 48)) {
+        const QRgb px = column ? image.pixel(index, i) : image.pixel(i, index);
+        dark += qGray(px) < 24 ? 1 : 0;
+        ++samples;
+    }
+    return dark * 100 >= samples * 94;
+}
+
+QImage cropBars(const QImage &image)
+{
+    if (image.isNull())
+        return image;
+    const int w = image.width(), h = image.height();
+    int left = 0, right = w - 1, top = 0, bottom = h - 1;
+    while (left < w / 3 && darkLine(image, left, true)) ++left;
+    while (right > w * 2 / 3 && darkLine(image, right, true)) --right;
+    while (top < h / 3 && darkLine(image, top, false)) ++top;
+    while (bottom > h * 2 / 3 && darkLine(image, bottom, false)) --bottom;
+    // A thin edge is compression noise, not a bar.
+    if (left < 4) left = 0;
+    if (w - 1 - right < 4) right = w - 1;
+    if (top < 4) top = 0;
+    if (h - 1 - bottom < 4) bottom = h - 1;
+    return image.copy(left, top, right - left + 1, bottom - top + 1);
+}
+
 QString key(const QString &videoId, ThumbnailCache::Size size)
 {
     return videoId + (size == ThumbnailCache::Size::Hero ? QStringLiteral("-hq") : QStringLiteral("-mq"));
@@ -44,11 +78,7 @@ QPixmap ThumbnailCache::get(const QString &videoId, Size size)
         fetch(videoId, size);
         return {};
     }
-    if (size == Size::Hero && image.height() * 16 != image.width() * 9) {
-        // hqdefault is 4:3 with black bars above and below a 16:9 picture.
-        const int h = image.width() * 9 / 16;
-        image = image.copy(0, (image.height() - h) / 2, image.width(), h);
-    }
+    image = cropBars(image);
     auto *pixmap = new QPixmap(QPixmap::fromImage(image));
     const int costKb = qMax(1, pixmap->width() * pixmap->height() * 4 / 1024);
     m_memory.insert(k, pixmap, costKb);

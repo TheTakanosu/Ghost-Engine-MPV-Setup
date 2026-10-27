@@ -10,9 +10,9 @@
 
 namespace {
 
-// Each search is a 2-4 s yt-dlp run; two at once keeps the app light and
-// leaves the connection to the song that is playing.
-constexpr int kParallel = 2;
+// Each search is a 2-4 s yt-dlp run; four at once fills a new list in a
+// minute or so and still leaves the connection to the song playing.
+constexpr int kParallel = 4;
 
 } // namespace
 

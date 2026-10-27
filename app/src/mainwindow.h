@@ -10,6 +10,7 @@
 
 class NowPlayingBar;
 class QButtonGroup;
+class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -33,6 +34,8 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
     void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     enum Filter { AllLists, Songs, Videos };
@@ -49,6 +52,12 @@ private:
     void openPlaylist(int index);
     void showHome();
     void markPlaying();
+    void layoutHeader();
+    void fitTitle();
+    void renamePlaylist(int index);
+    void deletePlaylist(int index);
+    void reopenAfter(const QString &path);
+    void syncSearchWidth();
     void setLibraryCompact(bool compact);
     void play(const QString &path, bool shuffle = false, int startAt = 0);
     void addFolder();
@@ -99,6 +108,7 @@ private:
     QLabel *m_playlistKind = nullptr;
     QLabel *m_playlistName = nullptr;
     QLabel *m_playlistInfo = nullptr;
+    QHBoxLayout *m_headRow = nullptr;
     QListWidget *m_songs = nullptr;
 
     NowPlayingBar *m_nowPlaying = nullptr;
