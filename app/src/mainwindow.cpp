@@ -919,7 +919,9 @@ void MainWindow::reopenAfter(const QString &path)
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     // The play mark in a song's number column starts the list from there.
-    if (watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease) {
+    // (Filters are installed while the page is still being built, so the
+    // song list may not exist yet when the first events arrive.)
+    if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease) {
         auto *mouse = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_songs->itemAt(mouse->position().toPoint());
         if (item && mouse->button() == Qt::LeftButton && mouse->position().x() < 48 && m_open >= 0) {
