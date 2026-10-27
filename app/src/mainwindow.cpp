@@ -1,10 +1,11 @@
-#include "mainwindow.h"
+﻿#include "mainwindow.h"
 
 #include "icons.h"
 #include "nowplaying.h"
 #include "theme.h"
 #include "tiles.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCloseEvent>
 #include <QCoreApplication>
@@ -14,6 +15,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QKeyEvent>
+#include <QShortcut>
 #include <QHBoxLayout>
 #include <QStandardPaths>
 #include <QVariantAnimation>
@@ -244,6 +247,7 @@ MainWindow::MainWindow()
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
+    connect(m_nowPlaying, &NowPlayingBar::openPlaying, this, &MainWindow::openPlayingList);
 
     auto *root = new QVBoxLayout;
     root->setContentsMargins(0, 0, 0, 0);
@@ -281,7 +285,7 @@ MainWindow::MainWindow()
         // A song played since the last look may have given a list its cover.
         if (name == "user-data/ghost/source")
             QTimer::singleShot(500, repaint);
-        if (name == "playlist-pos" || name == "playlist-path")
+        if (name == "playlist-pos" || name == "playlist-path" || name == "path")
             markPlaying();
         // mpv knows the length of what it plays; keep it for the list.
         if (name == "duration") {
@@ -307,6 +311,16 @@ MainWindow::MainWindow()
             importStray(false);
         rescan();
     });
+
+    qApp->installEventFilter(this);
+    for (auto [keys, step] : {std::pair{QKeySequence::ZoomIn, 0.1}, std::pair{QKeySequence::ZoomOut, -0.1}}) {
+        auto *shortcut = new QShortcut(keys, this);
+        connect(shortcut, &QShortcut::activated, this, [this, step] { changeZoom(step); });
+    }
+    connect(new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this), &QShortcut::activated, this, [this] { changeZoom(0); });
+    const qreal savedZoom = QSettings().value("window/zoom", 1.0).toReal();
+    if (!qFuzzyCompare(savedZoom, 1.0))
+        QTimer::singleShot(0, this, [this, savedZoom] { changeZoom(savedZoom - theme::zoom()); });
 
     rescan();
     showHome();
@@ -493,6 +507,7 @@ QWidget *MainWindow::buildLibrary()
         const int index = item->data(tiles::kIndexRole).toInt();
         menu.addSeparator();
         menu.addAction("Rename", this, [this, index] { renamePlaylist(index); });
+        menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
         menu.addAction("Show in folder", this, [path] {
             QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
         });
@@ -623,6 +638,7 @@ QWidget *MainWindow::buildPlaylistPage()
     m_nameEdit->setObjectName("nameEdit");
     m_nameEdit->hide();
     connect(m_nameEdit, &QLineEdit::editingFinished, this, &MainWindow::finishRename);
+    m_nameEdit->installEventFilter(this);
     m_playlistName->installEventFilter(this);
     m_playlistName->setMinimumWidth(10);
     m_playlistName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -659,6 +675,21 @@ QWidget *MainWindow::buildPlaylistPage()
     actions->addWidget(shuffleButton);
     actions->addWidget(folderButton);
     actions->addStretch();
+    m_songSearch = new QLineEdit;
+    m_songSearch->setObjectName("songSearch");
+    m_songSearch->setPlaceholderText("Search in playlist");
+    m_songSearch->setClearButtonEnabled(true);
+    m_songSearch->setFixedWidth(240);
+    connect(m_songSearch, &QLineEdit::textChanged, this, [this](const QString &text) {
+        const QString needle = text.trimmed();
+        for (int row = 0; row < m_songs->count(); ++row) {
+            QListWidgetItem *item = m_songs->item(row);
+            item->setHidden(!needle.isEmpty() &&
+                !item->text().contains(needle, Qt::CaseInsensitive) &&
+                !item->data(tiles::kArtistRole).toString().contains(needle, Qt::CaseInsensitive));
+        }
+    });
+    actions->addWidget(m_songSearch);
 
     // "#  Title" over the songs, with a hairline under it.
     auto *columns = new QWidget;
@@ -770,8 +801,10 @@ void MainWindow::renamePlaylist(int index)
     m_nameEdit->setFont(m_playlistName->font());
     m_nameEdit->setStyleSheet(m_playlistName->styleSheet());
     m_nameEdit->setGeometry(m_playlistName->geometry().adjusted(-8, -4, 8, 4));
-    m_playlistName->setVisible(false);
+    // The title stays in the layout, only invisible, so nothing around it moves.
+    m_playlistName->setStyleSheet(m_playlistName->styleSheet() + "color: transparent;");
     m_nameEdit->show();
+    m_nameEdit->raise();
     m_nameEdit->setFocus();
     m_nameEdit->selectAll();
 }
@@ -781,9 +814,10 @@ void MainWindow::finishRename()
     if (!m_nameEdit->isVisible())
         return;
     m_nameEdit->hide();
-    m_playlistName->setVisible(true);
-    if (m_open >= 0)
+    fitTitle();
+    if (m_open >= 0 && !m_renameCancelled)
         renameTo(m_open, m_nameEdit->text().trimmed());
+    m_renameCancelled = false;
 }
 
 void MainWindow::renameTo(int index, const QString &typed)
@@ -794,19 +828,12 @@ void MainWindow::renameTo(int index, const QString &typed)
     const Playlist p = all[index];
     if (typed.isEmpty() || typed == p.name)
         return;
-    static const QRegularExpression forbidden(QStringLiteral(R"([\\/:*?"<>|])"));
-    if (typed.contains(forbidden)) {
-        QMessageBox::warning(this, "Rename playlist", "A name can't contain \\ / : * ? \" < > |");
+    if (!Playlist::writeName(p.path, typed)) {
+        QMessageBox::warning(this, "Rename playlist", "The playlist file couldn't be written.");
         return;
     }
-    const QFileInfo file(p.path);
-    const QString target = file.absoluteDir().filePath(typed + '.' + file.suffix());
-    if (QFileInfo::exists(target) || !QFile::rename(p.path, target)) {
-        QMessageBox::warning(this, "Rename playlist", "There's already a playlist with that name here.");
-        return;
-    }
-    movedPlayed(p.path, target);
-    reopenAfter(target);
+    reopenAfter(p.path);
+
 }
 
 void MainWindow::movedPlayed(const QString &from, const QString &to)
@@ -868,7 +895,10 @@ void MainWindow::fillDurations()
 {
     for (int row = 0; row < m_songs->count(); ++row) {
         QListWidgetItem *item = m_songs->item(row);
-        const int seconds = m_resolver.durationFor(idForTarget(item->data(Qt::UserRole).toString()));
+        const QString id = idForTarget(item->data(Qt::UserRole).toString());
+        const int seconds = m_resolver.durationFor(id);
+        if (seconds <= 0)
+            m_resolver.requestDuration(id);
         item->setData(tiles::kDurationRole, seconds > 0
             ? QStringLiteral("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0')) : QString());
     }
@@ -918,6 +948,17 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_nameEdit && event->type() == QEvent::KeyPress &&
+        static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+        m_renameCancelled = true;
+        finishRename();
+        return true;
+    }
+    // Ctrl + wheel zooms, as in a browser.
+    if (event->type() == QEvent::Wheel && (static_cast<QWheelEvent *>(event)->modifiers() & Qt::ControlModifier)) {
+        changeZoom(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0 ? 0.1 : -0.1);
+        return true;
+    }
     // The play mark in a song's number column starts the list from there.
     // (Filters are installed while the page is still being built, so the
     // song list may not exist yet when the first events arrive.)
@@ -960,6 +1001,55 @@ void MainWindow::syncSearchWidth()
     m_search->setFixedWidth(qMax(220, panel - 42));   // less the Home button and its gap
 }
 
+void MainWindow::openPlayingList()
+{
+    const QString playing = QFileInfo(m_mpv.property("playlist-path").toString()).absoluteFilePath();
+    const auto &all = m_library.playlists();
+    for (int i = 0; i < all.size(); ++i) {
+        if (QFileInfo(all[i].path).absoluteFilePath().compare(playing, Qt::CaseInsensitive) != 0)
+            continue;
+        openPlaylist(i);
+        if (m_playingRow >= 0)
+            QTimer::singleShot(0, this, [this] {
+                m_songs->scrollToItem(m_songs->item(m_playingRow), QAbstractItemView::PositionAtCenter);
+            });
+        return;
+    }
+}
+
+void MainWindow::exportPlaylist(int index)
+{
+    // A copy to share, under the list's name with what Windows refuses in
+    // file names taken out; whoever imports it gets their own random key.
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    static const QRegularExpression forbidden(QStringLiteral(R"([\\/:*?"<>|]+)"));
+    QString clean = all[index].name;
+    clean.replace(forbidden, QStringLiteral(" ")).replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral(" "));
+    clean = clean.trimmed();
+    if (clean.isEmpty())
+        clean = QStringLiteral("playlist");
+    const QString target = QFileDialog::getSaveFileName(this, "Export a copy",
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + '/' + clean + ".m3u", "Playlists (*.m3u)");
+    if (target.isEmpty())
+        return;
+    QFile::remove(target);
+    if (!QFile::copy(all[index].path, target))
+        QMessageBox::warning(this, "Export a copy", "The copy couldn't be written there.");
+}
+
+void MainWindow::changeZoom(qreal step)
+{
+    theme::setZoom(*static_cast<QApplication *>(QCoreApplication::instance()), step == 0 ? 1.0 : theme::zoom() + step);
+    QSettings().setValue("window/zoom", theme::zoom());
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_songs})
+        v->doItemsLayout();
+    for (QListWidget *v : {m_recentAdded, m_recentPlayed})
+        v->setFixedHeight(int((kTile + 70 + 26) * theme::zoom()));
+    layoutHeader();
+}
+
 void MainWindow::markPlaying()
 {
     // The song mpv is on, when the list open here is the one it plays.
@@ -967,9 +1057,18 @@ void MainWindow::markPlaying()
     const bool same = m_open >= 0 && m_open < all.size() && m_mpv.connected() &&
         QFileInfo(m_mpv.property("playlist-path").toString()).absoluteFilePath()
             .compare(QFileInfo(all[m_open].path).absoluteFilePath(), Qt::CaseInsensitive) == 0;
-    const int pos = same ? m_mpv.property("playlist-pos").toInt() : -1;
-    for (int row = 0; row < m_songs->count(); ++row)
-        m_songs->item(row)->setData(tiles::kPlayingRole, row == pos);
+    // Matched by the entry itself, not its position: shuffled, mpv's order
+    // is no longer the file's.
+    const QString current = same ? m_mpv.property("path").toString() : QString();
+    int playing = -1;
+    for (int row = 0; row < m_songs->count(); ++row) {
+        const bool on = !current.isEmpty() && playing < 0 &&
+                        m_songs->item(row)->data(Qt::UserRole).toString() == current;
+        if (on)
+            playing = row;
+        m_songs->item(row)->setData(tiles::kPlayingRole, on);
+    }
+    m_playingRow = playing;
 }
 
 void MainWindow::showHome()
@@ -991,6 +1090,7 @@ void MainWindow::openPlaylist(int index)
                             QLocale().toString(p.modified.date(), QLocale::ShortFormat));
     static_cast<PlaylistHeader *>(m_playlistCover)->setName(p.name);
 
+    m_songSearch->clear();
     m_songs->clear();
     const QString added = relativeTime(p.modified);
     int number = 1;

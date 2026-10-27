@@ -19,6 +19,10 @@ public:
 
     void refreshCover();
 
+signals:
+    // The cover was clicked: show the list mpv is playing.
+    void openPlaying();
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 

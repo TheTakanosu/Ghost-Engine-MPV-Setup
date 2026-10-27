@@ -69,6 +69,9 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
 
     m_cover = new QLabel;
     m_cover->setFixedSize(58, 58);
+    m_cover->setCursor(Qt::PointingHandCursor);
+    m_cover->setToolTip("Show the playlist");
+    m_cover->installEventFilter(this);
     m_title = new QLabel;
     m_title->setObjectName("npTitle");
     m_subtitle = new QLabel;
@@ -170,6 +173,10 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
 
 bool NowPlayingBar::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_cover && event->type() == QEvent::MouseButtonRelease) {
+        emit openPlaying();
+        return true;
+    }
     if (event->type() != QEvent::Wheel)
         return QWidget::eventFilter(watched, event);
     // The wheel moved the seek bar's handle without moving the song. It now

@@ -82,6 +82,15 @@ void CoverResolver::rememberDuration(const QString &id, int seconds)
     appendLine(m_durationFile, id + '\t' + QString::number(seconds));
 }
 
+void CoverResolver::requestDuration(const QString &id)
+{
+    if (id.isEmpty() || m_durations.contains(id) || m_lengthAsked.contains(id))
+        return;
+    m_lengthAsked.insert(id);
+    m_queue.enqueue(QStringLiteral("id:") + id);
+    startNext();
+}
+
 void CoverResolver::startNext()
 {
     if (m_ytdlp.isEmpty() || !QFileInfo::exists(m_ytdlp))
@@ -97,14 +106,24 @@ void CoverResolver::startNext()
             const int seconds = m.hasMatch() ? int(m.captured(2).toDouble()) : 0;
             process->deleteLater();
             --m_running;
-            remember(query, id, seconds);
-            if (!id.isEmpty())
-                emit resolved(query, id);
+            if (query.startsWith(QStringLiteral("id:"))) {
+                rememberDuration(id, seconds);
+                if (seconds > 0)
+                    emit resolved(QString(), id);
+            } else {
+                remember(query, id, seconds);
+                if (!id.isEmpty())
+                    emit resolved(query, id);
+            }
             startNext();
         });
         // A flat search result carries the length too, at no extra cost.
-        process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "%(id)s %(duration)s",
-                                 "ytsearch1:" + query});
+        if (query.startsWith(QStringLiteral("id:")))
+            process->start(m_ytdlp, {"--no-warnings", "--skip-download", "--print", "%(id)s %(duration)s",
+                                     "https://www.youtube.com/watch?v=" + query.mid(3)});
+        else
+            process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "%(id)s %(duration)s",
+                                     "ytsearch1:" + query});
     }
 }
 

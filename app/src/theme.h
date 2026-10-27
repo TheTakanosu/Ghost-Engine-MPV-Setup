@@ -11,6 +11,10 @@ namespace theme {
 
 void apply(QApplication &app);
 
+// Ctrl + / Ctrl - : every font and row grows together. 1.0 is normal.
+qreal zoom();
+void setZoom(QApplication &app, qreal factor);
+
 QColor window();
 QColor card();
 QColor cardHover();

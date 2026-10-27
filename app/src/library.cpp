@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRandomGenerator>
 #include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
@@ -32,10 +33,18 @@ QString Library::importFile(const QString &path)
     if (QDir::cleanPath(source.absolutePath()).compare(homeFolder(), Qt::CaseInsensitive) == 0)
         return source.absoluteFilePath();   // already in the library
 
-    // "IzahMix.m3u", then "IzahMix (2).m3u" when a list of that name is there.
-    QString target = homeFolder() + '/' + source.fileName();
-    for (int n = 2; QFileInfo::exists(target); ++n)
-        target = QStringLiteral("%1/%2 (%3).%4").arg(homeFolder(), source.completeBaseName()).arg(n).arg(source.suffix());
+    // A random file name: the list's name goes inside it (#PLAYLIST:), so a
+    // name may hold characters Windows refuses in file names, and two lists
+    // of the same name never collide.
+    static const QString alphabet = QStringLiteral("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789");
+    QString target;
+    do {
+        QString key;
+        for (int i = 0; i < 16; ++i)
+            key += alphabet[QRandomGenerator::global()->bounded(alphabet.size())];
+        target = homeFolder() + '/' + key + '.' + source.suffix().toLower();
+    } while (QFileInfo::exists(target));
+    const QString name = Playlist::peek(path).name;
 
     // rename moves within a drive; across drives it is a copy and a delete.
     if (!QFile::rename(path, target)) {
@@ -43,6 +52,7 @@ QString Library::importFile(const QString &path)
             return {};
         QFile::remove(path);
     }
+    Playlist::writeName(target, name);
     return target;
 }
 

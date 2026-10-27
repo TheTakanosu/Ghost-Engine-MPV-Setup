@@ -63,7 +63,8 @@ TileDelegate::TileDelegate(int size, CoversFor coversFor, QObject *parent)
 
 QSize TileDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
 {
-    return {m_size + 24, m_size + 70};
+    const int s = int(m_size * theme::zoom());
+    return {s + 24, s + int(70 * theme::zoom())};
 }
 
 void TileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -105,7 +106,8 @@ RowDelegate::RowDelegate(CoversFor coversFor, QObject *parent)
 
 QSize RowDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
 {
-    return {m_compact ? 64 : 240, 64};
+    const int h = int(64 * theme::zoom());
+    return {m_compact ? h : 240, h};
 }
 
 void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -149,7 +151,7 @@ SongDelegate::SongDelegate(CoverFor coverFor, QObject *parent)
 
 QSize SongDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
 {
-    return {400, 56};
+    return {400, int(56 * theme::zoom())};
 }
 
 void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,

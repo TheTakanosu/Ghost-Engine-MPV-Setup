@@ -62,6 +62,9 @@ private:
     void movedPlayed(const QString &from, const QString &to);
     void importStray(bool ask);
     void fillDurations();
+    void openPlayingList();
+    void exportPlaylist(int index);
+    void changeZoom(qreal step);
     static QString relativeTime(const QDateTime &when);
     void deletePlaylist(int index);
     void reopenAfter(const QString &path);
@@ -118,6 +121,9 @@ private:
     QLabel *m_playlistInfo = nullptr;
     QHBoxLayout *m_headRow = nullptr;
     QLineEdit *m_nameEdit = nullptr;
+    QLineEdit *m_songSearch = nullptr;
+    bool m_renameCancelled = false;
+    int m_playingRow = -1;
     QLabel *m_addedHeader = nullptr;
     QWidget *m_homeScroll = nullptr;
     QFileSystemWatcher m_watcher;

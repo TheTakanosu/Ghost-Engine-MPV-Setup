@@ -27,4 +27,8 @@ public:
     QDateTime modified;
 
     QVector<PlaylistEntry> readEntries() const;
+
+    // The name lives inside the file as "#PLAYLIST:<name>" (the extended M3U
+    // tag for it), so it can hold any character; the file name is only a key.
+    static bool writeName(const QString &path, const QString &name);
 };

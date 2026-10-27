@@ -4,9 +4,14 @@
 #include <QFont>
 #include <QPalette>
 #include <QProxyStyle>
+#include <QRegularExpression>
 #include <QStyleFactory>
 
 namespace theme {
+
+namespace { qreal g_zoom = 1.0; }
+
+qreal zoom() { return g_zoom; }
 
 QColor window()       { return {22, 21, 27}; }
 QColor card()         { return {33, 32, 41}; }
@@ -46,7 +51,8 @@ public:
 void apply(QApplication &app)
 {
     app.setStyle(new ClickToJumpStyle(QStyleFactory::create("Fusion")));
-    QFont font("Segoe UI", 10);
+    QFont font("Segoe UI");
+    font.setPointSizeF(10 * g_zoom);
     app.setFont(font);
 
     QPalette p;
@@ -64,7 +70,7 @@ void apply(QApplication &app)
     p.setColor(QPalette::ToolTipText, text());
     app.setPalette(p);
 
-    app.setStyleSheet(QStringLiteral(R"(
+    QString css = QStringLiteral(R"(
         QWidget#central { background: rgb(12,11,15); }
         QWidget#topBar { background: rgb(12,11,15); }
         QWidget#libraryPanel, QWidget#panel { background: rgb(22,21,27); border-radius: 12px; }
@@ -84,6 +90,7 @@ void apply(QApplication &app)
         QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
         QLineEdit#nameEdit { background: rgba(0,0,0,90); border: 1px solid rgb(176,127,224); border-radius: 8px;
                              padding: 0 6px; font-weight: 800; color: white; }
+        QLineEdit#songSearch { border-radius: 16px; padding: 6px 14px; }
         QLabel#heroInfo { color: rgb(225,223,232); font-size: 10pt; }
         QLabel#panelTitle { font-size: 11.5pt; font-weight: 700; color: rgb(220,218,228); }
         QListWidget#library, QListWidget#songs { background: transparent; border: none; outline: none; }
@@ -164,7 +171,23 @@ void apply(QApplication &app)
         QMenu { background: rgb(33,32,41); border: 1px solid rgb(52,50,64); border-radius: 8px; padding: 4px; }
         QMenu::item { padding: 6px 18px; border-radius: 6px; }
         QMenu::item:selected { background: rgb(60,48,84); }
-    )"));
+    )");
+    // Point sizes in the sheet follow the zoom too.
+    static const QRegularExpression pt(QStringLiteral(R"((\d+(?:\.\d+)?)pt)"));
+    QString scaled;
+    qsizetype last = 0;
+    for (auto it = pt.globalMatch(css); it.hasNext();) {
+        const auto m = it.next();
+        scaled += css.mid(last, m.capturedStart() - last) + QString::number(m.captured(1).toDouble() * g_zoom, 'f', 1) + "pt";
+        last = m.capturedEnd();
+    }
+    app.setStyleSheet(scaled + css.mid(last));
+}
+
+void setZoom(QApplication &app, qreal factor)
+{
+    g_zoom = qBound(0.7, factor, 1.6);
+    apply(app);
 }
 
 } // namespace theme

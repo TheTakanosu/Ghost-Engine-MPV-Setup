@@ -25,6 +25,8 @@ public:
     int durationFor(const QString &id) const { return m_durations.value(id); }
     // mpv reports the length of what it plays; that is remembered too.
     void rememberDuration(const QString &id, int seconds);
+    // Looks a known video's length up (once a session) when nobody has.
+    void requestDuration(const QString &id);
 
 signals:
     void resolved(const QString &query, const QString &id);
@@ -39,6 +41,7 @@ private:
     QHash<QString, QString> m_ids;
     QHash<QString, int> m_durations;
     QSet<QString> m_known;     // asked already, found or not
+    QSet<QString> m_lengthAsked;
     QQueue<QString> m_queue;
     int m_running = 0;
 };
