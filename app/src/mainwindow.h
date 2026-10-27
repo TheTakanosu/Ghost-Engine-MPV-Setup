@@ -6,7 +6,9 @@
 #include "thumbnails.h"
 #include "youtube.h"
 
+#include <QFileSystemWatcher>
 #include <QMainWindow>
+#include <QTimer>
 
 class NowPlayingBar;
 class QButtonGroup;
@@ -55,6 +57,12 @@ private:
     void layoutHeader();
     void fitTitle();
     void renamePlaylist(int index);
+    void finishRename();
+    void renameTo(int index, const QString &name);
+    void movedPlayed(const QString &from, const QString &to);
+    void importStray(bool ask);
+    void fillDurations();
+    static QString relativeTime(const QDateTime &when);
     void deletePlaylist(int index);
     void reopenAfter(const QString &path);
     void syncSearchWidth();
@@ -109,6 +117,11 @@ private:
     QLabel *m_playlistName = nullptr;
     QLabel *m_playlistInfo = nullptr;
     QHBoxLayout *m_headRow = nullptr;
+    QLineEdit *m_nameEdit = nullptr;
+    QLabel *m_addedHeader = nullptr;
+    QWidget *m_homeScroll = nullptr;
+    QFileSystemWatcher m_watcher;
+    QTimer m_rescanSoon;
     QListWidget *m_songs = nullptr;
 
     NowPlayingBar *m_nowPlaying = nullptr;

@@ -97,6 +97,15 @@ void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color
         painter.drawPath(p);
         break;
     }
+    case Icon::Clock: {
+        painter.setPen(QPen(color, line * 0.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.setBrush(Qt::NoBrush);
+        const QRectF face = r.adjusted(s * 0.08, s * 0.08, -s * 0.08, -s * 0.08);
+        painter.drawEllipse(face);
+        painter.drawLine(face.center(), QPointF(face.center().x(), face.top() + face.height() * 0.24));
+        painter.drawLine(face.center(), QPointF(face.center().x() + face.width() * 0.2, face.center().y() + face.height() * 0.1));
+        break;
+    }
     case Icon::Playing: {
         // Three bars of different heights: the "now playing" equaliser mark.
         painter.setPen(Qt::NoPen);

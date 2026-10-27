@@ -7,8 +7,9 @@
 #include <QString>
 
 // Finds a video for a search entry nobody has played yet, only so it can have
-// a cover: one "yt-dlp ytsearch1:" per query, two at a time, remembered on
-// disk. What plays is still songmatch.lua's choice; this is a picture.
+// a cover and a length: one "yt-dlp ytsearch1:" per query, four at a time,
+// remembered on disk. What plays is still songmatch.lua's choice; this is a
+// picture and a number.
 class CoverResolver : public QObject {
     Q_OBJECT
 
@@ -20,16 +21,23 @@ public:
     // The id found earlier, or empty; an empty answer also queues the search.
     QString idFor(const QString &query);
 
+    // A video's length in seconds, or 0 when nobody has told us yet.
+    int durationFor(const QString &id) const { return m_durations.value(id); }
+    // mpv reports the length of what it plays; that is remembered too.
+    void rememberDuration(const QString &id, int seconds);
+
 signals:
     void resolved(const QString &query, const QString &id);
 
 private:
     void startNext();
-    void remember(const QString &query, const QString &id);
+    void remember(const QString &query, const QString &id, int seconds);
 
     QString m_ytdlp;
     QString m_file;
+    QString m_durationFile;
     QHash<QString, QString> m_ids;
+    QHash<QString, int> m_durations;
     QSet<QString> m_known;     // asked already, found or not
     QQueue<QString> m_queue;
     int m_running = 0;

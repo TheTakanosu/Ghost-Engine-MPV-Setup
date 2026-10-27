@@ -14,6 +14,16 @@ namespace {
 // minute or so and still leaves the connection to the song playing.
 constexpr int kParallel = 4;
 
+void appendLine(const QString &path, const QString &line)
+{
+    QFile file(path);
+    if (file.open(QIODevice::Append)) {
+        QTextStream out(&file);
+        out.setEncoding(QStringConverter::Utf8);
+        out << line << '\n';
+    }
+}
+
 } // namespace
 
 CoverResolver::CoverResolver(QObject *parent) : QObject(parent)
@@ -21,21 +31,33 @@ CoverResolver::CoverResolver(QObject *parent) : QObject(parent)
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
     QDir().mkpath(dir);
     m_file = dir + QStringLiteral("/cover-ids.tsv");
+    m_durationFile = dir + QStringLiteral("/durations.tsv");
 
+    // query <TAB> id [<TAB> seconds]; an empty id is a search that found nothing.
     QFile file(m_file);
     if (file.open(QIODevice::ReadOnly)) {
         QTextStream in(&file);
         in.setEncoding(QStringConverter::Utf8);
         while (!in.atEnd()) {
-            const QString line = in.readLine();
-            const int tab = line.lastIndexOf('\t');
-            if (tab <= 0)
+            const QStringList parts = in.readLine().split('\t');
+            if (parts.size() < 2 || parts[0].isEmpty())
                 continue;
-            const QString query = line.left(tab);
-            m_known.insert(query);
-            const QString id = line.mid(tab + 1).trimmed();
+            m_known.insert(parts[0]);
+            const QString id = parts[1].trimmed();
             if (!id.isEmpty())
-                m_ids.insert(query, id);
+                m_ids.insert(parts[0], id);
+            if (parts.size() > 2 && parts[2].toInt() > 0)
+                m_durations.insert(id, parts[2].toInt());
+        }
+    }
+    // id <TAB> seconds, as mpv reported them.
+    QFile durations(m_durationFile);
+    if (durations.open(QIODevice::ReadOnly)) {
+        QTextStream in(&durations);
+        while (!in.atEnd()) {
+            const QStringList parts = in.readLine().split('\t');
+            if (parts.size() == 2 && parts[1].toInt() > 0)
+                m_durations.insert(parts[0], parts[1].toInt());
         }
     }
 }
@@ -52,6 +74,14 @@ QString CoverResolver::idFor(const QString &query)
     return {};
 }
 
+void CoverResolver::rememberDuration(const QString &id, int seconds)
+{
+    if (id.isEmpty() || seconds <= 0 || m_durations.value(id) == seconds)
+        return;
+    m_durations.insert(id, seconds);
+    appendLine(m_durationFile, id + '\t' + QString::number(seconds));
+}
+
 void CoverResolver::startNext()
 {
     if (m_ytdlp.isEmpty() || !QFileInfo::exists(m_ytdlp))
@@ -61,30 +91,30 @@ void CoverResolver::startNext()
         auto *process = new QProcess(this);
         ++m_running;
         connect(process, &QProcess::finished, this, [this, process, query] {
-            static const QRegularExpression idLine(QStringLiteral(R"(^[A-Za-z0-9_-]{11}$)"));
-            const QString out = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
-            const QString id = idLine.match(out).hasMatch() ? out : QString();
+            static const QRegularExpression line(QStringLiteral(R"(^([A-Za-z0-9_-]{11})\s+(\S*)$)"));
+            const auto m = line.match(QString::fromUtf8(process->readAllStandardOutput()).trimmed());
+            const QString id = m.hasMatch() ? m.captured(1) : QString();
+            const int seconds = m.hasMatch() ? int(m.captured(2).toDouble()) : 0;
             process->deleteLater();
             --m_running;
-            remember(query, id);
+            remember(query, id, seconds);
             if (!id.isEmpty())
                 emit resolved(query, id);
             startNext();
         });
-        process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "id",
+        // A flat search result carries the length too, at no extra cost.
+        process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "%(id)s %(duration)s",
                                  "ytsearch1:" + query});
     }
 }
 
-void CoverResolver::remember(const QString &query, const QString &id)
+void CoverResolver::remember(const QString &query, const QString &id, int seconds)
 {
     if (!id.isEmpty())
         m_ids.insert(query, id);
+    if (seconds > 0)
+        m_durations.insert(id, seconds);
     // A miss is written too (empty id), so it is not searched on every start.
-    QFile file(m_file);
-    if (file.open(QIODevice::Append)) {
-        QTextStream out(&file);
-        out.setEncoding(QStringConverter::Utf8);
-        out << QString(query).replace('\t', ' ') << '\t' << id << '\n';
-    }
+    appendLine(m_file, QString(query).replace('\t', ' ') + '\t' + id +
+                           (seconds > 0 ? '\t' + QString::number(seconds) : QString()));
 }

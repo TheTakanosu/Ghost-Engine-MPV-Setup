@@ -82,6 +82,8 @@ void apply(QApplication &app)
         QPushButton#bigGlyph:hover { color: white; }
         QWidget#columns { border-bottom: 1px solid rgb(44,42,54); }
         QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
+        QLineEdit#nameEdit { background: rgba(0,0,0,90); border: 1px solid rgb(176,127,224); border-radius: 8px;
+                             padding: 0 6px; font-weight: 800; color: white; }
         QLabel#heroInfo { color: rgb(225,223,232); font-size: 10pt; }
         QLabel#panelTitle { font-size: 11.5pt; font-weight: 700; color: rgb(220,218,228); }
         QListWidget#library, QListWidget#songs { background: transparent; border: none; outline: none; }
@@ -149,13 +151,13 @@ void apply(QApplication &app)
         QScrollArea { background: transparent; }
         QScrollBar:vertical { background: transparent; width: 12px; margin: 4px 2px; border-radius: 5px; }
         QScrollBar:vertical:hover { background: rgba(255,255,255,10); }
-        QScrollBar::handle:vertical { background: rgb(60,58,72); border-radius: 4px; min-height: 30px; margin: 0 2px; }
-        QScrollBar::handle:vertical:hover { background: rgb(96,92,112); margin: 0 1px; }
+        QScrollBar::handle:vertical { background: rgb(60,58,72); border-radius: 3px; min-height: 30px; margin: 2px 3px; }
+        QScrollBar::handle:vertical:hover { background: rgb(96,92,112); border-radius: 4px; margin: 1px 2px; }
         QScrollBar::handle:vertical:pressed { background: rgb(176,127,224); }
         QScrollBar:horizontal { background: transparent; height: 12px; margin: 2px 4px; border-radius: 5px; }
         QScrollBar:horizontal:hover { background: rgba(255,255,255,10); }
-        QScrollBar::handle:horizontal { background: rgb(60,58,72); border-radius: 4px; min-width: 30px; margin: 2px 0; }
-        QScrollBar::handle:horizontal:hover { background: rgb(96,92,112); margin: 1px 0; }
+        QScrollBar::handle:horizontal { background: rgb(60,58,72); border-radius: 3px; min-width: 30px; margin: 3px 2px; }
+        QScrollBar::handle:horizontal:hover { background: rgb(96,92,112); border-radius: 4px; margin: 2px 1px; }
         QScrollBar::handle:horizontal:pressed { background: rgb(176,127,224); }
         QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
         QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }

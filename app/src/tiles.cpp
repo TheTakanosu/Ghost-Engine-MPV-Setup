@@ -185,7 +185,19 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const QString track = index.data(Qt::DisplayRole).toString();
     paintCover(*painter, cover, m_coverFor(index), track, 5);
 
-    const QRectF text(cover.right() + 14, row.top() + 8, row.right() - cover.right() - 24, row.height() - 16);
+    // Right-hand columns: when the list was added, and the song's length.
+    const QRectF duration(row.right() - kDurationColumn - 8, row.top(), kDurationColumn, row.height());
+    const QRectF added(duration.left() - kAddedColumn, row.top(), kAddedColumn, row.height());
+    const bool roomy = added.left() - cover.right() > 260;
+    painter->setFont(option.font);
+    painter->setPen(theme::muted());
+    const QString length = index.data(kDurationRole).toString();
+    painter->drawText(duration, Qt::AlignRight | Qt::AlignVCenter, length.isEmpty() ? QStringLiteral("–") : length);
+    if (roomy)
+        painter->drawText(added, Qt::AlignLeft | Qt::AlignVCenter, index.data(kAddedRole).toString());
+
+    const qreal textRight = roomy ? added.left() - 16 : duration.left() - 16;
+    const QRectF text(cover.right() + 14, row.top() + 8, textRight - cover.right() - 14, row.height() - 16);
     QFont titleFont = option.font;
     titleFont.setWeight(QFont::DemiBold);
     painter->setFont(titleFont);
@@ -194,7 +206,9 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                       QFontMetrics(titleFont).elidedText(track, Qt::ElideRight, int(text.width())));
     painter->setFont(option.font);
     painter->setPen(theme::muted());
-    painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom, index.data(kArtistRole).toString());
+    painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom,
+                      QFontMetrics(option.font).elidedText(index.data(kArtistRole).toString(),
+                                                           Qt::ElideRight, int(text.width())));
     painter->restore();
 }
 
