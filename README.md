@@ -80,7 +80,7 @@ from the project that publishes it, at install time:
 | | From | Checked |
 |---|---|---|
 | `mpv.exe` | [shinchiro's Windows builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases) — the ones mpv.io points at | — |
-| `yt-dlp.exe` | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | ✅ SHA-256, against the sum yt-dlp publishes with the release |
+| `yt-dlp.exe` + `_internal` (`yt-dlp_win.zip`) | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | ✅ SHA-256, against the sum yt-dlp publishes with the release |
 | `node.exe` *(optional, skipped if a node 22+ is already there)* | [nodejs.org](https://nodejs.org/dist/), the current LTS | ✅ SHA-256, against the sums node publishes |
 | Python *(only for Rich Presence, only if missing)* | [python.org](https://www.python.org/downloads/windows/) | ✅ Authenticode signature of the Python Software Foundation |
 
@@ -355,6 +355,14 @@ downloaded it with cookies and node, mpv got 403 for the same URL, and the same 
 with a `range=` added. The song played without cookies too. So cookies join node on the
 retry, where they are what an age-restricted song needs, and that retry gets a TV-client
 URL that opens.
+
+**yt-dlp is the folder build, not the single exe.** The single `yt-dlp.exe` unpacks about
+140 files into `%TEMP%` every time it runs, and Defender scans every one of them again:
+measured here, 1.2 s and 100–300 % of a core in Defender for each song, plus a leftover
+`_MEI` folder whenever mpv stopped yt-dlp early. The `yt-dlp_win.zip` build keeps those files
+in `_internal` beside the exe, so Defender scans them once: 0.5 s and almost no Defender
+time. Nobody has to add an exclusion. `update.bat` moves an older install over even when
+its yt-dlp is already current.
 
 **Config files are found with `find_config_file`, not `~~/`.** The installer puts
 everything next to `mpv.exe`, but `~~/` means `%APPDATA%\mpv` as soon as that folder
