@@ -115,8 +115,12 @@ Run update.bat in your mpv folder.
 - **Ghost Engine:** a newer release is installed straight away; the zip is
   checked against the SHA-256 GitHub records for it. A newer **pre-release** (a
   test build) is only offered: it is labelled as one and installs only if you
-  answer yes. If you edited `mpv.conf` yourself, your copy is kept as
-  `mpv.conf.bak`. `cookies.txt` is never touched.
+  answer yes. `cookies.txt` is never touched.
+- **Your `mpv.conf` changes stay.** If you set `volume=20`, it is still 20
+  after an update, and settings the release adds are added around it. Values
+  you left alone follow the release; a line you deleted stays deleted. The
+  file from before the merge is kept as `mpv.conf.bak`, and the installer
+  handles a second run the same way.
 - **yt-dlp:** fetched from yt-dlp's own release and checked against its
   published SHA-256, the same rules as the installer.
 - **node:** left alone while yt-dlp accepts it (22 or newer). An older one is
@@ -169,6 +173,14 @@ if it is some other song, or YouTube has nothing, the entry is skipped with a
 short on-screen note instead of playing the wrong track. The next track is
 resolved while the current one plays, so it adds no wait between songs. Turn it
 off with `GHOST_NO_SONGMATCH=1`.
+
+**Slow connection, lower resolution.** Videos open at up to 1080p. If one keeps
+stopping to buffer (twice within a minute), mpv switches to 720p for the rest
+of the session and reopens the video where it was; if it still stalls, 480p.
+It does not switch back up on its own; reopening mpv starts at 1080p again.
+Song lists fetch audio only and are not affected, and a `ytdl-format` you
+wrote yourself without a height limit is left alone. Turn it off with
+`GHOST_NO_AUTO_QUALITY=1`, or by deleting `scripts/quality.lua`.
 
 The artist check knows that some artists use a longer name on Spotify than on
 YouTube: a YouTube name the Spotify one starts with counts as the same artist,
