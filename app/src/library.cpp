@@ -1,6 +1,8 @@
 #include "library.h"
 
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
@@ -12,6 +14,36 @@ Library::Library()
     m_folders = settings.value("library/folders").toStringList();
     if (m_folders.isEmpty())
         m_folders << QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    QDir().mkpath(homeFolder());
+    if (!m_folders.contains(homeFolder(), Qt::CaseInsensitive))
+        m_folders.prepend(homeFolder());
+}
+
+QString Library::homeFolder()
+{
+    return QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + "/Ghost Engine");
+}
+
+QString Library::importFile(const QString &path)
+{
+    const QFileInfo source(path);
+    if (!source.exists())
+        return {};
+    if (QDir::cleanPath(source.absolutePath()).compare(homeFolder(), Qt::CaseInsensitive) == 0)
+        return source.absoluteFilePath();   // already in the library
+
+    // "IzahMix.m3u", then "IzahMix (2).m3u" when a list of that name is there.
+    QString target = homeFolder() + '/' + source.fileName();
+    for (int n = 2; QFileInfo::exists(target); ++n)
+        target = QStringLiteral("%1/%2 (%3).%4").arg(homeFolder(), source.completeBaseName()).arg(n).arg(source.suffix());
+
+    // rename moves within a drive; across drives it is a copy and a delete.
+    if (!QFile::rename(path, target)) {
+        if (!QFile::copy(path, target))
+            return {};
+        QFile::remove(path);
+    }
+    return target;
 }
 
 void Library::addFolder(const QString &folder)

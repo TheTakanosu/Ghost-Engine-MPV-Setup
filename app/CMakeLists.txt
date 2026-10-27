@@ -18,6 +18,9 @@ qt_add_executable(GhostEngine WIN32
     src/thumbnails.h src/thumbnails.cpp
     src/youtube.h src/youtube.cpp
     src/resolver.h src/resolver.cpp
+    src/mpvclient.h src/mpvclient.cpp
+    src/tiles.h src/tiles.cpp
+    src/nowplaying.h src/nowplaying.cpp
 )
 target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network)
 target_compile_definitions(GhostEngine PRIVATE GHOST_VERSION="${PROJECT_VERSION}")

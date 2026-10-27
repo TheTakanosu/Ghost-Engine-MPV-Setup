@@ -1,9 +1,12 @@
 #include "mainwindow.h"
 
+#include "nowplaying.h"
 #include "theme.h"
+#include "tiles.h"
 
-#include <QButtonGroup>
+#include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -13,250 +16,248 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
-#include <QPainter>
-#include <QPainterPath>
 #include <QProcess>
 #include <QPushButton>
-#include <QStyledItemDelegate>
+#include <QScrollArea>
+#include <QSettings>
+#include <QSplitter>
+#include <QStackedWidget>
+#include <QTimer>
 #include <QVBoxLayout>
-#include <functional>
 
 namespace {
 
-// The playlist's index in the library, kept on each card so filtering never
-// loses track of which file a card is.
-constexpr int kIndexRole = Qt::UserRole;
+constexpr int kTile = 168;          // cover size in the grids
+constexpr int kRecentCount = 8;     // tiles in each Home row
+constexpr int kMinutesPerSong = 3;  // for the "hours of music" estimate
 
 QString subtitleFor(const Playlist &p)
 {
-    return QStringLiteral("%1  ·  %2 %3")
-        .arg(p.audio ? "Songs" : "Videos")
-        .arg(p.count)
-        .arg(p.count == 1 ? "item" : "items");
+    return QStringLiteral("%1 · %2 %3").arg(p.audio ? "Songs" : "Videos").arg(p.count)
+                                       .arg(p.audio ? (p.count == 1 ? "song" : "songs")
+                                                    : (p.count == 1 ? "video" : "videos"));
 }
 
-// A cover drawn to fill its rectangle with rounded corners, or a calm tinted
-// block with the list's first letter while the real one is on its way.
-void paintCover(QPainter &painter, const QRectF &rect, const QPixmap &pixmap,
-                const QString &name, qreal radius)
+QWidget *statCard(QLabel *&value, const QString &label)
 {
-    painter.save();
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    QPainterPath clip;
-    clip.addRoundedRect(rect, radius, radius);
-    painter.setClipPath(clip);
+    auto *card = new QWidget;
+    card->setObjectName("statCard");
+    card->setAttribute(Qt::WA_StyledBackground);
+    value = new QLabel("0");
+    value->setObjectName("statValue");
+    auto *caption = new QLabel(label);
+    caption->setObjectName("statLabel");
+    auto *box = new QVBoxLayout(card);
+    box->setContentsMargins(18, 14, 18, 14);
+    box->setSpacing(2);
+    box->addWidget(value);
+    box->addWidget(caption);
+    return card;
+}
 
-    if (!pixmap.isNull()) {
-        const QSizeF scaled = QSizeF(pixmap.size()).scaled(rect.size(), Qt::KeepAspectRatioByExpanding);
-        const QRectF target(rect.center() - QPointF(scaled.width() / 2, scaled.height() / 2), scaled);
-        painter.drawPixmap(target, pixmap, pixmap.rect());
-    } else {
-        painter.fillRect(rect, theme::placeholderFor(name));
-        QFont font = painter.font();
-        font.setPixelSize(int(rect.height() * 0.45));
-        font.setWeight(QFont::DemiBold);
-        painter.setFont(font);
-        painter.setPen(theme::text().darker(115));
-        painter.drawText(rect, Qt::AlignCenter, name.left(1).toUpper());
-    }
-    painter.restore();
+QLabel *sectionTitle(const QString &text)
+{
+    auto *label = new QLabel(text);
+    label->setObjectName("sectionTitle");
+    return label;
+}
+
+QString greetingFor(const QTime &now)
+{
+    if (now.hour() < 5)  return "Good night";
+    if (now.hour() < 12) return "Good morning";
+    if (now.hour() < 18) return "Good afternoon";
+    return "Good evening";
 }
 
 } // namespace
 
-// The big cover on the left, osu!-style: whatever is selected, shown large.
-class CoverView : public QWidget {
-public:
-    using QWidget::QWidget;
-
-    void show(const QPixmap &pixmap, const QString &name)
-    {
-        m_pixmap = pixmap;
-        m_name = name;
-        update();
-    }
-
-    QSize sizeHint() const override { return {480, 270}; }
-    bool hasHeightForWidth() const override { return true; }
-    int heightForWidth(int w) const override { return w * 9 / 16; }
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter painter(this);
-        QRectF r = rect();
-        if (r.height() > r.width() * 9 / 16)
-            r.setHeight(r.width() * 9 / 16);
-        paintCover(painter, r, m_pixmap, m_name, 14);
-    }
-
-private:
-    QPixmap m_pixmap;
-    QString m_name;
-};
-
-// One playlist as a card: cover on the left, name and count beside it. The
-// selected card is lit and slides out to the left, as songs do in osu!.
-class CardDelegate : public QStyledItemDelegate {
-public:
-    using CoverFor = std::function<QPixmap(const QModelIndex &)>;
-
-    CardDelegate(CoverFor coverFor, QObject *parent)
-        : QStyledItemDelegate(parent), m_coverFor(std::move(coverFor)) {}
-
-    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override
-    {
-        return {360, 84};
-    }
-
-    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
-    {
-        const bool selected = option.state & QStyle::State_Selected;
-        const bool hover = option.state & QStyle::State_MouseOver;
-        const int slide = selected ? 0 : 22;
-        QRectF card = QRectF(option.rect).adjusted(6 + slide, 5, -8, -5);
-
-        painter->save();
-        painter->setRenderHint(QPainter::Antialiasing);
-        QPainterPath path;
-        path.addRoundedRect(card, 12, 12);
-        painter->fillPath(path, selected ? theme::cardSelected() : hover ? theme::cardHover() : theme::card());
-        if (selected) {
-            painter->setPen(QPen(theme::accent(), 2));
-            painter->drawPath(path);
-        }
-
-        const QRectF cover(card.left() + 8, card.top() + 8, (card.height() - 16) * 16 / 9, card.height() - 16);
-        const QString name = index.data(Qt::DisplayRole).toString();
-        paintCover(*painter, cover, m_coverFor(index), name, 8);
-
-        const QRectF text(cover.right() + 14, card.top() + 12, card.right() - cover.right() - 26, card.height() - 24);
-        QFont titleFont = option.font;
-        titleFont.setPointSizeF(option.font.pointSizeF() + 1.5);
-        titleFont.setWeight(QFont::DemiBold);
-        painter->setFont(titleFont);
-        painter->setPen(theme::text());
-        const QString title = QFontMetrics(titleFont).elidedText(name, Qt::ElideRight, int(text.width()));
-        painter->drawText(text, Qt::AlignLeft | Qt::AlignTop, title);
-
-        painter->setFont(option.font);
-        painter->setPen(selected ? theme::accentText() : theme::muted());
-        painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom, index.data(Qt::ToolTipRole + 1).toString());
-        painter->restore();
-    }
-
-private:
-    CoverFor m_coverFor;
-};
-
 MainWindow::MainWindow()
 {
     setWindowTitle(QStringLiteral("Ghost Engine"));
-    resize(1100, 680);
+    resize(1240, 780);
 
-    // -- top bar: categories, search, folders
-    m_chips = new QButtonGroup(this);
-    auto *top = new QHBoxLayout;
-    top->setSpacing(8);
-    int id = 0;
-    for (const char *label : {"All", "Songs", "Videos"}) {
-        auto *chip = new QPushButton(label);
-        chip->setObjectName("chip");
-        chip->setCheckable(true);
-        chip->setChecked(id == 0);
-        m_chips->addButton(chip, id++);
-        top->addWidget(chip);
-    }
-    top->addSpacing(12);
-    m_search = new QLineEdit;
-    m_search->setPlaceholderText("Search playlists");
-    m_search->setClearButtonEnabled(true);
-    top->addWidget(m_search, 1);
-    auto *addFolderButton = new QPushButton("Add folder");
-    auto *refreshButton = new QPushButton("Refresh");
-    top->addWidget(addFolderButton);
-    top->addWidget(refreshButton);
+    m_pages = new QStackedWidget;
+    m_pages->addWidget(buildHome());
+    m_pages->addWidget(buildBrowse());
 
-    // -- left: the selected list, large
-    m_hero = new CoverView;
-    m_hero->setMinimumWidth(380);
-    m_title = new QLabel;
-    m_title->setObjectName("heroTitle");
-    m_title->setWordWrap(true);
-    m_subtitle = new QLabel;
-    m_subtitle->setObjectName("heroSubtitle");
-    auto *playButton = new QPushButton("Play");
-    playButton->setObjectName("primary");
-    auto *shuffleButton = new QPushButton("Shuffle");
-    auto *heroButtons = new QHBoxLayout;
-    heroButtons->addWidget(playButton, 1);
-    heroButtons->addWidget(shuffleButton);
-    auto *left = new QVBoxLayout;
-    left->setSpacing(10);
-    left->addWidget(m_hero);
-    left->addSpacing(6);
-    left->addWidget(m_title);
-    left->addWidget(m_subtitle);
-    left->addSpacing(6);
-    left->addLayout(heroButtons);
-    left->addStretch();
+    m_split = new QSplitter(Qt::Horizontal);
+    m_split->addWidget(buildSidebar());
+    m_split->addWidget(m_pages);
+    m_split->setStretchFactor(1, 1);
+    m_split->setHandleWidth(6);
+    m_split->setChildrenCollapsible(false);
+    m_split->setSizes({230, 1010});
 
-    // -- right: the cards
-    m_cards = new QListWidget;
-    m_cards->setObjectName("cards");
-    m_cards->setMouseTracking(true);
-    m_cards->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    m_cards->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_cards->setItemDelegate(new CardDelegate([this](const QModelIndex &index) {
-        const auto &all = m_library.playlists();
-        const int i = index.data(kIndexRole).toInt();
-        return i >= 0 && i < all.size()
-            ? m_covers.get(coverId(all[i]), ThumbnailCache::Size::Card) : QPixmap();
-    }, m_cards));
-
-    auto *body = new QHBoxLayout;
-    body->setSpacing(18);
-    body->addLayout(left, 5);
-    body->addWidget(m_cards, 6);
-
-    m_status = new QLabel;
-    m_status->setObjectName("status");
+    m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
 
     auto *root = new QVBoxLayout;
-    root->setContentsMargins(20, 16, 20, 10);
-    root->setSpacing(14);
-    root->addLayout(top);
-    root->addLayout(body, 1);
-    root->addWidget(m_status);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+    root->addWidget(m_split, 1);
+    root->addWidget(m_nowPlaying);
     auto *central = new QWidget;
     central->setLayout(root);
     setCentralWidget(central);
 
-    connect(m_chips, &QButtonGroup::idClicked, this, [this](int which) {
-        m_category = static_cast<Category>(which);
-        refill();
-    });
-    connect(m_search, &QLineEdit::textChanged, this, &MainWindow::refill);
-    connect(m_cards, &QListWidget::currentRowChanged, this, &MainWindow::showSelection);
-    connect(m_cards, &QListWidget::itemActivated, this, [this] { play(); });
-    connect(m_cards, &QListWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
-    connect(playButton, &QPushButton::clicked, this, [this] { play(); });
-    connect(shuffleButton, &QPushButton::clicked, this, [this] { play(true); });
-    connect(addFolderButton, &QPushButton::clicked, this, &MainWindow::addFolder);
-    connect(refreshButton, &QPushButton::clicked, this, &MainWindow::rescan);
+    QSettings settings;
+    restoreGeometry(settings.value("window/geometry").toByteArray());
+    m_split->restoreState(settings.value("window/split").toByteArray());
+
     m_resolver.setYtDlp(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"));
-    connect(&m_resolver, &CoverResolver::resolved, this, [this] {
-        m_cards->viewport()->update();
-        showSelection();
-    });
-    connect(&m_covers, &ThumbnailCache::ready, this, [this] {
-        m_cards->viewport()->update();
-        showSelection();
+    auto repaint = [this] {
+        for (QListWidget *v : {m_grid, m_recentAdded, m_recentPlayed})
+            v->viewport()->update();
+        m_nowPlaying->refreshCover();
+    };
+    connect(&m_resolver, &CoverResolver::resolved, this, repaint);
+    connect(&m_covers, &ThumbnailCache::ready, this, repaint);
+    // A song played since the last look may have given a list its cover.
+    connect(&m_mpv, &MpvClient::propertyChanged, this, [repaint](const QString &name) {
+        if (name == "user-data/ghost/source")
+            QTimer::singleShot(500, repaint);
     });
 
     rescan();
+    showPage(Home);
 }
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    QSettings settings;
+    settings.setValue("window/geometry", saveGeometry());
+    settings.setValue("window/split", m_split->saveState());
+    QMainWindow::closeEvent(event);
+}
+
+// -- layout ------------------------------------------------------------------
+
+QWidget *MainWindow::buildSidebar()
+{
+    auto *brand = new QLabel("Ghost Engine");
+    brand->setObjectName("brand");
+
+    m_nav = new QListWidget;
+    m_nav->setObjectName("nav");
+    m_nav->addItems({"Home", "All playlists", "Songs", "Videos"});
+    connect(m_nav, &QListWidget::currentRowChanged, this, &MainWindow::showPage);
+
+    auto *addFolderButton = new QPushButton("Add folder");
+    auto *refreshButton = new QPushButton("Refresh");
+    connect(addFolderButton, &QPushButton::clicked, this, &MainWindow::addFolder);
+    connect(refreshButton, &QPushButton::clicked, this, &MainWindow::rescan);
+
+    auto *side = new QWidget;
+    side->setObjectName("sidebar");
+    side->setAttribute(Qt::WA_StyledBackground);
+    side->setMinimumWidth(170);
+    auto *box = new QVBoxLayout(side);
+    box->setContentsMargins(14, 18, 14, 14);
+    box->setSpacing(10);
+    box->addWidget(brand);
+    box->addSpacing(6);
+    box->addWidget(m_nav, 1);
+    box->addWidget(addFolderButton);
+    box->addWidget(refreshButton);
+    return side;
+}
+
+QWidget *MainWindow::buildHome()
+{
+    m_greeting = new QLabel;
+    m_greeting->setObjectName("pageTitle");
+
+    auto *stats = new QHBoxLayout;
+    stats->setSpacing(12);
+    stats->addWidget(statCard(m_statLists, "playlists"));
+    stats->addWidget(statCard(m_statSongs, "songs and videos"));
+    stats->addWidget(statCard(m_statHours, "hours of music, roughly"));
+    stats->addWidget(statCard(m_statNew, "added this week"));
+
+    m_recentAdded = makeGrid(false);
+    m_recentPlayed = makeGrid(false);
+    m_recentPlayedTitle = sectionTitle("Jump back in");
+
+    auto *page = new QWidget;
+    auto *box = new QVBoxLayout(page);
+    box->setContentsMargins(28, 24, 28, 16);
+    box->setSpacing(12);
+    box->addWidget(m_greeting);
+    box->addSpacing(4);
+    box->addLayout(stats);
+    box->addSpacing(10);
+    box->addWidget(sectionTitle("Recently added"));
+    box->addWidget(m_recentAdded);
+    box->addWidget(m_recentPlayedTitle);
+    box->addWidget(m_recentPlayed);
+    box->addStretch();
+
+    auto *scroll = new QScrollArea;
+    scroll->setWidget(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    return scroll;
+}
+
+QWidget *MainWindow::buildBrowse()
+{
+    m_browseTitle = new QLabel;
+    m_browseTitle->setObjectName("pageTitle");
+    m_search = new QLineEdit;
+    m_search->setPlaceholderText("Search playlists");
+    m_search->setClearButtonEnabled(true);
+    m_search->setMaximumWidth(360);
+    connect(m_search, &QLineEdit::textChanged, this, &MainWindow::refill);
+
+    auto *head = new QHBoxLayout;
+    head->addWidget(m_browseTitle);
+    head->addStretch();
+    head->addWidget(m_search, 1);
+
+    m_grid = makeGrid(true);
+
+    auto *page = new QWidget;
+    auto *box = new QVBoxLayout(page);
+    box->setContentsMargins(28, 24, 20, 8);
+    box->setSpacing(14);
+    box->addLayout(head);
+    box->addWidget(m_grid, 1);
+    return page;
+}
+
+QListWidget *MainWindow::makeGrid(bool wrap)
+{
+    auto *grid = new QListWidget;
+    grid->setObjectName("grid");
+    grid->setViewMode(QListView::IconMode);
+    grid->setMovement(QListView::Static);
+    grid->setResizeMode(QListView::Adjust);
+    grid->setWrapping(wrap);
+    grid->setFlow(QListView::LeftToRight);
+    grid->setUniformItemSizes(true);
+    grid->setMouseTracking(true);
+    grid->setSpacing(4);
+    grid->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    grid->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    grid->setContextMenuPolicy(Qt::CustomContextMenu);
+    grid->setItemDelegate(new tiles::TileDelegate(kTile, [this](const QModelIndex &index) {
+        return coversFor(index.data(tiles::kIndexRole).toInt());
+    }, grid));
+    if (!wrap) {
+        grid->setFixedHeight(kTile + 70 + 26);
+        grid->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        grid->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    }
+    connect(grid, &QListWidget::itemActivated, this, [this, grid] {
+        if (const Playlist *p = playlistAt(grid))
+            play(p->path);
+    });
+    connect(grid, &QListWidget::customContextMenuRequested, this,
+            [this, grid](const QPoint &pos) { showContextMenu(grid, pos); });
+    return grid;
+}
+
+// -- content -----------------------------------------------------------------
 
 void MainWindow::rescan()
 {
@@ -267,85 +268,133 @@ void MainWindow::rescan()
 void MainWindow::refill()
 {
     const auto &all = m_library.playlists();
-    int songs = 0;
-    for (const Playlist &p : all)
-        songs += p.audio ? 1 : 0;
-    m_chips->button(0)->setText(QStringLiteral("All  %1").arg(all.size()));
-    m_chips->button(1)->setText(QStringLiteral("Songs  %1").arg(songs));
-    m_chips->button(2)->setText(QStringLiteral("Videos  %1").arg(all.size() - songs));
+    int songLists = 0, items = 0, fresh = 0;
+    const QDateTime weekAgo = QDateTime::currentDateTime().addDays(-7);
+    for (const Playlist &p : all) {
+        songLists += p.audio ? 1 : 0;
+        items += p.count;
+        fresh += p.modified > weekAgo ? 1 : 0;
+    }
+    m_nav->item(AllLists)->setText(QStringLiteral("All playlists   %1").arg(all.size()));
+    m_nav->item(Songs)->setText(QStringLiteral("Songs   %1").arg(songLists));
+    m_nav->item(Videos)->setText(QStringLiteral("Videos   %1").arg(all.size() - songLists));
 
+    // Home
+    m_greeting->setText(greetingFor(QTime::currentTime()));
+    m_statLists->setText(QString::number(all.size()));
+    m_statSongs->setText(QString::number(items));
+    m_statHours->setText(QString::number((items * kMinutesPerSong + 30) / 60));
+    m_statNew->setText(QString::number(fresh));
+
+    QVector<int> newest;
+    for (int i = 0; i < all.size() && newest.size() < kRecentCount; ++i)
+        newest << i;   // the library is already newest first
+    fillGrid(m_recentAdded, newest);
+
+    QVector<int> played;
+    for (const QString &path : QSettings().value("recent/played").toStringList()) {
+        for (int i = 0; i < all.size(); ++i)
+            if (all[i].path.compare(path, Qt::CaseInsensitive) == 0) { played << i; break; }
+        if (played.size() >= kRecentCount)
+            break;
+    }
+    fillGrid(m_recentPlayed, played);
+    m_recentPlayedTitle->setVisible(!played.isEmpty());
+    m_recentPlayed->setVisible(!played.isEmpty());
+
+    // Browse
+    const int page = m_nav->currentRow();
     const QString needle = m_search->text().trimmed();
-    const QString keep = selectedPlaylist() ? selectedPlaylist()->path : QString();
-
-    m_cards->clear();
-    int restore = 0;
+    QVector<int> shown;
     for (int i = 0; i < all.size(); ++i) {
         const Playlist &p = all[i];
-        if (m_category == Category::Songs && !p.audio)
-            continue;
-        if (m_category == Category::Videos && p.audio)
+        if ((page == Songs && !p.audio) || (page == Videos && p.audio))
             continue;
         if (!needle.isEmpty() && !p.name.contains(needle, Qt::CaseInsensitive))
             continue;
-        auto *card = new QListWidgetItem(p.name);
-        card->setData(kIndexRole, i);
-        card->setData(Qt::ToolTipRole + 1, subtitleFor(p));
-        card->setToolTip(QDir::toNativeSeparators(p.path));
-        if (p.path == keep)
-            restore = m_cards->count();
-        m_cards->addItem(card);
+        shown << i;
     }
-    if (m_cards->count())
-        m_cards->setCurrentRow(restore);
-    showSelection();
+    fillGrid(m_grid, shown);
 
-    m_status->setText(findMpv().isEmpty()
-        ? QStringLiteral("mpv.exe not found. Put Ghost Engine in your mpv folder.")
-        : QStringLiteral("%1 playlists from %2 folder(s)").arg(all.size()).arg(m_library.folders().size()));
+    if (!m_selectPath.isEmpty()) {
+        for (int row = 0; row < m_grid->count(); ++row) {
+            const int i = m_grid->item(row)->data(tiles::kIndexRole).toInt();
+            if (all[i].path.compare(m_selectPath, Qt::CaseInsensitive) == 0) {
+                m_grid->setCurrentRow(row);
+                m_grid->scrollToItem(m_grid->item(row));
+            }
+        }
+        m_selectPath.clear();
+    }
 }
 
-void MainWindow::showSelection()
+void MainWindow::fillGrid(QListWidget *grid, const QVector<int> &indices)
 {
-    const Playlist *p = selectedPlaylist();
-    if (!p) {
-        m_hero->show({}, QString());
-        m_title->setText(m_cards->count() ? QString() : QStringLiteral("No playlists here yet"));
-        m_subtitle->setText(m_cards->count() ? QString()
-            : QStringLiteral("Export one with the bot, or add the folder you keep them in."));
+    const auto &all = m_library.playlists();
+    grid->clear();
+    for (int i : indices) {
+        auto *tile = new QListWidgetItem(all[i].name);
+        tile->setData(tiles::kIndexRole, i);
+        tile->setData(tiles::kSubtitleRole, subtitleFor(all[i]));
+        tile->setToolTip(QDir::toNativeSeparators(all[i].path));
+        grid->addItem(tile);
+    }
+}
+
+void MainWindow::showPage(int page)
+{
+    if (m_nav->currentRow() != page) {
+        m_nav->setCurrentRow(page);   // re-enters through the signal
         return;
     }
-    m_hero->show(m_covers.get(coverId(*p), ThumbnailCache::Size::Hero), p->name);
-    m_title->setText(p->name);
-    m_subtitle->setText(subtitleFor(*p) + QStringLiteral("  ·  ") +
-                        QLocale().toString(p->modified, QLocale::ShortFormat));
+    m_pages->setCurrentIndex(page == Home ? 0 : 1);
+    static const char *titles[] = {"", "All playlists", "Songs", "Videos"};
+    m_browseTitle->setText(titles[page]);
+    refill();
 }
 
-QString MainWindow::coverId(const Playlist &p)
+// -- covers ------------------------------------------------------------------
+
+QVector<QPixmap> MainWindow::coversFor(int index)
 {
-    // The first entry that has a video: its own id, or the one songmatch.lua
-    // found for its search.
-    QString firstSearch;
+    const auto &all = m_library.playlists();
+    QVector<QPixmap> covers;
+    if (index < 0 || index >= all.size())
+        return covers;
+    for (const QString &id : coverIds(all[index], 4))
+        covers << m_covers.get(id, ThumbnailCache::Size::Card);
+    return covers;
+}
+
+QStringList MainWindow::coverIds(const Playlist &p, int wanted)
+{
+    // Each entry's own video, or the one songmatch.lua matched for its search,
+    // or - for songs nobody has played yet - a lookup made for the picture.
+    QStringList ids;
     for (const QString &target : p.preview) {
         QString id = youtube::videoId(target);
-        const QString query = youtube::searchQuery(target);
-        if (id.isEmpty() && !query.isEmpty()) {
+        if (id.isEmpty()) {
+            const QString query = youtube::searchQuery(target);
             id = m_matches.idFor(query);
-            if (firstSearch.isEmpty())
-                firstSearch = query;
+            if (id.isEmpty())
+                id = m_resolver.idFor(query);
         }
-        if (!id.isEmpty())
-            return id;
+        if (!id.isEmpty() && !ids.contains(id))
+            ids << id;
+        if (ids.size() >= wanted)
+            break;
     }
-    // Nothing played yet: look the first song up, for its picture only.
-    return m_resolver.idFor(firstSearch);
+    return ids;
 }
 
-const Playlist *MainWindow::selectedPlaylist() const
+// -- actions -----------------------------------------------------------------
+
+const Playlist *MainWindow::playlistAt(QListWidget *view) const
 {
-    const QListWidgetItem *card = m_cards->currentItem();
-    if (!card)
+    const QListWidgetItem *tile = view->currentItem();
+    if (!tile)
         return nullptr;
-    const int index = card->data(kIndexRole).toInt();
+    const int index = tile->data(tiles::kIndexRole).toInt();
     const auto &all = m_library.playlists();
     return index >= 0 && index < all.size() ? &all[index] : nullptr;
 }
@@ -361,24 +410,70 @@ QString MainWindow::findMpv() const
     return {};
 }
 
-void MainWindow::play(bool shuffle)
+void MainWindow::play(const QString &path, bool shuffle)
 {
-    const Playlist *p = selectedPlaylist();
-    if (!p)
+    rememberPlayed(path);
+    // An mpv already open takes the list over IPC, so a second window does
+    // not start on top of the first.
+    if (m_mpv.connected()) {
+        m_mpv.command({"loadfile", path, "replace"});
+        if (shuffle)
+            QTimer::singleShot(400, this, [this] { m_mpv.command({"playlist-shuffle"}); });
+        m_mpv.setProperty("pause", false);
         return;
+    }
     const QString mpv = findMpv();
     if (mpv.isEmpty()) {
         QMessageBox::warning(this, "Ghost Engine",
                              "mpv.exe wasn't found. Install Ghost Engine with install.bat first.");
         return;
     }
-    QStringList args;
+    QStringList args{QStringLiteral("--input-ipc-server=%1").arg(MpvClient::kPipe)};
     if (shuffle)
         args << "--shuffle";
-    args << "--" << p->path;
-    // Detached and from mpv's own folder, the way a double-click on the .m3u
-    // would start it, so its scripts and the presence agent behave the same.
+    args << "--" << path;
+    // From mpv's own folder, the way a double-click on the .m3u starts it, so
+    // its scripts and the presence agent behave the same.
     QProcess::startDetached(mpv, args, QFileInfo(mpv).absolutePath());
+}
+
+void MainWindow::playSelected(bool shuffle)
+{
+    QListWidget *view = qobject_cast<QListWidget *>(focusWidget());
+    if (!view)
+        view = m_grid;
+    if (const Playlist *p = playlistAt(view))
+        play(p->path, shuffle);
+}
+
+void MainWindow::rememberPlayed(const QString &path)
+{
+    QSettings settings;
+    QStringList played = settings.value("recent/played").toStringList();
+    played.removeAll(path);
+    played.prepend(path);
+    settings.setValue("recent/played", played.mid(0, 20));
+    QTimer::singleShot(0, this, &MainWindow::refill);
+}
+
+void MainWindow::importFiles(const QStringList &paths)
+{
+    QString last;
+    for (const QString &path : paths) {
+        if (!path.endsWith(".m3u", Qt::CaseInsensitive) && !path.endsWith(".m3u8", Qt::CaseInsensitive))
+            continue;
+        const QString moved = m_library.importFile(path);
+        if (!moved.isEmpty())
+            last = moved;
+    }
+    if (last.isEmpty())
+        return;
+    m_library.rescan();
+    m_selectPath = last;
+    showPage(AllLists);
+    refill();
+    raise();
+    activateWindow();
 }
 
 void MainWindow::addFolder()
@@ -390,22 +485,22 @@ void MainWindow::addFolder()
     rescan();
 }
 
-void MainWindow::showSelectedInFolder()
+void MainWindow::showContextMenu(QListWidget *view, const QPoint &pos)
 {
-    const Playlist *p = selectedPlaylist();
+    QListWidgetItem *tile = view->itemAt(pos);
+    if (!tile)
+        return;
+    view->setCurrentItem(tile);
+    const Playlist *p = playlistAt(view);
     if (!p)
         return;
-    QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(p->path)});
-}
-
-void MainWindow::showContextMenu(const QPoint &pos)
-{
-    if (!m_cards->itemAt(pos))
-        return;
+    const QString path = p->path;
     QMenu menu(this);
-    menu.addAction("Play", this, [this] { play(); });
-    menu.addAction("Shuffle", this, [this] { play(true); });
+    menu.addAction("Play", this, [this, path] { play(path); });
+    menu.addAction("Shuffle", this, [this, path] { play(path, true); });
     menu.addSeparator();
-    menu.addAction("Show in folder", this, &MainWindow::showSelectedInFolder);
-    menu.exec(m_cards->viewport()->mapToGlobal(pos));
+    menu.addAction("Show in folder", this, [path] {
+        QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
+    });
+    menu.exec(view->viewport()->mapToGlobal(pos));
 }

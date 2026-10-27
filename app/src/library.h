@@ -13,6 +13,13 @@ public:
 
     QStringList folders() const { return m_folders; }
     void addFolder(const QString &folder);
+
+    // Where imported lists live: Music\Ghost Engine. Always one of folders().
+    static QString homeFolder();
+
+    // Moves an .m3u into homeFolder(), the way osu! takes in a skin you
+    // double-click, and returns where it went (empty if it could not move).
+    QString importFile(const QString &path);
     void removeFolder(const QString &folder);
 
     // Reads every folder again. Not recursive: a Downloads folder can be deep,
