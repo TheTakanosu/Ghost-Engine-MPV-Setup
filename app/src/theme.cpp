@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QFont>
 #include <QPalette>
+#include <QProxyStyle>
 #include <QStyleFactory>
 
 namespace theme {
@@ -24,9 +25,27 @@ QColor placeholderFor(const QString &name)
     return tints[qHash(name) % (sizeof tints / sizeof tints[0])];
 }
 
+namespace {
+
+// A click on a slider's track jumps there, as a seek bar should, instead of
+// stepping a page towards the click.
+class ClickToJumpStyle : public QProxyStyle {
+public:
+    using QProxyStyle::QProxyStyle;
+    int styleHint(StyleHint hint, const QStyleOption *option, const QWidget *widget,
+                  QStyleHintReturn *returnData) const override
+    {
+        if (hint == SH_Slider_AbsoluteSetButtons)
+            return Qt::LeftButton;
+        return QProxyStyle::styleHint(hint, option, widget, returnData);
+    }
+};
+
+} // namespace
+
 void apply(QApplication &app)
 {
-    app.setStyle(QStyleFactory::create("Fusion"));
+    app.setStyle(new ClickToJumpStyle(QStyleFactory::create("Fusion")));
     QFont font("Segoe UI", 10);
     app.setFont(font);
 
@@ -46,19 +65,45 @@ void apply(QApplication &app)
     app.setPalette(p);
 
     app.setStyleSheet(QStringLiteral(R"(
-        QWidget#sidebar { background: rgb(17,16,21); }
-        QLabel#brand { font-size: 15pt; font-weight: 700; color: rgb(207,179,240); padding: 4px 8px; }
-        QListWidget#nav { background: transparent; border: none; outline: none; font-size: 11pt; }
-        QListWidget#nav::item { padding: 10px 12px; border-radius: 10px; margin: 2px 0; color: rgb(190,188,200); }
-        QListWidget#nav::item:hover { background: rgb(33,32,41); color: rgb(236,236,241); }
-        QListWidget#nav::item:selected { background: rgb(52,42,74); color: rgb(236,236,241); }
+        QWidget#central { background: rgb(12,11,15); }
+        QWidget#topBar { background: rgb(12,11,15); }
+        QWidget#libraryPanel, QWidget#page, QScrollArea > QWidget > QWidget#page {
+            background: rgb(22,21,27); border-radius: 12px;
+        }
+        QLabel#panelTitle { font-size: 11.5pt; font-weight: 700; color: rgb(220,218,228); }
+        QListWidget#library, QListWidget#songs { background: transparent; border: none; outline: none; }
+        QPushButton#glyph, QPushButton#pill, QPushButton#chrome, QPushButton#chromeClose {
+            font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: transparent; border: none;
+            color: rgb(170,168,182); font-size: 11pt; padding: 6px; border-radius: 8px;
+        }
+        QPushButton#glyph:hover { color: white; background: rgb(40,39,50); }
+        QPushButton#pill {
+            background: rgb(33,32,41); color: rgb(236,236,241); border-radius: 17px;
+            min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; padding: 0; font-size: 12pt;
+        }
+        QPushButton#pill:hover { background: rgb(46,44,58); }
+        QPushButton#chrome, QPushButton#chromeClose {
+            border-radius: 0; min-width: 46px; max-width: 46px; min-height: 44px; max-height: 44px; padding: 0; font-size: 9pt;
+        }
+        QPushButton#chrome:hover { background: rgb(40,39,50); color: white; }
+        QPushButton#chromeClose:hover { background: rgb(196,43,28); color: white; }
+        QLineEdit#topSearch { background: rgb(33,32,41); border-radius: 17px; padding: 7px 16px; }
+        QPushButton#chip { border-radius: 14px; padding: 5px 12px; font-size: 9pt; }
+        QPushButton#chip:checked { background: rgb(236,236,241); border-color: rgb(236,236,241); color: rgb(22,21,27); }
+        QPushButton#primary {
+            background: rgb(176,127,224); border: none; color: rgb(24,18,34); font-weight: 700;
+            border-radius: 20px; padding: 10px 28px;
+        }
+        QPushButton#primary:hover { background: rgb(192,148,236); }
+        QLabel#kicker { color: rgb(154,152,166); font-size: 8.5pt; font-weight: 700; letter-spacing: 1px; }
+        QLabel#bigTitle { font-size: 30pt; font-weight: 800; }
         QListWidget#grid { background: transparent; border: none; outline: none; }
         QLabel#pageTitle { font-size: 22pt; font-weight: 700; }
         QLabel#sectionTitle { font-size: 14pt; font-weight: 600; padding-top: 6px; }
         QWidget#statCard { background: rgb(33,32,41); border-radius: 14px; }
         QLabel#statValue { font-size: 22pt; font-weight: 700; color: rgb(207,179,240); }
         QLabel#statLabel { color: rgb(154,152,166); }
-        QWidget#nowPlaying { background: rgb(27,26,33); border-top: 1px solid rgb(44,42,54); }
+        QWidget#nowPlaying { background: rgb(12,11,15); }
         QLabel#npTitle { font-size: 11pt; font-weight: 600; }
         QLabel#npSubtitle, QLabel#npTime { color: rgb(154,152,166); font-size: 9pt; }
         QLabel#npIcon { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; color: rgb(154,152,166); font-size: 13pt; }
@@ -85,7 +130,7 @@ void apply(QApplication &app)
             border-radius: 18px; padding: 8px 16px; selection-background-color: rgb(176,127,224);
         }
         QLineEdit:focus { border-color: rgb(176,127,224); }
-        QSplitter::handle { background: rgb(17,16,21); }
+        QSplitter::handle { background: rgb(12,11,15); }
         QSplitter::handle:hover { background: rgb(60,48,84); }
         QScrollArea { background: transparent; }
         QScrollBar:vertical { background: transparent; width: 10px; margin: 4px; }

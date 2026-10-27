@@ -99,4 +99,93 @@ void TileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     painter->restore();
 }
 
+RowDelegate::RowDelegate(CoversFor coversFor, QObject *parent)
+    : QStyledItemDelegate(parent), m_coversFor(std::move(coversFor)) {}
+
+QSize RowDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
+{
+    return {m_compact ? 64 : 240, 64};
+}
+
+void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
+                        const QModelIndex &index) const
+{
+    const bool selected = option.state & QStyle::State_Selected;
+    const bool hover = option.state & QStyle::State_MouseOver;
+    const QRectF row = QRectF(option.rect).adjusted(2, 2, -2, -2);
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    if (selected || hover) {
+        QPainterPath bg;
+        bg.addRoundedRect(row, 8, 8);
+        painter->fillPath(bg, selected ? theme::cardSelected() : theme::cardHover());
+    }
+    const qreal side = row.height() - 12;
+    const QRectF cover(m_compact ? row.center().x() - side / 2 : row.left() + 6, row.top() + 6, side, side);
+    const QString name = index.data(Qt::DisplayRole).toString();
+    paintCollage(*painter, cover, m_coversFor(index), name, 6);
+
+    if (!m_compact) {
+        const QRectF text(cover.right() + 12, row.top() + 10, row.right() - cover.right() - 20, row.height() - 20);
+        QFont titleFont = option.font;
+        titleFont.setWeight(QFont::DemiBold);
+        painter->setFont(titleFont);
+        painter->setPen(selected ? theme::accentText() : theme::text());
+        painter->drawText(text, Qt::AlignLeft | Qt::AlignTop,
+                          QFontMetrics(titleFont).elidedText(name, Qt::ElideRight, int(text.width())));
+        painter->setFont(option.font);
+        painter->setPen(theme::muted());
+        painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom,
+                          QFontMetrics(option.font).elidedText(index.data(kSubtitleRole).toString(),
+                                                               Qt::ElideRight, int(text.width())));
+    }
+    painter->restore();
+}
+
+SongDelegate::SongDelegate(CoverFor coverFor, QObject *parent)
+    : QStyledItemDelegate(parent), m_coverFor(std::move(coverFor)) {}
+
+QSize SongDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
+{
+    return {400, 56};
+}
+
+void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
+                         const QModelIndex &index) const
+{
+    const bool selected = option.state & QStyle::State_Selected;
+    const bool hover = option.state & QStyle::State_MouseOver;
+    const QRectF row = QRectF(option.rect).adjusted(0, 1, -4, -1);
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    if (selected || hover) {
+        QPainterPath bg;
+        bg.addRoundedRect(row, 8, 8);
+        painter->fillPath(bg, selected ? theme::cardSelected() : theme::cardHover());
+    }
+    painter->setFont(option.font);
+    painter->setPen(theme::muted());
+    const QRectF number(row.left(), row.top(), 44, row.height());
+    painter->drawText(number, Qt::AlignCenter, index.data(kNumberRole).toString());
+
+    const qreal side = row.height() - 12;
+    const QRectF cover(number.right() + 4, row.top() + 6, side * 16 / 9, side);
+    const QString track = index.data(Qt::DisplayRole).toString();
+    paintCover(*painter, cover, m_coverFor(index), track, 5);
+
+    const QRectF text(cover.right() + 14, row.top() + 8, row.right() - cover.right() - 24, row.height() - 16);
+    QFont titleFont = option.font;
+    titleFont.setWeight(QFont::DemiBold);
+    painter->setFont(titleFont);
+    painter->setPen(selected ? theme::accentText() : theme::text());
+    painter->drawText(text, Qt::AlignLeft | Qt::AlignTop,
+                      QFontMetrics(titleFont).elidedText(track, Qt::ElideRight, int(text.width())));
+    painter->setFont(option.font);
+    painter->setPen(theme::muted());
+    painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom, index.data(kArtistRole).toString());
+    painter->restore();
+}
+
 } // namespace tiles

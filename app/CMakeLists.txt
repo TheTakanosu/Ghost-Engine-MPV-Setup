@@ -22,5 +22,5 @@ qt_add_executable(GhostEngine WIN32
     src/tiles.h src/tiles.cpp
     src/nowplaying.h src/nowplaying.cpp
 )
-target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network)
+target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network dwmapi)
 target_compile_definitions(GhostEngine PRIVATE GHOST_VERSION="${PROJECT_VERSION}")

@@ -39,4 +39,40 @@ private:
     CoversFor m_coversFor;
 };
 
+// A playlist as a row in the library panel: small cover, name, count. In a
+// narrow panel only the cover is left, as Spotify's library does.
+class RowDelegate : public QStyledItemDelegate {
+public:
+    using CoversFor = std::function<QVector<QPixmap>(const QModelIndex &)>;
+
+    RowDelegate(CoversFor coversFor, QObject *parent);
+    void setCompact(bool compact) { m_compact = compact; }
+
+    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override;
+
+private:
+    CoversFor m_coversFor;
+    bool m_compact = false;
+};
+
+// A song in a playlist page: number, cover, track and artist.
+constexpr int kNumberRole = Qt::UserRole + 2;
+constexpr int kArtistRole = Qt::UserRole + 3;
+
+class SongDelegate : public QStyledItemDelegate {
+public:
+    using CoverFor = std::function<QPixmap(const QModelIndex &)>;
+
+    SongDelegate(CoverFor coverFor, QObject *parent);
+
+    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override;
+
+private:
+    CoverFor m_coverFor;
+};
+
 } // namespace tiles
