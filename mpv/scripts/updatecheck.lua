@@ -18,6 +18,8 @@
 --
 -- Turn it off with GHOST_NO_UPDATE_CHECK=1, or by deleting this file.
 
+local utils = require "mp.utils"
+
 local CHECK_EVERY = 24 * 60 * 60          -- seconds between checks
 local API = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 local STAMP = mp.command_native({"expand-path", "~~/.ytdlp-checked"})
@@ -113,6 +115,16 @@ local function check()
             if not latest then done() return end
 
             remember_check()
+            -- The single-file yt-dlp.exe makes Defender rescan ~140 unpacked
+            -- files on every song. update.bat swaps in the folder build, but
+            -- a 1.2.7 update.bat that installs 1.2.8 still runs its own old
+            -- yt-dlp step, so the swap waits for the next run.
+            local beside = YTDLP:match("^(.*)[/\\]yt%-dlp%.exe$")
+            if beside and not utils.file_info(beside .. "/_internal") then
+                mp.msg.warn("yt-dlp is the single-file build.")
+                done("yt-dlp needs a one-time switch to its faster build.")
+                return
+            end
             if latest == installed then
                 mp.msg.info("yt-dlp is current (" .. installed .. ").")
                 done()

@@ -80,12 +80,14 @@ mp.observe_property("paused-for-cache", "bool", function(_, waiting)
     if #stalls >= STALLS then step_down() end
 end)
 
--- A seek or a new file empties the cache on purpose; that wait is not the
--- connection's fault.
-mp.register_event("seek", function() quiet_for(SETTLE) end)
-mp.register_event("start-file", function() quiet_for(SETTLE) end)
+-- A seek past the cache, or a new file, starts from an empty cache on purpose;
+-- that wait is not the connection's fault, however long the server takes to
+-- answer. So nothing counts from the seek until playback has resumed and run
+-- for SETTLE seconds: the window opens at playback-restart, not at the seek.
+mp.register_event("seek", function() quiet_for(math.huge) end)
+mp.register_event("start-file", function() quiet_for(math.huge) end)
+mp.register_event("playback-restart", function() quiet_for(SETTLE) end)
 mp.register_event("file-loaded", function()
-    quiet_for(SETTLE)
     if resume_at then
         mp.commandv("seek", tostring(resume_at), "absolute")
         resume_at = nil
