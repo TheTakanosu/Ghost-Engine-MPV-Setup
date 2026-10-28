@@ -231,18 +231,21 @@ try {
     Step "2/5  yt-dlp  (this is what actually resolves YouTube links)"
     $ytRelease = Get-Json $YTDLP_RELEASE
     Say "release $($ytRelease.tag_name)" "DarkGray"
-    $ytAsset = $ytRelease.assets | Where-Object { $_.name -eq "yt-dlp.exe" } | Select-Object -First 1
+    # The folder build, not the single yt-dlp.exe. The single file unpacks ~140
+    # files into %TEMP% on every run, and Defender scans all of them again each
+    # time: a second of CPU per song. The folder build is scanned once.
+    $ytAsset = $ytRelease.assets | Where-Object { $_.name -eq "yt-dlp_win.zip" } | Select-Object -First 1
     $sumAsset = $ytRelease.assets | Where-Object { $_.name -eq "SHA2-256SUMS" } | Select-Object -First 1
-    if (-not $ytAsset) { throw "yt-dlp.exe is missing from release $($ytRelease.tag_name)." }
+    if (-not $ytAsset) { throw "yt-dlp_win.zip is missing from release $($ytRelease.tag_name)." }
 
-    $ytTemp = Join-Path $temp "yt-dlp.exe"
+    $ytTemp = Join-Path $temp "yt-dlp_win.zip"
     Fetch $ytAsset.browser_download_url $ytTemp "yt-dlp"
 
     if ($sumAsset) {
         $sumFile = Join-Path $temp "SHA2-256SUMS"
         Invoke-WebRequest -Uri $sumAsset.browser_download_url -OutFile $sumFile -UseBasicParsing
         $expected = (Get-Content $sumFile |
-            Where-Object { $_ -match '\s+yt-dlp\.exe$' } |
+            Where-Object { $_ -match '\s+yt-dlp_win\.zip$' } |
             Select-Object -First 1) -split '\s+' | Select-Object -First 1
         $actual = (Get-FileHash $ytTemp -Algorithm SHA256).Hash.ToLower()
         if ($expected -and $actual -eq $expected.ToLower()) {
@@ -250,12 +253,18 @@ try {
         } else {
             # A mismatch means the file is not the one yt-dlp released. It does
             # not get installed, and the reason is printed rather than guessed.
-            throw "yt-dlp.exe does not match its published checksum.`n       expected $expected`n       got      $actual"
+            throw "yt-dlp_win.zip does not match its published checksum.`n       expected $expected`n       got      $actual"
         }
     } else {
         Say "no SHA2-256SUMS in this release, so nothing to verify against" "Yellow"
     }
-    Copy-Item $ytTemp (Join-Path $InstallDir "yt-dlp.exe") -Force
+    $ytUnpacked = Join-Path $temp "yt-dlp"
+    New-Item -ItemType Directory -Force $ytUnpacked | Out-Null
+    & $tar -xf $ytTemp -C $ytUnpacked
+    if ($LASTEXITCODE -ne 0) { throw "tar could not unpack yt-dlp_win.zip." }
+    $ytInternal = Join-Path $InstallDir "_internal"
+    if (Test-Path $ytInternal) { Remove-Item $ytInternal -Recurse -Force }
+    Copy-Item (Join-Path $ytUnpacked "*") $InstallDir -Recurse -Force
     Say "yt-dlp installed" "Green"
 
     # -- node -----------------------------------------------------------------

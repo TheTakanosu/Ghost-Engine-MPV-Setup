@@ -266,15 +266,19 @@ try {
 
 if ($release) {
     Say "latest   : $($release.tag_name)" "DarkGray"
-    if ($current -and $current -eq $release.tag_name) {
+    # A current single-file yt-dlp.exe still gets replaced: that build makes
+    # Defender rescan ~140 unpacked files on every song. The folder build keeps
+    # them in _internal beside the exe.
+    $folderBuild = Test-Path (Join-Path $PSScriptRoot "_internal")
+    if ($current -and $current -eq $release.tag_name -and $folderBuild) {
         Say "Already current." "Green"
     } else {
-        $exe = $release.assets | Where-Object { $_.name -eq "yt-dlp.exe" } | Select-Object -First 1
+        $exe = $release.assets | Where-Object { $_.name -eq "yt-dlp_win.zip" } | Select-Object -First 1
         $sum = $release.assets | Where-Object { $_.name -eq "SHA2-256SUMS" } | Select-Object -First 1
         if (-not $exe) {
-            Say "yt-dlp.exe is missing from that release." "Red"
+            Say "yt-dlp_win.zip is missing from that release." "Red"
         } else {
-            $temp = Temp-Path ".exe"
+            $temp = Temp-Path ".zip"
             Say "downloading ..."
             Invoke-WebRequest -Uri $exe.browser_download_url -OutFile $temp -UseBasicParsing
 
@@ -282,7 +286,7 @@ if ($release) {
             if ($sum) {
                 $sumFile = "$temp.sums"
                 Invoke-WebRequest -Uri $sum.browser_download_url -OutFile $sumFile -UseBasicParsing
-                $expected = (Get-Content $sumFile | Where-Object { $_ -match '\s+yt-dlp\.exe$' } |
+                $expected = (Get-Content $sumFile | Where-Object { $_ -match '\s+yt-dlp_win\.zip$' } |
                              Select-Object -First 1) -split '\s+' | Select-Object -First 1
                 $actual = (Get-FileHash $temp -Algorithm SHA256).Hash.ToLower()
                 Remove-Item $sumFile -Force -ErrorAction SilentlyContinue
@@ -301,13 +305,38 @@ if ($release) {
             # mid-download does. Closing mpv first is the reliable path, so
             # say so rather than failing with a permissions error nobody can read.
             if ($ok) {
-                try {
-                    Move-Item $temp $exePath -Force
-                    Say "updated to $($release.tag_name)" "Green"
-                } catch {
-                    Remove-Item $temp -Force -ErrorAction SilentlyContinue
-                    Say "Could not replace yt-dlp.exe - close mpv and run this again." "Red"
+                $unpacked = "$temp.dir"
+                New-Item -ItemType Directory -Force $unpacked | Out-Null
+                & (Join-Path $env:SystemRoot "System32\tar.exe") -xf $temp -C $unpacked
+                Remove-Item $temp -Force -ErrorAction SilentlyContinue
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $unpacked "yt-dlp.exe"))) {
+                    Say "Could not unpack yt-dlp_win.zip - nothing was replaced." "Red"
+                } else {
+                    # Swap in steps that can be undone: a running yt-dlp locks
+                    # its files, and half a swap would leave no working copy.
+                    $internal = Join-Path $PSScriptRoot "_internal"
+                    $oldInternal = "$internal.old"
+                    $oldExe = "$exePath.old"
+                    Remove-Item $oldInternal -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-Item $oldExe -Force -ErrorAction SilentlyContinue
+                    try {
+                        if (Test-Path $internal) { Move-Item $internal $oldInternal -ErrorAction Stop }
+                        if (Test-Path $exePath) { Move-Item $exePath $oldExe -ErrorAction Stop }
+                        Move-Item (Join-Path $unpacked "_internal") $internal -ErrorAction Stop
+                        Move-Item (Join-Path $unpacked "yt-dlp.exe") $exePath -ErrorAction Stop
+                        Remove-Item $oldInternal -Recurse -Force -ErrorAction SilentlyContinue
+                        Remove-Item $oldExe -Force -ErrorAction SilentlyContinue
+                        Say "updated to $($release.tag_name)" "Green"
+                    } catch {
+                        if (-not (Test-Path $exePath) -and (Test-Path $oldExe)) { Move-Item $oldExe $exePath }
+                        if (Test-Path $oldInternal) {
+                            Remove-Item $internal -Recurse -Force -ErrorAction SilentlyContinue
+                            Move-Item $oldInternal $internal
+                        }
+                        Say "Could not replace yt-dlp - close mpv and run this again." "Red"
+                    }
                 }
+                Remove-Item $unpacked -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
