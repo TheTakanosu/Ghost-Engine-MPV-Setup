@@ -56,6 +56,9 @@ public:
     void setPosition(double seconds);
     void setTint(const QColor &tint);
     std::function<void(double seconds)> onSeek;
+    // Shown when nothing is found: a search for the song on Genius, in the
+    // browser (Genius lets no app take its lyrics).
+    void setSearchText(const QString &text);
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -67,6 +70,7 @@ private:
     int currentLine() const;
     QVector<QRectF> layoutLines(qreal width) const;
     void followCurrent();
+    void resizeEvent(QResizeEvent *) override;
 
     Lyrics m_lyrics;
     QString m_title;
@@ -76,4 +80,6 @@ private:
     qreal m_scroll = 0, m_targetScroll = 0;
     qint64 m_userScrolledAt = 0;   // the wheel takes over for a few seconds
     QTimer m_glide;                // eases the scroll towards its target
+    class QPushButton *m_genius;
+    QString m_searchText;
 };

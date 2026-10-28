@@ -1797,6 +1797,7 @@ void MainWindow::lookUpLyrics()
         return;
     m_lyricsKey = key;
     m_lyricsView->setSearching(artist.isEmpty() ? track : artist + QStringLiteral(" · ") + track);
+    m_lyricsView->setSearchText((artist + ' ' + track).trimmed());
     m_lyricsSource.fetch(artist, track, m_mpv.property("duration").toDouble());
 }
 

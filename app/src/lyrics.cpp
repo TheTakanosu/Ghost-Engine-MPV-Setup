@@ -3,6 +3,9 @@
 #include "theme.h"
 
 #include <QCryptographicHash>
+#include <QDesktopServices>
+#include <QPushButton>
+#include <QUrl>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -173,6 +176,14 @@ void LyricsSource::remember(const QString &key, const Lyrics &lyrics, const QByt
 LyricsView::LyricsView(QWidget *parent) : QWidget(parent)
 {
     setMouseTracking(true);
+    m_genius = new QPushButton("Search for the lyrics on Genius", this);
+    m_genius->setObjectName("link");
+    m_genius->setCursor(Qt::PointingHandCursor);
+    m_genius->hide();
+    connect(m_genius, &QPushButton::clicked, this, [this] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://genius.com/search?q=") +
+                                       QString::fromUtf8(QUrl::toPercentEncoding(m_searchText))));
+    });
     m_glide.setInterval(16);
     connect(&m_glide, &QTimer::timeout, this, [this] {
         const qreal step = (m_targetScroll - m_scroll) * 0.18;
@@ -191,6 +202,7 @@ void LyricsView::setSearching(const QString &title)
     m_lyrics = Lyrics{};
     m_title = title;
     m_state = QStringLiteral("searching");
+    m_genius->hide();
     m_scroll = m_targetScroll = 0;
     update();
 }
@@ -200,10 +212,23 @@ void LyricsView::setLyrics(const Lyrics &lyrics, const QString &title)
     m_lyrics = lyrics;
     m_title = title;
     m_state = lyrics.found ? QString() : QStringLiteral("missing");
+    m_genius->setVisible(!lyrics.found && !m_searchText.isEmpty());
+    resizeEvent(nullptr);
     m_scroll = m_targetScroll = 0;
     m_userScrolledAt = 0;
     followCurrent();
     update();
+}
+
+void LyricsView::setSearchText(const QString &text)
+{
+    m_searchText = text;
+}
+
+void LyricsView::resizeEvent(QResizeEvent *)
+{
+    m_genius->adjustSize();
+    m_genius->move((width() - m_genius->width()) / 2, height() / 2 + 60);
 }
 
 void LyricsView::setTint(const QColor &tint)

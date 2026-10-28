@@ -247,6 +247,9 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
             m_mpv->command({"seek", duration * m_position->value() / 1000.0, "absolute"});
     });
     connect(m_volume, &QSlider::sliderMoved, this, [this](int v) { m_mpv->setProperty("volume", v); });
+    // A click jumps the handle without moving it, so sliderMoved never
+    // comes; letting go sets the volume where the handle is.
+    connect(m_volume, &QSlider::sliderReleased, this, [this] { m_mpv->setProperty("volume", m_volume->value()); });
     connect(m_mpv, &MpvClient::propertyChanged, this, [this](const QString &name) { onProperty(name); });
     connect(m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
         if (!on)
