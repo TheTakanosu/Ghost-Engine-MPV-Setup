@@ -11,6 +11,16 @@ local AUDIO_FORMATS = {
     saver = "bestaudio[abr<=70]/worstaudio/bestaudio",
 }
 
+-- A song list switches mpv to sound only: no video track, an audio-only
+-- format, a window forced open (or not). Those settings outlive the list,
+-- so a video list opened after it in the same mpv played as sound only, with
+-- no picture and no window. The video settings in force before are kept
+-- here and put back when a list without #GHOST_AUDIO opens. The app, when
+-- its video quality changes while a song list plays, passes the new format
+-- as ghost-video-format so it is the one put back.
+local video_format = mp.get_property("ytdl-format")
+local in_audio_mode = false
+
 mp.add_hook("on_load", 50, function()
     local path = mp.get_property("path", "")
     
@@ -25,6 +35,10 @@ mp.add_hook("on_load", 50, function()
             mp.set_property_native("user-data/ghost/audio", audio or false)
 
             if audio then
+                if not in_audio_mode then
+                    video_format = mp.get_property("ytdl-format")
+                    in_audio_mode = true
+                end
                 mp.set_property("vid", "no")
                 mp.set_property("ytdl-format", AUDIO_FORMATS[mp.get_opt("ghost-audio") or ""] or "bestaudio")
                 -- Without a video track mpv opens no window at all, which
@@ -34,6 +48,12 @@ mp.add_hook("on_load", 50, function()
                 -- controls with the cover art in place of the video.
                 mp.set_property("force-window", mp.get_opt("ghost-window") == "no" and "no" or "yes")
                 mp.msg.info("Ghost-Audio is online! Thanks for using our system.")
+            elseif in_audio_mode then
+                mp.set_property("vid", "auto")
+                mp.set_property("ytdl-format", mp.get_opt("ghost-video-format") or video_format)
+                mp.set_property("force-window", "no")
+                in_audio_mode = false
+                mp.msg.info("video list: picture and window are back")
             end
         end
     end

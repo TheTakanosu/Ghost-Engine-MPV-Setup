@@ -346,8 +346,13 @@ MainWindow::MainWindow()
             }
     };
     m_settings->onVideoFormatChanged = [this](const QString &format) {
-        // From the next video; a song list sets its own format as it opens.
-        if (m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool())
+        // From the next video. While a song list plays, ghost.lua is told
+        // instead: it puts this format back when a video list opens.
+        if (!m_mpv.connected())
+            return;
+        if (m_mpv.property("user-data/ghost/audio").toBool())
+            m_mpv.command({"change-list", "script-opts", "append", QStringLiteral("ghost-video-format=") + format});
+        else
             m_mpv.setProperty("ytdl-format", format);
     };
     m_settings->onPlayerWindowChanged = [this](bool shown) {
