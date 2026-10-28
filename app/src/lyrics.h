@@ -63,13 +63,22 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override;
     void wheelEvent(QWheelEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
     int currentLine() const;
     QVector<QRectF> layoutLines(qreal width) const;
     void followCurrent();
+    QRectF textArea() const;
+    int lineAt(const QPointF &pos) const;
+    QStringList lineTexts() const;
+    QString selectedText() const;   // the selected lines, or all of them
+    void copyLyrics();
+    void saveLyrics();
     void resizeEvent(QResizeEvent *) override;
 
     Lyrics m_lyrics;
@@ -81,5 +90,11 @@ private:
     qint64 m_userScrolledAt = 0;   // the wheel takes over for a few seconds
     QTimer m_glide;                // eases the scroll towards its target
     class QPushButton *m_genius;
+    class QPushButton *m_copy;
+    class QPushButton *m_save;
+    int m_selFrom = -1, m_selTo = -1;   // selected lines, either order
+    int m_pressLine = -1;
+    QPointF m_pressAt;
+    bool m_selecting = false;
     QString m_searchText;
 };

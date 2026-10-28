@@ -2,7 +2,13 @@
 
 #include "theme.h"
 
+#include <QClipboard>
+#include <QContextMenuEvent>
 #include <QCryptographicHash>
+#include <QFileDialog>
+#include <QGuiApplication>
+#include <QKeyEvent>
+#include <QMenu>
 #include <QDesktopServices>
 #include <QPushButton>
 #include <QUrl>
@@ -10,6 +16,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -180,6 +187,17 @@ LyricsView::LyricsView(QWidget *parent) : QWidget(parent)
     m_genius->setObjectName("link");
     m_genius->setCursor(Qt::PointingHandCursor);
     m_genius->hide();
+    // Out of the app: the words to the clipboard or to a file.
+    m_copy = new QPushButton("Copy lyrics", this);
+    m_save = new QPushButton("Save as...", this);
+    for (QPushButton *b : {m_copy, m_save}) {
+        b->setObjectName("chip");
+        b->setCursor(Qt::PointingHandCursor);
+        b->hide();
+    }
+    connect(m_copy, &QPushButton::clicked, this, &LyricsView::copyLyrics);
+    connect(m_save, &QPushButton::clicked, this, &LyricsView::saveLyrics);
+    setFocusPolicy(Qt::ClickFocus);
     connect(m_genius, &QPushButton::clicked, this, [this] {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://genius.com/search?q=") +
                                        QString::fromUtf8(QUrl::toPercentEncoding(m_searchText))));
@@ -203,6 +221,9 @@ void LyricsView::setSearching(const QString &title)
     m_title = title;
     m_state = QStringLiteral("searching");
     m_genius->hide();
+    m_copy->hide();
+    m_save->hide();
+    m_selFrom = m_selTo = -1;
     m_scroll = m_targetScroll = 0;
     update();
 }
@@ -213,6 +234,9 @@ void LyricsView::setLyrics(const Lyrics &lyrics, const QString &title)
     m_title = title;
     m_state = lyrics.found ? QString() : QStringLiteral("missing");
     m_genius->setVisible(!lyrics.found && !m_searchText.isEmpty());
+    m_copy->setVisible(lyrics.found);
+    m_save->setVisible(lyrics.found);
+    m_selFrom = m_selTo = -1;
     resizeEvent(nullptr);
     m_scroll = m_targetScroll = 0;
     m_userScrolledAt = 0;
@@ -229,6 +253,10 @@ void LyricsView::resizeEvent(QResizeEvent *)
 {
     m_genius->adjustSize();
     m_genius->move((width() - m_genius->width()) / 2, height() / 2 + 60);
+    m_save->adjustSize();
+    m_copy->adjustSize();
+    m_save->move(width() - m_save->width() - 24, height() - m_save->height() - 18);
+    m_copy->move(m_save->x() - m_copy->width() - 8, m_save->y());
 }
 
 void LyricsView::setTint(const QColor &tint)
@@ -282,7 +310,7 @@ void LyricsView::followCurrent()
     if (line < 0) {
         m_targetScroll = 0;
     } else {
-        const QVector<QRectF> rects = layoutLines(width() - 120);
+        const QVector<QRectF> rects = layoutLines(textArea().width());
         m_targetScroll = qMax(0.0, rects.value(line).center().y() - height() / 3.0);
     }
     if (!m_glide.isActive())
@@ -301,7 +329,7 @@ void LyricsView::paintEvent(QPaintEvent *)
     box.addRoundedRect(QRectF(rect()), 12, 12);
     p.fillPath(box, wash);
 
-    const QRectF area = QRectF(rect()).adjusted(60, 40, -60, -30);
+    const QRectF area = textArea();
     if (!m_state.isEmpty()) {
         QFont f = lineFont(true);
         p.setFont(f);
@@ -323,9 +351,17 @@ void LyricsView::paintEvent(QPaintEvent *)
     const QStringList plain = m_lyrics.lines.isEmpty() ? m_lyrics.plain.split('\n') : QStringList();
     const int current = currentLine();
     const bool timed = !m_lyrics.lines.isEmpty();
-    p.save();
-    p.setClipRect(area);
-    p.translate(area.left(), area.top() - m_scroll);
+    // The words go on a layer of their own whose top and bottom edges are
+    // then made see-through, so lines fade into whatever colour is behind
+    // them instead of being cut (a painted band never matched the wash).
+    const qreal dpr = devicePixelRatioF();
+    QImage layer((area.size() + QSizeF(40, 0)).toSize() * dpr, QImage::Format_ARGB32_Premultiplied);
+    layer.setDevicePixelRatio(dpr);
+    layer.fill(Qt::transparent);
+    QPainter lp(&layer);
+    lp.setRenderHint(QPainter::Antialiasing);
+    lp.setRenderHint(QPainter::TextAntialiasing);
+    lp.translate(20, -m_scroll);
     for (int i = 0; i < rects.size(); ++i) {
         if (rects[i].bottom() < m_scroll - 40 || rects[i].top() > m_scroll + area.height() + 40)
             continue;
@@ -335,36 +371,44 @@ void LyricsView::paintEvent(QPaintEvent *)
         QColor ink = Qt::white;
         if (timed)
             ink.setAlpha(i == current ? 255 : i < current ? 150 : 95);
-        p.setFont(lineFont(timed && i == current));
-        p.setPen(ink);
-        p.drawText(rects[i], Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop, text.isEmpty() ? QStringLiteral("♪") : text);
+        if (m_selFrom >= 0 && i >= qMin(m_selFrom, m_selTo) && i <= qMax(m_selFrom, m_selTo)) {
+            const QFontMetricsF fm(lineFont(timed && i == current));
+            const qreal w = qMin(rects[i].width(), fm.boundingRect(rects[i], Qt::TextWordWrap, text.isEmpty() ? QStringLiteral("♪") : text).width());
+            QPainterPath mark;
+            mark.addRoundedRect(QRectF(rects[i].left() - 8, rects[i].top() - 3, w + 16, rects[i].height() + 6), 6, 6);
+            lp.fillPath(mark, QColor(255, 255, 255, 46));
+            ink.setAlpha(255);
+        }
+        lp.setFont(lineFont(timed && i == current));
+        lp.setPen(ink);
+        lp.drawText(rects[i], Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop, text.isEmpty() ? QStringLiteral("♪") : text);
     }
-    p.restore();
-    // Lines fade out at the top and bottom edges instead of being cut.
     const qreal fade = 70 * theme::zoom();
-    QLinearGradient top(0, area.top(), 0, area.top() + fade);
-    top.setColorAt(0, base);
-    top.setColorAt(1, QColor(base.red(), base.green(), base.blue(), 0));
-    p.fillRect(QRectF(area.left() - 10, area.top() - 1, area.width() + 20, fade), top);
-    const QColor low = base.darker(190);
-    QLinearGradient bottom(0, area.bottom() - fade, 0, area.bottom());
-    bottom.setColorAt(0, QColor(low.red(), low.green(), low.blue(), 0));
-    bottom.setColorAt(1, low);
-    p.fillRect(QRectF(area.left() - 10, area.bottom() - fade, area.width() + 20, fade + 1), bottom);
+    lp.resetTransform();
+    lp.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+    QLinearGradient mask(0, 0, 0, area.height());
+    const qreal edge = qMin(0.45, fade / area.height());
+    mask.setColorAt(0, Qt::transparent);
+    mask.setColorAt(edge, Qt::black);
+    mask.setColorAt(1 - edge, Qt::black);
+    mask.setColorAt(1, Qt::transparent);
+    lp.fillRect(QRectF(QPointF(0, 0), area.size() + QSizeF(40, 0)), mask);
+    lp.end();
+    p.drawImage(QPointF(area.left() - 20, area.top()), layer);
     if (!timed) {
         QFont f = lineFont(false);
         f.setPointSizeF(9 * theme::zoom());
         f.setWeight(QFont::Normal);
         p.setFont(f);
         p.setPen(QColor(255, 255, 255, 150));
-        p.drawText(QRectF(rect()).adjusted(60, 12, -60, 0), Qt::AlignLeft | Qt::AlignTop,
+        p.drawText(QRectF(rect()).adjusted(60, 16, -60, 0), Qt::AlignLeft | Qt::AlignTop,
                    QStringLiteral("These lyrics aren't timed to this version of the song."));
     }
 }
 
 void LyricsView::wheelEvent(QWheelEvent *event)
 {
-    const QVector<QRectF> rects = layoutLines(width() - 120);
+    const QVector<QRectF> rects = layoutLines(textArea().width());
     const qreal end = rects.isEmpty() ? 0 : qMax(0.0, rects.last().bottom() - height() / 2.0);
     m_targetScroll = qBound(0.0, m_targetScroll - event->angleDelta().y() * 1.2, end);
     m_userScrolledAt = QDateTime::currentMSecsSinceEpoch();
@@ -372,32 +416,159 @@ void LyricsView::wheelEvent(QWheelEvent *event)
         m_glide.start();
 }
 
+QRectF LyricsView::textArea() const
+{
+    const bool untimed = m_state.isEmpty() && m_lyrics.lines.isEmpty();
+    return QRectF(rect()).adjusted(60, untimed ? 64 : 40, -60, -70);
+}
+
+int LyricsView::lineAt(const QPointF &pos) const
+{
+    const QRectF area = textArea();
+    const QPointF at = pos - QPointF(area.left(), area.top() - m_scroll);
+    const QVector<QRectF> rects = layoutLines(area.width());
+    for (int i = 0; i < rects.size(); ++i)
+        if (at.y() >= rects[i].top() - 7 && at.y() < rects[i].bottom() + 7)
+            return i;
+    return -1;
+}
+
+QStringList LyricsView::lineTexts() const
+{
+    if (m_lyrics.lines.isEmpty())
+        return m_lyrics.plain.split('\n');
+    QStringList out;
+    for (const Lyrics::Line &l : m_lyrics.lines)
+        out << l.text;
+    return out;
+}
+
+QString LyricsView::selectedText() const
+{
+    const QStringList all = lineTexts();
+    if (m_selFrom < 0)
+        return all.join('\n');
+    return all.mid(qMin(m_selFrom, m_selTo), qAbs(m_selTo - m_selFrom) + 1).join('\n');
+}
+
+void LyricsView::copyLyrics()
+{
+    QGuiApplication::clipboard()->setText(selectedText());
+}
+
+void LyricsView::saveLyrics()
+{
+    // Plain text, or with the times as an .lrc that players read.
+    QString name = m_searchText.isEmpty() ? QStringLiteral("lyrics") : m_searchText;
+    name.replace(QRegularExpression(QStringLiteral(R"([\\/:*?"<>|]+)")), QStringLiteral(" "));
+    const bool timed = !m_lyrics.lines.isEmpty();
+    QString chosen;
+    const QString target = QFileDialog::getSaveFileName(this, "Save lyrics",
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + '/' + name.simplified() + ".txt",
+        timed ? QStringLiteral("Text (*.txt);;Timed lyrics (*.lrc)") : QStringLiteral("Text (*.txt)"), &chosen);
+    if (target.isEmpty())
+        return;
+    QString text;
+    if (target.endsWith(QStringLiteral(".lrc"), Qt::CaseInsensitive) && timed) {
+        for (const Lyrics::Line &l : m_lyrics.lines)
+            text += QStringLiteral("[%1:%2]%3\n").arg(int(l.at) / 60, 2, 10, QChar('0'))
+                        .arg(l.at - int(l.at) / 60 * 60, 5, 'f', 2, QChar('0')).arg(l.text);
+    } else {
+        text = lineTexts().join('\n') + '\n';
+    }
+    QFile file(target);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        file.write(text.toUtf8());
+}
+
+void LyricsView::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton || !m_state.isEmpty())
+        return;
+    m_pressAt = event->position();
+    m_pressLine = lineAt(event->position());
+    m_selecting = false;
+}
+
+void LyricsView::keyPressEvent(QKeyEvent *event)
+{
+    if (event->matches(QKeySequence::Copy)) {
+        copyLyrics();
+    } else if (event->matches(QKeySequence::SelectAll) && m_state.isEmpty()) {
+        m_selFrom = 0;
+        m_selTo = int(lineTexts().size()) - 1;
+        update();
+    } else if (event->key() == Qt::Key_Escape) {
+        m_selFrom = m_selTo = -1;
+        update();
+    } else {
+        QWidget::keyPressEvent(event);
+    }
+}
+
+void LyricsView::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!m_state.isEmpty())
+        return;
+    QMenu menu(this);
+    if (m_selFrom >= 0)
+        menu.addAction("Copy selected lines\tCtrl+C", this, &LyricsView::copyLyrics);
+    menu.addAction("Copy all lyrics", this, [this] {
+        QGuiApplication::clipboard()->setText(lineTexts().join('\n'));
+    });
+    menu.addAction("Select all\tCtrl+A", this, [this] {
+        m_selFrom = 0;
+        m_selTo = int(lineTexts().size()) - 1;
+        update();
+    });
+    menu.addSeparator();
+    menu.addAction("Save lyrics as...", this, &LyricsView::saveLyrics);
+    menu.exec(event->globalPos());
+}
+
 void LyricsView::mouseMoveEvent(QMouseEvent *event)
 {
+    // Dragging over lines selects them, as in a text box.
+    if ((event->buttons() & Qt::LeftButton) && m_pressLine >= 0 &&
+        (m_selecting || (event->position() - m_pressAt).manhattanLength() > 6)) {
+        m_selecting = true;
+        const int line = lineAt(event->position());
+        m_selFrom = m_pressLine;
+        if (line >= 0)
+            m_selTo = line;
+        else if (m_selTo < 0)
+            m_selTo = m_pressLine;
+        m_userScrolledAt = QDateTime::currentMSecsSinceEpoch();   // stay put while selecting
+        update();
+        return;
+    }
     if (m_lyrics.lines.isEmpty()) {
         unsetCursor();
         return;
     }
-    const QPointF at = event->position() - QPointF(60, 40 - m_scroll);
-    for (const QRectF &r : layoutLines(width() - 120))
-        if (r.contains(at)) {
-            setCursor(Qt::PointingHandCursor);
-            return;
-        }
-    unsetCursor();
+    if (lineAt(event->position()) >= 0)
+        setCursor(Qt::PointingHandCursor);
+    else
+        unsetCursor();
 }
 
 void LyricsView::mouseReleaseEvent(QMouseEvent *event)
 {
-    // A timed line plays from where it starts.
+    if (m_selecting) {
+        m_selecting = false;
+        return;
+    }
+    // A plain click clears a selection; on a timed line it also plays from
+    // where that line starts.
+    if (m_selFrom >= 0) {
+        m_selFrom = m_selTo = -1;
+        update();
+    }
     if (m_lyrics.lines.isEmpty() || !onSeek)
         return;
-    const QPointF at = event->position() - QPointF(60, 40 - m_scroll);
-    const QVector<QRectF> rects = layoutLines(width() - 120);
-    for (int i = 0; i < rects.size(); ++i)
-        if (rects[i].contains(at)) {
-            m_userScrolledAt = 0;
-            onSeek(m_lyrics.lines[i].at);
-            return;
-        }
+    const int line = lineAt(event->position());
+    if (line >= 0) {
+        m_userScrolledAt = 0;
+        onSeek(m_lyrics.lines[line].at);
+    }
 }
