@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -273,6 +274,42 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
            "Off: songs play inside Ghost Engine with no extra window, and closing Ghost Engine stops them. "
            "Video lists still open in mpv's window.", m_window);
 
+    QVBoxLayout *downloads;
+    auto *downloadsCard = card("Downloads", downloads);
+    m_offlineQuality = new QComboBox;
+    m_offlineQuality->addItem("Best", QString());
+    m_offlineQuality->addItem("Standard", QStringLiteral("standard"));
+    m_offlineQuality->addItem("Data saver", QStringLiteral("saver"));
+    m_offlineQuality->setMinimumWidth(190);
+    addRow(downloads, "Download quality",
+           "The sound of songs downloaded from now on. Only songs are downloaded, as YouTube serves them; "
+           "they play from your disk, at once and without the internet.", m_offlineQuality);
+    m_offlineUsed = new QLabel;
+    m_offlineUsed->setObjectName("statLabel");
+    auto *clear = new QPushButton("Remove all downloads");
+    clear->setObjectName("chip");
+    clear->setCursor(Qt::PointingHandCursor);
+    connect(clear, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, "Remove all downloads",
+                "Delete every downloaded song? The playlists stay; their songs play from YouTube again.") != QMessageBox::Yes)
+            return;
+        if (onRemoveDownloads)
+            onRemoveDownloads();
+        load();
+    });
+    addRow(downloads, "On this computer", QString(), clear);
+    // The summary sits under "On this computer", where the description goes.
+    {
+        auto *row = downloads->itemAt(downloads->count() - 1)->layout();
+        auto *words = row->itemAt(0)->layout();
+        static_cast<QLabel *>(words->itemAt(1)->widget())->hide();
+        words->addWidget(m_offlineUsed);
+    }
+    connect(m_offlineQuality, &QComboBox::currentIndexChanged, this, [this] {
+        if (!m_loading)
+            QSettings().setValue("offline/quality", m_offlineQuality->currentData().toString());
+    });
+
     QVBoxLayout *look;
     auto *lookCard = card("Look", look);
     m_covers = new QComboBox;
@@ -304,6 +341,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     box->addWidget(title);
     box->addWidget(playbackCard);
     box->addWidget(windowCard);
+    box->addWidget(downloadsCard);
     box->addWidget(lookCard);
     box->addLayout(footer);
     box->addStretch();
@@ -391,6 +429,8 @@ void SettingsPage::load()
     m_window->setChecked(settings.value("player/window", true).toBool());
     m_covers->setCurrentIndex(settings.value("look/circleCovers").toBool() ? 1 : 0);
     m_volumeNumber->setChecked(settings.value("look/volumeNumber", false).toBool());
+    m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));
+    m_offlineUsed->setText(downloadsSummary ? downloadsSummary() : QString());
     m_confPath->setText(QStringLiteral("Playback settings are kept in %1, and updates keep them.")
                             .arg(QDir::toNativeSeparators(mpvconf::path())));
     m_loading = false;

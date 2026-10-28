@@ -43,6 +43,9 @@ public:
     std::function<void()> onLookChanged;
     std::function<void(const QString &format)> onVideoFormatChanged;
     std::function<void(bool shown)> onPlayerWindowChanged;
+    // Downloads: a line on what is kept, and clearing all of it.
+    std::function<QString()> downloadsSummary;
+    std::function<void()> onRemoveDownloads;
 
     // Read again from mpv.conf and the app's settings, when the page opens.
     void load();
@@ -57,5 +60,7 @@ private:
     QComboBox *m_covers;
     ToggleSwitch *m_volumeNumber;
     QLabel *m_confPath;
+    QComboBox *m_offlineQuality;
+    QLabel *m_offlineUsed;
     bool m_loading = false;
 };

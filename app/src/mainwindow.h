@@ -2,6 +2,7 @@
 
 #include "library.h"
 #include "lyrics.h"
+#include "offline.h"
 #include "mpvclient.h"
 #include "resolver.h"
 #include "thumbnails.h"
@@ -170,6 +171,11 @@ private:
     QStackedWidget *m_pages = nullptr;
     class SettingsPage *m_settings = nullptr;
     LyricsSource m_lyricsSource;
+    OfflineStore m_offline;
+    class QPushButton *m_downloadButton = nullptr;
+    void showDownloadState();
+    void toggleDownload(int index);
+    QStringList targetsOf(const Playlist &p) const;
     LyricsView *m_lyricsView = nullptr;
     QString m_lyricsKey;           // the song the lyrics page is for
     QWidget *m_beforeLyrics = nullptr;

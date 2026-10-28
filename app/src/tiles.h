@@ -83,6 +83,7 @@ constexpr int kEntryRole = Qt::UserRole + 7;     // its place in the file, whate
 constexpr int kAddedAtRole = Qt::UserRole + 11;  // when it was added, for sorting
 constexpr int kKeyRole = Qt::UserRole + 12;      // a library row's key: file name, or "folder:<name>"
 constexpr int kPinnedRole = Qt::UserRole + 13;
+constexpr int kOfflineRole = Qt::UserRole + 14;  // a song kept on disk
 
 // Widths of the right-hand columns, shared by the rows and their header.
 constexpr int kAddedColumn = 150;

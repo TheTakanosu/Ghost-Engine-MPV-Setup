@@ -291,11 +291,20 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     painter->setPen(playing ? theme::accent() : selected ? theme::accentText() : theme::text());
     painter->drawText(text, Qt::AlignLeft | Qt::AlignTop,
                       QFontMetrics(titleFont).elidedText(track, Qt::ElideRight, int(text.width())));
+    QRectF artistLine = text;
+    if (index.data(kOfflineRole).toBool()) {
+        QFont mark(QStringLiteral("Segoe Fluent Icons"));
+        mark.setPixelSize(int(12 * theme::zoom()));
+        painter->setFont(mark);
+        painter->setPen(theme::accent());
+        painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom, QString(QChar(0xE896)));   // download
+        artistLine.setLeft(text.left() + 18 * theme::zoom());
+    }
     painter->setFont(option.font);
     painter->setPen(theme::muted());
-    painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom,
+    painter->drawText(artistLine, Qt::AlignLeft | Qt::AlignBottom,
                       QFontMetrics(option.font).elidedText(index.data(kArtistRole).toString(),
-                                                           Qt::ElideRight, int(text.width())));
+                                                           Qt::ElideRight, int(artistLine.width())));
     painter->restore();
 }
 

@@ -307,6 +307,13 @@ MainWindow::MainWindow()
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
     m_settings->onLookChanged = [this] { applyLook(); };
+    m_settings->downloadsSummary = [this] {
+        const int n = m_offline.songCount();
+        return n == 0 ? QStringLiteral("Nothing downloaded yet.")
+                      : QStringLiteral("%1 %2, %3 MB").arg(n).arg(n == 1 ? "song" : "songs")
+                            .arg(double(m_offline.bytesUsed()) / (1024 * 1024), 0, 'f', 1);
+    };
+    m_settings->onRemoveDownloads = [this] { m_offline.removeAll(); };
     m_settings->onVideoFormatChanged = [this](const QString &format) {
         // From the next video; a song list sets its own format as it opens.
         if (m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool())
@@ -361,6 +368,31 @@ MainWindow::MainWindow()
     setLibraryCompact(m_split->sizes().value(0) < kCompactBelow);
 
     m_resolver.setYtDlp(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"));
+    m_offline.setYtDlp(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"));
+    // The same video mpv would play: the entry's own, songmatch's match for
+    // a search, the one found for its cover, else the search itself.
+    m_offline.sourceFor = [this](const QString &target) -> QString {
+        QString id = youtube::videoId(target);
+        if (id.isEmpty()) {
+            const QString query = youtube::searchQuery(target);
+            if (query.isEmpty())
+                return {};
+            id = m_matches.idFor(query);
+            if (id.isEmpty())
+                id = m_resolver.idFor(query);
+            if (id.isEmpty())
+                return QStringLiteral("ytsearch1:") + query;
+        }
+        return QStringLiteral("https://www.youtube.com/watch?v=") + id;
+    };
+    connect(&m_offline, &OfflineStore::changed, this, [this](const QString &list) {
+        // Marks on the open list's songs, and its button.
+        const auto &all = m_library.playlists();
+        if (m_open >= 0 && (list.isEmpty() || all[m_open].path == list))
+            for (int row = 0; row < m_songs->count(); ++row)
+                m_songs->item(row)->setData(tiles::kOfflineRole, m_offline.has(m_songs->item(row)->data(Qt::UserRole).toString()));
+        showDownloadState();
+    });
     auto repaint = [this] {
         for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_songs})
             v->viewport()->update();
@@ -756,6 +788,7 @@ void MainWindow::showPlaylistMenu(int index, const QPoint &at)
         });
     if (QFileInfo::exists(customCoverPath(path)))
         menu.addAction("Remove custom image", this, [this, index] { removeCover(index); });
+    menu.addAction(m_offline.isMarked(path) ? "Remove download" : "Download", this, [this, index] { toggleDownload(index); });
     menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
     menu.addAction("Show in folder", this, [path] {
         QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
@@ -1202,6 +1235,11 @@ QWidget *MainWindow::buildPlaylistPage()
     actions->addWidget(playButton);
     actions->addWidget(shuffleButton);
     actions->addWidget(folderButton);
+    m_downloadButton = new QPushButton(QString(QChar(0xE896)));
+    m_downloadButton->setObjectName("bigGlyph");
+    m_downloadButton->setCursor(Qt::PointingHandCursor);
+    connect(m_downloadButton, &QPushButton::clicked, this, [this] { toggleDownload(m_open); });
+    actions->addWidget(m_downloadButton);
     actions->addStretch();
     m_songSearch = new QLineEdit;
     m_songSearch->setObjectName("songSearch");
@@ -1898,6 +1936,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
         row->setData(tiles::kArtistRole, artist);
         row->setData(tiles::kAddedRole, entry.added.isValid() ? relativeTime(entry.added) : added);
         row->setData(tiles::kAddedAtRole, entry.added.isValid() ? entry.added : p.modified);
+        row->setData(tiles::kOfflineRole, m_offline.has(entry.target));
         m_songs->addItem(row);
     }
     // Each list keeps the sort it was last shown with, as in Spotify.
@@ -1908,6 +1947,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     fillDurations();
     applySort();
     m_emptyHint->setVisible(m_songs->count() == 0);
+    showDownloadState();
     m_pages->setCurrentIndex(1);
     if (keepView) {
         m_songs->verticalScrollBar()->setValue(scrolled);
@@ -2237,6 +2277,53 @@ void MainWindow::rescan()
     for (int i = 0; i < all.size(); ++i)
         if (all[i].path == openPath)
             openPlaylist(i, true);
+    for (const Playlist &p : all)
+        if (m_offline.isMarked(p.path))
+            m_offline.topUp(p.path, targetsOf(p));
+}
+
+QStringList MainWindow::targetsOf(const Playlist &p) const
+{
+    QStringList targets;
+    for (const PlaylistEntry &e : p.readEntries())
+        targets << e.target;
+    return targets;
+}
+
+void MainWindow::toggleDownload(int index)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const Playlist p = all[index];
+    if (!m_offline.isMarked(p.path)) {
+        m_offline.download(p.path, targetsOf(p));
+        toast(QStringLiteral("Downloading %1").arg(p.name));
+        return;
+    }
+    if (QMessageBox::question(this, "Remove download",
+            QStringLiteral("Remove the downloaded songs of \"%1\"? They play from YouTube again.").arg(p.name)) != QMessageBox::Yes)
+        return;
+    m_offline.remove(p.path, targetsOf(p), [this](const QString &file) {
+        for (const Playlist &other : m_library.playlists())
+            if (QFileInfo(other.path).fileName() == file)
+                return targetsOf(other);
+        return QStringList();
+    });
+}
+
+void MainWindow::showDownloadState()
+{
+    // Off: grey. Downloading: violet, with how many are left. Done: violet.
+    if (!m_downloadButton || m_open < 0)
+        return;
+    const QString path = m_library.playlists()[m_open].path;
+    const bool marked = m_offline.isMarked(path);
+    const int left = m_offline.pending(path);
+    m_downloadButton->setStyleSheet(marked ? QStringLiteral("color: rgb(176,127,224);") : QString());
+    m_downloadButton->setToolTip(!marked ? QStringLiteral("Download for offline listening")
+                                 : left > 0 ? QStringLiteral("Downloading, %1 to go. Click to remove the download.").arg(left)
+                                            : QStringLiteral("Downloaded. Click to remove the download."));
 }
 
 void MainWindow::refill()
