@@ -132,6 +132,14 @@ void apply(QApplication &app)
         QPushButton#videoAction { background: rgb(40,39,50); border: none; border-radius: 16px; padding: 0 14px;
                                   min-height: 32px; max-height: 32px; color: rgb(236,236,241); font-family: "Segoe UI", "Segoe Fluent Icons"; }
         QPushButton#videoAction:hover { background: rgb(56,54,70); }
+        QWidget#videoControls { background: rgb(28,27,35); border-radius: 10px; }
+        QPushButton#videoControl { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: transparent; border: none;
+                                   color: rgb(220,218,228); font-size: 12pt; min-width: 34px; max-width: 34px; min-height: 30px; max-height: 30px; border-radius: 8px; }
+        QPushButton#videoControl:hover, QPushButton#videoTextControl:hover { background: rgb(48,46,60); color: white; }
+        QPushButton#videoTextControl { background: transparent; border: none; color: rgb(220,218,228); font-weight: 600;
+                                       min-height: 30px; max-height: 30px; padding: 0 10px; border-radius: 8px; }
+        QLabel#videoTime { color: rgb(220,218,228); font-weight: 600; }
+        QTextBrowser#videoDescription { background: rgb(28,27,35); border-radius: 10px; padding: 8px; color: rgb(214,212,222); }
         QWidget#videoAway { background: rgb(16,15,20); border-radius: 12px; }
         QLabel#settingName { font-size: 10.5pt; font-weight: 600; color: rgb(236,236,241); }
         QComboBox { background: rgb(40,39,50); border: 1px solid rgb(58,56,70); border-radius: 8px; padding: 6px 12px; color: rgb(236,236,241);

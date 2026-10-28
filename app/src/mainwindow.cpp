@@ -320,6 +320,21 @@ MainWindow::MainWindow()
                       m_mpv.property("time-pos").toDouble());
     };
     m_videoPage->onFullScreen = [this] { setVideoFullScreen(!m_videoFull); };
+    m_videoPage->onTogglePause = [this] { m_mpv.command({"cycle", "pause"}); };
+    m_videoPage->onSeek = [this](double s) { m_mpv.command({"seek", s, "absolute"}); };
+    m_videoPage->onSkip = [this](double s) { m_mpv.command({"seek", s}); };
+    m_videoPage->onSubtitle = [this](const QVariant &sid) { m_mpv.setProperty("sid", sid); };
+    m_videoPage->onSpeed = [this](double s) { m_mpv.setProperty("speed", s); };
+    m_videoPage->onQuality = [this](int height) {
+        // The cap for this and the next videos, this one reopened at the
+        // same second (quality.lua does the same when it steps down).
+        const QString format = height > 0 ? QStringLiteral("bestvideo[height<=%1]+bestaudio/best").arg(height)
+                                          : QStringLiteral("bestvideo+bestaudio/best");
+        m_mpv.setProperty("ytdl-format", format);
+        m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
+        m_resetStart = true;
+        m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+    };
     // On the video page the keys mpv would take in its own window.
     auto key = [this](const QKeySequence &seq, std::function<void()> act) {
         auto *s = new QShortcut(seq, m_videoPage);
@@ -327,8 +342,8 @@ MainWindow::MainWindow()
         connect(s, &QShortcut::activated, this, act);
     };
     key(QKeySequence(Qt::Key_Space), [this] { m_mpv.command({"cycle", "pause"}); });
-    key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -5}); });
-    key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 5}); });
+    key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -10}); });
+    key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 10}); });
     key(QKeySequence(Qt::Key_F), [this] { setVideoFullScreen(!m_videoFull); });
     auto *escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     connect(escape, &QShortcut::activated, this, [this] { if (m_videoFull) setVideoFullScreen(false); });
@@ -515,6 +530,27 @@ MainWindow::MainWindow()
         if (name == "path" || name == "media-title" || name == "metadata/by-key/uploader" ||
             name == "playlist-path" || name == "user-data/ghost/source")
             updateVideoPage();
+        // The video page's own controls.
+        if (m_pages->currentWidget() == m_videoPage) {
+            if (name == "time-pos" || name == "duration")
+                m_videoPage->setTimes(m_mpv.property("time-pos").isValid() ? m_mpv.property("time-pos").toDouble() : -1,
+                                      m_mpv.property("duration").isValid() ? m_mpv.property("duration").toDouble() : -1);
+            if (name == "pause")
+                m_videoPage->setPaused(m_mpv.property("pause").toBool());
+            if (name == "track-list")
+                m_videoPage->setTracks(m_mpv.property("track-list").toList());
+            if (name == "speed")
+                m_videoPage->setSpeed(m_mpv.property("speed").toDouble());
+            if (name == "ytdl-format") {
+                static const QRegularExpression cap(QStringLiteral(R"(height<=(\d+))"));
+                m_videoPage->setQualityCap(cap.match(m_mpv.property("ytdl-format").toString()).captured(1).toInt());
+            }
+        }
+        // A reload at a second has started playing: later files start at 0.
+        if (name == "time-pos" && m_resetStart && m_mpv.property("time-pos").toDouble() > 0) {
+            m_resetStart = false;
+            m_mpv.setProperty("start", "none");
+        }
         // mpv knows the length of what it plays; keep it for the list.
         if (name == "duration") {
             const QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString().isEmpty()
@@ -2758,6 +2794,11 @@ void MainWindow::restartPlayer(const QueuedPlay &q, double seconds)
 void MainWindow::showVideoPage()
 {
     updateVideoPage();
+    m_videoPage->setPaused(m_mpv.property("pause").toBool());
+    m_videoPage->setTracks(m_mpv.property("track-list").toList());
+    m_videoPage->setSpeed(m_mpv.property("speed").isValid() ? m_mpv.property("speed").toDouble() : 1.0);
+    static const QRegularExpression cap(QStringLiteral(R"(height<=(\d+))"));
+    m_videoPage->setQualityCap(cap.match(m_mpv.property("ytdl-format").toString()).captured(1).toInt());
     m_pages->setCurrentWidget(m_videoPage);
     m_nowPlaying->setLyricsOpen(false);
 }
@@ -2784,6 +2825,42 @@ void MainWindow::updateVideoPage()
     m_videoPage->setPlaying(path, m_mpv.property("media-title").toString(),
                             m_mpv.property("metadata/by-key/uploader").toString(),
                             id.isEmpty() ? QString() : QStringLiteral("https://www.youtube.com/watch?v=") + id);
+    if (!id.isEmpty())
+        describeVideo(id);
+}
+
+void MainWindow::describeVideo(const QString &id)
+{
+    // Only for videos, only once each: one yt-dlp call that downloads
+    // nothing, after the video has started, so it never delays playing.
+    if (m_descriptions.contains(id)) {
+        m_videoPage->setDescription(m_descriptions.value(id));
+        return;
+    }
+    if (m_describing == id)
+        return;
+    m_describing = id;
+    auto *proc = new QProcess(this);
+    // Python's own output encoding, so Turkish letters arrive as they are.
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("PYTHONIOENCODING", "utf-8");
+    env.insert("PYTHONUTF8", "1");
+    proc->setProcessEnvironment(env);
+    connect(proc, &QProcess::finished, this, [this, proc, id] {
+        proc->deleteLater();
+        const QString text = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+        m_descriptions.insert(id, text);
+        if (m_describing == id)
+            m_describing.clear();
+        const QString now = youtube::videoId(m_mpv.property("user-data/ghost/source").toString().isEmpty()
+                                                 ? m_mpv.property("path").toString()
+                                                 : m_mpv.property("user-data/ghost/source").toString());
+        if (now == id)
+            m_videoPage->setDescription(text);
+    });
+    proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
+                {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8", "--print", "description",
+                 QStringLiteral("https://www.youtube.com/watch?v=") + id});
 }
 
 void MainWindow::setVideoFullScreen(bool full)

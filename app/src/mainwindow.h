@@ -189,6 +189,10 @@ private:
     double m_startSeconds = 0;      // where the next started mpv begins
     std::optional<QueuedPlay> m_restartPlay;
     QString m_videoListPath;
+    bool m_resetStart = false;       // a quality change reloaded at a second
+    QHash<QString, QString> m_descriptions;   // video id -> its description
+    QString m_describing;            // the id being fetched
+    void describeVideo(const QString &id);
     bool listIsAudio(const QString &path) const;
     int embedFor(bool audio) const;   // 1 inside the app, 0 outside, -1 either
     void restartPlayer(const QueuedPlay &q, double seconds);
