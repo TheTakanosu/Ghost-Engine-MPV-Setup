@@ -7,6 +7,7 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTextStream>
+#include <QTimer>
 
 namespace {
 
@@ -33,6 +34,18 @@ CoverResolver::CoverResolver(QObject *parent) : QObject(parent)
     m_file = dir + QStringLiteral("/cover-ids.tsv");
     m_durationFile = dir + QStringLiteral("/durations.tsv");
     m_channelFile = dir + QStringLiteral("/channels.tsv");
+    m_uploadFile = dir + QStringLiteral("/uploaded.tsv");
+    // id <TAB> yyyyMMdd
+    QFile uploads(m_uploadFile);
+    if (uploads.open(QIODevice::ReadOnly)) {
+        QTextStream in(&uploads);
+        while (!in.atEnd()) {
+            const QStringList parts = in.readLine().split('\t');
+            const QDate day = QDate::fromString(parts.value(1), QStringLiteral("yyyyMMdd"));
+            if (parts.size() == 2 && day.isValid())
+                m_uploads.insert(parts[0], day);
+        }
+    }
 
     // query <TAB> id [<TAB> seconds]; an empty id is a search that found nothing.
     QFile file(m_file);
@@ -81,6 +94,46 @@ void CoverResolver::rememberChannel(const QString &id, const QString &channel)
         return;
     m_channels.insert(id, name);
     appendLine(m_channelFile, id + '\t' + QString(name).replace('\t', ' '));
+}
+
+void CoverResolver::requestUploadDate(const QString &id)
+{
+    if (id.isEmpty() || m_uploads.contains(id) || m_uploadAsked.contains(id))
+        return;
+    m_uploadAsked.insert(id);
+    m_uploadQueue << id;
+    // A moment for the rest of the list to ask too, so they go together.
+    if (!m_uploadRunning && m_uploadQueue.size() == 1)
+        QTimer::singleShot(400, this, &CoverResolver::startUploads);
+}
+
+void CoverResolver::startUploads()
+{
+    if (m_uploadRunning || m_uploadQueue.isEmpty() || m_ytdlp.isEmpty() || !QFileInfo::exists(m_ytdlp))
+        return;
+    m_uploadRunning = true;
+    const QStringList batch = m_uploadQueue.mid(0, 8);
+    m_uploadQueue = m_uploadQueue.mid(batch.size());
+    QStringList args{"--no-warnings", "--skip-download", "--no-playlist", "--ignore-no-formats-error",
+                     "--ignore-errors", "--print", "%(id)s\t%(upload_date)s"};
+    for (const QString &id : batch)
+        args << QStringLiteral("https://www.youtube.com/watch?v=") + id;
+    auto *process = new QProcess(this);
+    connect(process, &QProcess::finished, this, [this, process] {
+        process->deleteLater();
+        for (const QString &line : QString::fromUtf8(process->readAllStandardOutput()).split('\n')) {
+            const QStringList parts = QString(line).remove('\r').split('\t');
+            const QDate day = QDate::fromString(parts.value(1), QStringLiteral("yyyyMMdd"));
+            if (parts.size() != 2 || !day.isValid())
+                continue;
+            m_uploads.insert(parts[0], day);
+            appendLine(m_uploadFile, parts[0] + '\t' + parts[1]);
+            emit resolved(QString(), parts[0]);
+        }
+        m_uploadRunning = false;
+        startUploads();
+    });
+    process->start(m_ytdlp, args);
 }
 
 void CoverResolver::requestChannel(const QString &id)

@@ -47,6 +47,8 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
+    bool dragOrResize(QObject *watched, QEvent *event);
+    bool m_edgeCursor = false;   // the resize cursor is shown at a window edge
 
 private:
     enum Filter { AllLists, Songs, Videos };
@@ -100,6 +102,7 @@ private:
     void exportPlaylist(int index);
     void changeZoom(qreal step);
     static QString relativeTime(const QDateTime &when);
+    QString videoByline(const QString &id);
     void deletePlaylist(int index);
     void reopenAfter(const QString &path);
     void syncSearchWidth();

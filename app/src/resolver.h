@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDate>
 #include <QHash>
 #include <QObject>
 #include <QQueue>
@@ -32,6 +33,11 @@ public:
     QString channelFor(const QString &id) const { return m_channels.value(id); }
     void rememberChannel(const QString &id, const QString &channel);
     void requestChannel(const QString &id);
+    // The day a video was uploaded, invalid until it has been looked up: a
+    // full yt-dlp read (the quick search does not carry it), several videos
+    // per run, remembered on disk.
+    QDate uploadDateFor(const QString &id) const { return m_uploads.value(id); }
+    void requestUploadDate(const QString &id);
 
 signals:
     void resolved(const QString &query, const QString &id);
@@ -45,6 +51,12 @@ private:
     QString m_durationFile;
     QString m_channelFile;
     QHash<QString, QString> m_channels;
+    QString m_uploadFile;
+    QHash<QString, QDate> m_uploads;
+    QSet<QString> m_uploadAsked;
+    QStringList m_uploadQueue;
+    bool m_uploadRunning = false;
+    void startUploads();
     QHash<QString, QString> m_ids;
     QHash<QString, int> m_durations;
     QSet<QString> m_known;     // asked already, found or not

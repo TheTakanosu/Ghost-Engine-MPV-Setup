@@ -19,6 +19,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSlider>
 #include <QStyledItemDelegate>
@@ -26,6 +27,9 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWindow>
+
+#include <cmath>
 
 #include <windows.h>
 #include <dwmapi.h>
@@ -80,73 +84,6 @@ QString linkify(const QString &text)
     out.replace('\n', QStringLiteral("<br>"));
     return out;
 }
-
-// The window mpv draws into: a native one, so mpv can be given its handle.
-// Its corners are cut round with a window region, which also clips mpv's
-// window inside it; a Qt mask would not reach that far. What the cut-off
-// corners uncover is painted again, or it stays black.
-class Surface : public QWidget {
-public:
-    explicit Surface(QWidget *host) : QWidget(host)
-    {
-        setAttribute(Qt::WA_NativeWindow);
-        setAttribute(Qt::WA_DontCreateNativeAncestors);
-        // Not opaque to Qt: an opaque child's whole square is left out when
-        // the window under it is painted, corners and all.
-        setAutoFillBackground(false);
-        winId();   // the window exists from now on
-        hide();
-    }
-
-    void setCorner(int radius)
-    {
-        if (radius == m_corner)
-            return;
-        m_corner = radius;
-        clip();
-    }
-    // The part that may show (its own coordinates; empty: all of it). The
-    // page scrolls the picture up under the top bar, as YouTube's does, and
-    // a native window would otherwise be drawn over the bar.
-    void setVisibleArea(const QRect &area)
-    {
-        if (area == m_visible)
-            return;
-        m_visible = area;
-        clip();
-    }
-
-protected:
-    void resizeEvent(QResizeEvent *) override { clip(); }
-    void moveEvent(QMoveEvent *event) override
-    {
-        if (parentWidget())
-            parentWidget()->update(QRect(event->oldPos(), size()));
-        clip();
-    }
-
-private:
-    void clip()
-    {
-        const qreal dpr = devicePixelRatioF();
-        // A little tighter than the round the corner mask paints over it, so
-        // the picture reaches under the mask's smooth edge everywhere.
-        const int w = int(width() * dpr), h = int(height() * dpr), r = int(2 * m_corner * 0.6 * dpr);
-        HRGN shape = r > 0 ? CreateRoundRectRgn(0, 0, w + 1, h + 1, r, r) : CreateRectRgn(0, 0, w, h);
-        if (!m_visible.isEmpty()) {
-            HRGN shown = CreateRectRgn(int(m_visible.left() * dpr), int(m_visible.top() * dpr),
-                                       int((m_visible.right() + 1) * dpr), int((m_visible.bottom() + 1) * dpr));
-            CombineRgn(shape, shape, shown, RGN_AND);
-            DeleteObject(shown);
-        }
-        SetWindowRgn(reinterpret_cast<HWND>(winId()), shape, TRUE);
-        if (parentWidget())
-            parentWidget()->update(geometry());
-    }
-
-    int m_corner = 12;
-    QRect m_visible;
-};
 
 // A see-through window of its own, kept over the picture by the main window
 // that owns it: nothing the app paints can be on top of mpv's window.
@@ -249,21 +186,51 @@ public:
     }
     QWidget *face = nullptr;
     double aspect = 16.0 / 9.0;
+    bool pinned = false;
     std::function<void(const QSize &)> resized;
 
-protected:
-    void showEvent(QShowEvent *) override
+    // Larger or smaller around its middle, the video's shape kept.
+    void zoomBy(double factor)
     {
-        // A sizing frame, so Windows can resize it (none of it is drawn:
-        // the whole window is client area), and round corners.
+        const QRect screen = this->screen() ? this->screen()->availableGeometry() : QRect(0, 0, 1920, 1080);
+        const int w = qBound(220, int(width() * factor), int(screen.width() * 0.9));
+        const QSize size(w, int(w / aspect));
+        QRect r(QPoint(), size);
+        r.moveCenter(geometry().center());
+        setGeometry(r);
+    }
+    // Pinned, it stays above every program's windows and is no longer the
+    // main window's: Windows would hide it with the main window.
+    void applyPin(QWidget *owner)
+    {
+        // Through Qt's own window setting: Qt puts back the stacking it knows
+        // of whenever it shows the window. It keeps the main window as the
+        // owner too; WM_SHOWWINDOW below keeps a pinned one up anyway.
+        Q_UNUSED(owner);
+        winId();
+        for (QWidget *w : {static_cast<QWidget *>(this), face})
+            if (w && w->windowHandle())
+                w->windowHandle()->setFlag(Qt::WindowStaysOnTopHint, pinned);
+        addFrame();
+    }
+    // A sizing frame, so Windows can resize it; none of it is drawn, the
+    // whole window is client area.
+    void addFrame()
+    {
         const HWND hwnd = reinterpret_cast<HWND>(winId());
         const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
         if (!(style & WS_THICKFRAME)) {
             SetWindowLongW(hwnd, GWL_STYLE, style | WS_THICKFRAME);
             SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         }
+    }
+
+protected:
+    void showEvent(QShowEvent *) override
+    {
+        addFrame();
         const int round = 2;   // DWMWA_WINDOW_CORNER_PREFERENCE: round
-        DwmSetWindowAttribute(hwnd, 33, &round, sizeof(round));
+        DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()), 33, &round, sizeof(round));
         face->show();
         follow();
     }
@@ -278,6 +245,12 @@ protected:
     bool nativeEvent(const QByteArray &, void *message, qintptr *result) override
     {
         const MSG *msg = static_cast<MSG *>(message);
+        if (msg->message == WM_SHOWWINDOW && !msg->wParam && msg->lParam == SW_PARENTCLOSING && pinned) {
+            // The main window is being minimised: Windows hides the windows
+            // it owns. Pinned, the mini player stays.
+            *result = 0;
+            return true;
+        }
         if (msg->message == WM_NCCALCSIZE && msg->wParam) {
             *result = 0;   // no frame drawn: all of it is the picture
             return true;
@@ -317,7 +290,7 @@ private:
         if (face) {
             face->setGeometry(geometry());
             if (face->isVisible())
-                SetWindowPos(reinterpret_cast<HWND>(face->winId()), HWND_TOP, 0, 0, 0, 0,
+                SetWindowPos(reinterpret_cast<HWND>(face->winId()), pinned ? HWND_TOPMOST : HWND_TOP, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
     }
@@ -403,11 +376,31 @@ protected:
     {
         if (event->button() != Qt::LeftButton)
             return;
-        if (m_pressed && rect().contains(event->position().toPoint()) && clicked)
-            clicked();
+        if (m_pressed && rect().contains(event->position().toPoint())) {
+            // A button that had not shown yet (the mouse came in too fast for
+            // the hover) is still the one clicked, not the video behind it.
+            for (QWidget *b : std::as_const(buttons))
+                if (b->geometry().contains(event->position().toPoint())) {
+                    m_pressed = false;
+                    setHot(true);
+                    if (auto *button = qobject_cast<QAbstractButton *>(b))
+                        button->click();
+                    return;
+                }
+            if (clicked)
+                clicked();
+        }
         m_pressed = false;
     }
     void resizeEvent(QResizeEvent *) override { placeButtons(); }
+    void wheelEvent(QWheelEvent *event) override
+    {
+        if (zoomed && event->angleDelta().y() != 0)
+            zoomed(std::pow(1.1, event->angleDelta().y() / 120.0));
+    }
+
+public:
+    std::function<void(double)> zoomed;
 
 private:
     QPoint m_press;
@@ -611,6 +604,90 @@ icons::IconButton *iconButton(icons::Icon icon, int size, const QString &tip)
 
 } // namespace
 
+NativeSurface::NativeSurface(QWidget *window)
+{
+    static const wchar_t *kClass = L"GhostEngineVideo";
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = kClass;
+        wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+        RegisterClassW(&wc);
+        registered = true;
+    }
+    m_hwnd = CreateWindowExW(0, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1,
+                             reinterpret_cast<HWND>(window->winId()), nullptr, GetModuleHandleW(nullptr), nullptr);
+    m_dpr = window->devicePixelRatioF();
+}
+
+void NativeSurface::place(QWidget *window, const QRect &rect)
+{
+    // mpv's window goes into the mini player's window and back: the same
+    // handle, given another parent, so mpv never notices.
+    const HWND hwnd = static_cast<HWND>(m_hwnd);
+    const HWND parent = reinterpret_cast<HWND>(window->winId());
+    if (GetParent(hwnd) != parent)
+        SetParent(hwnd, parent);
+    const qreal dpr = window->devicePixelRatioF();
+    const bool resized = rect.size() != m_rect.size() || dpr != m_dpr;
+    m_rect = rect;
+    m_dpr = dpr;
+    // The cut first, then the move: the other way round, for a moment the
+    // old cut stood at the new place.
+    if (resized)
+        clip();
+    SetWindowPos(hwnd, HWND_TOP, int(rect.x() * dpr), int(rect.y() * dpr), int(rect.width() * dpr),
+                 int(rect.height() * dpr), SWP_NOACTIVATE);
+}
+
+void NativeSurface::setCorner(int radius)
+{
+    if (radius == m_corner)
+        return;
+    m_corner = radius;
+    clip();
+}
+
+void NativeSurface::setVisibleArea(const QRect &area)
+{
+    // The page scrolls the picture up under the top bar, as YouTube's does;
+    // only its part inside the page shows.
+    if (area == m_visible)
+        return;
+    m_visible = area;
+    clip();
+}
+
+void NativeSurface::setVisible(bool visible)
+{
+    ShowWindow(static_cast<HWND>(m_hwnd), visible ? SW_SHOWNA : SW_HIDE);
+}
+
+void NativeSurface::keepOnTop()
+{
+    const HWND hwnd = static_cast<HWND>(m_hwnd);
+    if (IsWindowVisible(hwnd) && GetWindow(GetParent(hwnd), GW_CHILD) != hwnd)
+        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void NativeSurface::clip()
+{
+    // Round corners a little tighter than the round the corner mask paints
+    // over them, so the picture reaches under its smooth edge everywhere.
+    const qreal dpr = m_dpr;
+    const int w = int(m_rect.width() * dpr), h = int(m_rect.height() * dpr), r = int(2 * m_corner * 0.6 * dpr);
+    HRGN shape = r > 0 ? CreateRoundRectRgn(0, 0, w + 1, h + 1, r, r) : CreateRectRgn(0, 0, w, h);
+    if (!m_visible.isEmpty()) {
+        HRGN shown = CreateRectRgn(int(m_visible.left() * dpr), int(m_visible.top() * dpr),
+                                   int((m_visible.right() + 1) * dpr), int((m_visible.bottom() + 1) * dpr));
+        CombineRgn(shape, shape, shown, RGN_AND);
+        DeleteObject(shown);
+    }
+    SetWindowRgn(static_cast<HWND>(m_hwnd), shape, TRUE);
+}
+
 VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
 {
     // The player area: the picture's place, centred at the video's shape so
@@ -785,12 +862,12 @@ void VideoPage::arrange()
 void VideoPage::attachSurface(QWidget *host)
 {
     if (!m_surface)
-        m_surface = new Surface(host);
+        m_surface = new NativeSurface(host->window());
 }
 
 void VideoPage::setSurfaceCorner(int radius)
 {
-    static_cast<Surface *>(m_surface)->setCorner(radius);
+    m_surface->setCorner(radius);
     static_cast<Floating *>(m_controls)->corner = radius;
     m_controls->update();
     static_cast<MiniFace *>(m_mini)->corner = radius > 0 ? radius : 8;
@@ -813,7 +890,7 @@ QAbstractScrollArea *VideoPage::scrollArea() const
 
 void VideoPage::setSurfaceVisibleArea(const QRect &area)
 {
-    static_cast<Surface *>(m_surface)->setVisibleArea(area);
+    m_surface->setVisibleArea(area);
 }
 
 void VideoPage::placeOverPicture(const QRect &picture, const QRect &visible)
@@ -832,6 +909,7 @@ void VideoPage::placeOverPicture(const QRect &picture, const QRect &visible)
 
 void VideoPage::setOwner(QWidget *window)
 {
+    m_owner = window;
     for (QWidget *w : {m_controls, m_corners, m_miniWindow})
         w->setParent(window, w->windowFlags());
     auto *catcher = static_cast<CornerMask *>(m_corners);
@@ -1002,15 +1080,16 @@ QWidget *VideoPage::buildMini()
     connect(expand, &QPushButton::clicked, this, [this] { if (onRestore) onRestore(); });
     auto *pin = miniButton(QString(QChar(0xE718)), "Keep on top of other windows");
     pin->setParent(face);
-    connect(pin, &QPushButton::clicked, this, [this, pin] {
-        // Above every other program's windows too, as a picture in picture.
+    connect(pin, &QPushButton::clicked, this, [this, pin, window] {
+        // Above every other program's windows too, as a picture in picture,
+        // and still there when the app is minimised.
         m_pinned = !m_pinned;
         static_cast<FlatButton *>(pin)->setOn(m_pinned);
         pin->setToolTip(m_pinned ? "Stop keeping on top" : "Keep on top of other windows");
-        for (QWidget *w : {m_miniWindow, m_mini})
-            SetWindowPos(reinterpret_cast<HWND>(w->winId()), m_pinned ? HWND_TOPMOST : HWND_NOTOPMOST,
-                         0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        window->pinned = m_pinned;
+        window->applyPin(m_owner);
     });
+    face->zoomed = [window](double factor) { window->zoomBy(factor); };
     auto *close = miniButton(QString(QChar(0xE8BB)), "Close (pauses the video)");
     close->setParent(face);
     connect(close, &QPushButton::clicked, this, [this] { if (onCloseMini) onCloseMini(); });

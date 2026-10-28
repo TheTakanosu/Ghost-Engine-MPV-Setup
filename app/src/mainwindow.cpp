@@ -30,6 +30,7 @@
 #include <QStandardPaths>
 #include <QVariantAnimation>
 #include <QWheelEvent>
+#include <QWindow>
 #include <QInputDialog>
 #include <QRegularExpression>
 #include <QResizeEvent>
@@ -288,13 +289,7 @@ MainWindow::MainWindow()
     m_videoPage->coverFor = [this](const QString &target) {
         return m_covers.get(idForTarget(target), ThumbnailCache::Size::Card);
     };
-    m_videoPage->channelFor = [this](const QString &target) {
-        const QString id = idForTarget(target);
-        const QString channel = m_resolver.channelFor(id);
-        if (channel.isEmpty())
-            m_resolver.requestChannel(id);
-        return channel;
-    };
+    m_videoPage->channelFor = [this](const QString &target) { return videoByline(idForTarget(target)); };
     m_videoPage->lengthFor = [this](const QString &target) {
         const QString id = idForTarget(target);
         const int seconds = m_resolver.durationFor(id);
@@ -338,7 +333,12 @@ MainWindow::MainWindow()
     m_videoPage->onScreenMoved = [this] { schedulePlace(); };
     // While the page scrolls, mpv's window moves in the same step as the
     // page, or the old picture is seen for a moment over the top bar.
-    m_videoPage->onScrolled = [this] { placeSurface(); };
+    m_videoPage->onScrolled = [this] {
+        // The page is painted where it now is first, then mpv's window is
+        // moved over it, in the same step: no jump between the two.
+        m_videoPage->viewport()->repaint();
+        placeSurface();
+    };
     m_videoPage->onMinimize = [this] {
         // Back to where the video was opened from, the video in the corner.
         setVideoFullScreen(false);
@@ -356,7 +356,7 @@ MainWindow::MainWindow()
     m_videoPage->onMiniResized = [this](const QSize &size) {
         // mpv's window follows the mini player's edges as they are dragged.
         if (m_videoPage->surface() && m_videoPage->miniWindow()->isVisible()) {
-            m_videoPage->surface()->setGeometry(QRect(QPoint(0, 0), size));
+            m_videoPage->surface()->place(m_videoPage->miniWindow(), QRect(QPoint(0, 0), size));
             m_miniWidth = size.width();
             QSettings().setValue("video/miniWidth", m_miniWidth);
         }
@@ -1531,11 +1531,7 @@ QWidget *MainWindow::buildPlaylistPage()
         return m_covers.get(idForTarget(index.data(Qt::UserRole).toString()), ThumbnailCache::Size::Hero);
     }, m_songs);
     m_cardDelegate->channelFor = [this](const QModelIndex &index) {
-        const QString id = idForTarget(index.data(Qt::UserRole).toString());
-        const QString channel = m_resolver.channelFor(id);
-        if (channel.isEmpty())
-            m_resolver.requestChannel(id);
-        return channel;
+        return videoByline(idForTarget(index.data(Qt::UserRole).toString()));
     };
     // Scrolling the songs folds the header into a slim bar, as Spotify does:
     // the cover and title shrink over the first 170 px of scrolling.
@@ -1779,6 +1775,34 @@ void MainWindow::fillDurations()
     }
 }
 
+QString MainWindow::videoByline(const QString &id)
+{
+    // "Channel  ·  3 days ago", as YouTube writes under a video; each part
+    // is looked up in the background the first time it is asked for.
+    QStringList parts;
+    const QString channel = m_resolver.channelFor(id);
+    if (channel.isEmpty())
+        m_resolver.requestChannel(id);
+    else
+        parts << channel;
+    const QDate uploaded = m_resolver.uploadDateFor(id);
+    if (!uploaded.isValid()) {
+        m_resolver.requestUploadDate(id);
+    } else {
+        const qint64 days = uploaded.daysTo(QDate::currentDate());
+        parts << (days < 1 ? QStringLiteral("today")
+                  : days < 2 ? QStringLiteral("1 day ago")
+                  : days < 7 ? QStringLiteral("%1 days ago").arg(days)
+                  : days < 14 ? QStringLiteral("1 week ago")
+                  : days < 31 ? QStringLiteral("%1 weeks ago").arg(days / 7)
+                  : days < 60 ? QStringLiteral("1 month ago")
+                  : days < 365 ? QStringLiteral("%1 months ago").arg(days / 30)
+                  : days < 730 ? QStringLiteral("1 year ago")
+                  : QStringLiteral("%1 years ago").arg(days / 365));
+    }
+    return parts.join(QStringLiteral("  ·  "));
+}
+
 QString MainWindow::relativeTime(const QDateTime &when)
 {
     const qint64 days = when.daysTo(QDateTime::currentDateTime());
@@ -1823,6 +1847,8 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (dragOrResize(watched, event))
+        return true;
     if (watched == m_pages && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
         schedulePlace();
     if (watched == m_libraryPanel && event->type() == QEvent::Resize && m_rowDelegate && !m_videoFull) {
@@ -1931,6 +1957,74 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     layoutHeader();
     syncSearchWidth();
     schedulePlace();
+}
+
+bool MainWindow::dragOrResize(QObject *watched, QEvent *event)
+{
+    // The window is dragged by its top strip and resized at its edges
+    // through Qt as well as through WM_NCHITTEST: once a video has played,
+    // Qt keeps a child window over the whole client area and Windows asks
+    // that one where the mouse is, so the strip no longer read as a title
+    // bar. Qt still hands the mouse to the widgets, and these calls go to
+    // Windows' own move and size loops (snapping included).
+    const QEvent::Type type = event->type();
+    if (type == QEvent::Leave && watched == this && m_edgeCursor) {
+        QGuiApplication::restoreOverrideCursor();
+        m_edgeCursor = false;
+        return false;
+    }
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseButtonDblClick && type != QEvent::MouseMove)
+        return false;
+    auto *widget = qobject_cast<QWidget *>(watched);
+    if (!widget || widget->window() != this || !windowHandle() || m_videoFull)
+        return false;
+    auto *mouse = static_cast<QMouseEvent *>(event);
+    const QPoint at = mapFromGlobal(mouse->globalPosition().toPoint());
+    Qt::Edges edges;
+    if (!isMaximized()) {
+        const int m = 6;
+        if (at.x() < m) edges |= Qt::LeftEdge;
+        if (at.x() >= width() - m) edges |= Qt::RightEdge;
+        if (at.y() < m) edges |= Qt::TopEdge;
+        if (at.y() >= height() - m) edges |= Qt::BottomEdge;
+    }
+    if (type == QEvent::MouseMove) {
+        if (mouse->buttons() != Qt::NoButton)
+            return false;
+        if (edges) {
+            const bool diagonal = (edges & (Qt::LeftEdge | Qt::RightEdge)) && (edges & (Qt::TopEdge | Qt::BottomEdge));
+            const bool falling = edges == (Qt::LeftEdge | Qt::TopEdge) || edges == (Qt::RightEdge | Qt::BottomEdge);
+            const Qt::CursorShape shape = diagonal ? (falling ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor)
+                                          : (edges & (Qt::LeftEdge | Qt::RightEdge)) ? Qt::SizeHorCursor : Qt::SizeVerCursor;
+            if (m_edgeCursor)
+                QGuiApplication::changeOverrideCursor(shape);
+            else
+                QGuiApplication::setOverrideCursor(shape);
+            m_edgeCursor = true;
+        } else if (m_edgeCursor) {
+            QGuiApplication::restoreOverrideCursor();
+            m_edgeCursor = false;
+        }
+        return false;
+    }
+    if (mouse->button() != Qt::LeftButton)
+        return false;
+    if (type == QEvent::MouseButtonPress && edges) {
+        windowHandle()->startSystemResize(edges);
+        return true;
+    }
+    if (at.y() >= kTopBar)
+        return false;
+    for (QWidget *w = widget; w; w = w->parentWidget())
+        if (m_chromeButtons.contains(w))
+            return false;   // buttons and the search box stay clickable
+    if (type == QEvent::MouseButtonDblClick) {
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    } else {
+        windowHandle()->startSystemMove();
+    }
+    return true;
 }
 
 void MainWindow::moveEvent(QMoveEvent *event)
@@ -2973,31 +3067,27 @@ void MainWindow::schedulePlace()
 
 void MainWindow::placeSurface()
 {
-    QWidget *surface = m_videoPage->surface();
+    NativeSurface *surface = m_videoPage->surface();
     if (!surface)
         return;
-    QWidget *host = surface->parentWidget();
-    const bool video = videoShowing() && !isMinimized();
-    const bool onPage = video && m_pages->currentWidget() == m_videoPage;
+    QWidget *host = this;   // the main window, whose client area the surface is placed in
+    // A pinned mini player stays while the app is minimised.
+    const bool minimized = isMinimized();
+    const bool video = videoShowing() && (!minimized || m_videoPage->miniPinned());
+    const bool onPage = video && !minimized && m_pages->currentWidget() == m_videoPage;
     const bool mini = video && !onPage && !m_miniClosed;
     QWidget *miniWindow = m_videoPage->miniWindow();
-    // mpv's window goes into the mini player's window and back: the same
-    // window handle, given another parent, so mpv never notices.
-    const HWND handle = reinterpret_cast<HWND>(surface->winId());
-    const HWND parent = reinterpret_cast<HWND>(mini ? miniWindow->winId() : winId());
-    if (GetParent(handle) != parent)
-        SetParent(handle, parent);
     QRect visible;   // of the picture, in the host's coordinates
     if (onPage) {
         // The page scrolls the picture up and out of view: only what is
         // inside the page's scrolling area shows.
         QWidget *screen = m_videoPage->screen();
         m_videoPage->setSurfaceCorner(m_videoFull ? 0 : 12);
-        const QRect picture(screen->mapTo(host, QPoint()), screen->size());
-        const QRect view(m_videoPage->viewport()->mapTo(host, QPoint()), m_videoPage->viewport()->size());
+        const QRect picture(host->mapFromGlobal(screen->mapToGlobal(QPoint())), screen->size());
+        const QRect view(host->mapFromGlobal(m_videoPage->viewport()->mapToGlobal(QPoint())), m_videoPage->viewport()->size());
         visible = picture & view;
         m_videoPage->setSurfaceVisibleArea(visible.isEmpty() ? QRect(0, 0, 1, 1) : visible.translated(-picture.topLeft()));
-        surface->setGeometry(picture);
+        surface->place(this, picture);
         miniWindow->hide();
     } else if (mini) {
         // The video's shape, 384 px wide unless it was resized; bottom right
@@ -3014,16 +3104,12 @@ void MainWindow::placeSurface()
             miniWindow->setGeometry(QRect(at, size));
         m_videoPage->setSurfaceCorner(0);   // the window's own corners are round
         m_videoPage->setSurfaceVisibleArea(QRect());
-        // Inside the mini window, at its top left. Qt still takes the main
-        // window for the parent; the place it gives is the same either way.
-        surface->setGeometry(QRect(QPoint(0, 0), miniWindow->size()));
         miniWindow->show();
+        surface->place(miniWindow, QRect(QPoint(0, 0), miniWindow->size()));
     } else {
         miniWindow->hide();
     }
     surface->setVisible(onPage || mini);
-    if (onPage || mini)
-        surface->raise();
     m_surfaceOnPage = onPage;
 
     // mpv fills its window when the window already has the video's shape,
@@ -3037,7 +3123,7 @@ void MainWindow::placeSurface()
         }
     }
 
-    const QRect global(surface->mapToGlobal(QPoint()), surface->size());
+    const QRect global(host->mapToGlobal(surface->geometry().topLeft()), surface->geometry().size());
     m_videoArea = onPage ? QRect(host->mapToGlobal(visible.topLeft()), visible.size()) : QRect();
     if (onPage)
         m_videoPage->placeOverPicture(global, m_videoArea);
@@ -3066,6 +3152,8 @@ void MainWindow::watchVideoMouse()
     // where it is gets looked at a few times a second instead. The controls
     // show while it moves on the picture and go once it has rested, unless
     // the video is paused or a menu of theirs is open.
+    if (m_videoPage->surface())
+        m_videoPage->surface()->keepOnTop();
     QWidget *controls = m_videoPage->controls();
     if (!m_surfaceOnPage || !m_barFits) {
         controls->hide();

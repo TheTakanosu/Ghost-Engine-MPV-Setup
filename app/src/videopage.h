@@ -17,6 +17,34 @@ class QSlider;
 class QTextBrowser;
 namespace icons { class IconButton; }
 
+// The window mpv draws into (it is started with --wid). A plain Windows
+// window, not a Qt widget: a native Qt widget made Qt turn the widgets
+// around it native too, and the window's top bar then took the clicks that
+// drag the window. This one Qt never sees; it is placed, cut and shown here.
+class NativeSurface {
+public:
+    explicit NativeSurface(QWidget *window);
+    WId winId() const { return WId(m_hwnd); }
+    // Into this window (the main window or the mini player), at this place
+    // in its client area, in Qt's pixels.
+    void place(QWidget *window, const QRect &rect);
+    QRect geometry() const { return m_rect; }
+    void setCorner(int radius);
+    void setVisibleArea(const QRect &area);   // its own coordinates; empty: all
+    void setVisible(bool visible);
+    // Back on top of its siblings: Qt opens a child window of its own over
+    // the whole window once the video page shows, which would cover it.
+    void keepOnTop();
+
+private:
+    void clip();
+    void *m_hwnd = nullptr;
+    QRect m_rect;
+    qreal m_dpr = 1;
+    int m_corner = 12;
+    QRect m_visible;
+};
+
 // The page a video list plays on, laid out like YouTube's watch page: the
 // player large on the left, the title, channel and description under it,
 // the list's videos down the right. With the library collapsed it becomes a
@@ -35,7 +63,7 @@ public:
     // Made once the main window is set up, as a child of host; its handle
     // stays valid for as long as the app runs.
     void attachSurface(QWidget *host);
-    QWidget *surface() const { return m_surface; }
+    NativeSurface *surface() const { return m_surface; }
     void setSurfaceCorner(int radius);
     void setSurfaceVisibleArea(const QRect &area);   // its own coordinates; empty: all
     // The window over the picture's visible part (global coordinates).
@@ -119,7 +147,7 @@ private:
     void setExpanded(bool expanded);
     void arrange();
 
-    QWidget *m_surface = nullptr;
+    NativeSurface *m_surface = nullptr;
     QWidget *m_screen;          // the picture's place, under the surface
     QWidget *m_away;            // shown in its place while mpv is popped out
     QWidget *m_player;          // holds the screen, centred at the picture's shape
@@ -165,4 +193,8 @@ private:
     bool m_expanded = false;
     bool m_hasDescription = false;
     bool m_pinned = false;      // the mini player kept above other programs
+    QWidget *m_owner = nullptr; // the main window
+public:
+    bool miniPinned() const { return m_pinned; }
+private:
 };
