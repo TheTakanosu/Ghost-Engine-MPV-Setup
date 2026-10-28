@@ -218,6 +218,27 @@ void OfflineStore::removeAll()
     emit changed(QString());
 }
 
+int OfflineStore::filesFor(const QStringList &targets) const
+{
+    QSet<QString> files;
+    for (const QString &t : targets)
+        if (m_files.contains(t))
+            files.insert(m_files.value(t));
+    return int(files.size());
+}
+
+qint64 OfflineStore::bytesFor(const QStringList &targets) const
+{
+    QSet<QString> files;
+    for (const QString &t : targets)
+        if (m_files.contains(t))
+            files.insert(m_files.value(t));
+    qint64 total = 0;
+    for (const QString &file : files)
+        total += QFileInfo(folder() + '/' + file).size();
+    return total;
+}
+
 int OfflineStore::songCount() const
 {
     return int(QSet<QString>(m_files.cbegin(), m_files.cend()).size());

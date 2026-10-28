@@ -37,7 +37,9 @@ signals:
 
 private:
     void ask(const QString &key, const QString &query, double duration, int attempt, bool broad);
-    Lyrics pick(const QByteArray &json, double duration) const;
+    // `key` says whose song it is: a result by another artist is never
+    // taken, however well its length fits.
+    Lyrics pick(const QByteArray &json, double duration, const QString &key) const;
     QString cacheFile(const QString &key) const;
     void remember(const QString &key, const Lyrics &lyrics, const QByteArray &raw);
 

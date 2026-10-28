@@ -314,6 +314,37 @@ MainWindow::MainWindow()
                             .arg(double(m_offline.bytesUsed()) / (1024 * 1024), 0, 'f', 1);
     };
     m_settings->onRemoveDownloads = [this] { m_offline.removeAll(); };
+    m_settings->downloadedLists = [this] {
+        QList<SettingsPage::DownloadedList> out;
+        const auto &all = m_library.playlists();
+        for (int i = 0; i < all.size(); ++i) {
+            if (!m_offline.isMarked(all[i].path))
+                continue;
+            const QStringList targets = targetsOf(all[i]);
+            QPixmap cover(72, 72);   // drawn at 2x for a 36 px square
+            cover.fill(Qt::transparent);
+            QPainter p(&cover);
+            tiles::paintCollage(p, QRectF(0, 0, 72, 72), coversFor(i), all[i].name, 12);
+            p.end();
+            cover.setDevicePixelRatio(2);
+            out.append({all[i].path, all[i].name, cover, m_offline.filesFor(targets),
+                        m_offline.bytesFor(targets), m_offline.pending(all[i].path)});
+        }
+        return out;
+    };
+    m_settings->onRemoveListDownload = [this](const QString &path) {
+        const auto &all = m_library.playlists();
+        for (int i = 0; i < all.size(); ++i)
+            if (all[i].path == path) {
+                m_offline.remove(path, targetsOf(all[i]), [this](const QString &file) {
+                    for (const Playlist &other : m_library.playlists())
+                        if (QFileInfo(other.path).fileName() == file)
+                            return targetsOf(other);
+                    return QStringList();
+                });
+                return;
+            }
+    };
     m_settings->onVideoFormatChanged = [this](const QString &format) {
         // From the next video; a song list sets its own format as it opens.
         if (m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool())
@@ -392,6 +423,8 @@ MainWindow::MainWindow()
             for (int row = 0; row < m_songs->count(); ++row)
                 m_songs->item(row)->setData(tiles::kOfflineRole, m_offline.has(m_songs->item(row)->data(Qt::UserRole).toString()));
         showDownloadState();
+        if (m_pages->currentWidget() == m_settings)
+            m_settings->load();
     });
     auto repaint = [this] {
         for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_songs})
@@ -1415,8 +1448,17 @@ void MainWindow::fitTitle()
             break;
     }
     font.setPointSizeF(size);
-    m_playlistName->setStyleSheet(QStringLiteral("font-size: %1pt;").arg(size));
+    m_titlePt = size;
+    m_playlistName->setStyleSheet(titleSheet(size, false));
     m_playlistName->setText(QFontMetrics(font).elidedText(name, Qt::ElideRight, qMax(40, available)));
+}
+
+QString MainWindow::titleSheet(qreal points, bool hidden)
+{
+    // The size is the title's own; its tooltip ("Double-click to rename")
+    // would otherwise take it too and show at 40 points.
+    return QStringLiteral("QLabel { font-size: %1pt; %2 } QToolTip { font-size: 9pt; font-weight: 400; color: rgb(236,236,241); }")
+        .arg(points).arg(hidden ? QStringLiteral("color: transparent;") : QString());
 }
 
 void MainWindow::renamePlaylist(int index)
@@ -1428,10 +1470,10 @@ void MainWindow::renamePlaylist(int index)
         return;
     m_nameEdit->setText(m_library.playlists()[m_open].name);
     m_nameEdit->setFont(m_playlistName->font());
-    m_nameEdit->setStyleSheet(m_playlistName->styleSheet());
+    m_nameEdit->setStyleSheet(QStringLiteral("font-size: %1pt;").arg(m_titlePt));
     m_nameEdit->setGeometry(m_playlistName->geometry().adjusted(-8, -4, 8, 4));
     // The title stays in the layout, only invisible, so nothing around it moves.
-    m_playlistName->setStyleSheet(m_playlistName->styleSheet() + "color: transparent;");
+    m_playlistName->setStyleSheet(titleSheet(m_titlePt, true));
     m_nameEdit->show();
     m_nameEdit->raise();
     m_nameEdit->setFocus();
@@ -1830,7 +1872,8 @@ std::pair<QString, QString> MainWindow::playingSong() const
     static const QRegularExpression noise(QStringLiteral(
         R"(\s*[\(\[][^\)\]]*(official|video|lyric|audio|visuali[sz]er|clip|klip|hd|4k|prod|slowed|sped|speed|reverb|nightcore|remix)[^\)\]]*[\)\]])"
         R"(|\s+-\s+((super|ultra)\s+)?(slowed|sped up|speed up|reverb|nightcore).*$)"
-        R"(|\s+(ft\.?|feat\.?)\s+.*$)"), QRegularExpression::CaseInsensitiveOption);
+        R"(|\s+(ft\.?|feat\.?)\s+.*$)"
+        R"(|\s+(\||//)\s+.*$)"), QRegularExpression::CaseInsensitiveOption);   // "NAZAR | Prod. By Bugy"
     track.remove(noise);
     artist = artist.split(QRegularExpression(QStringLiteral(R"(\s*(,|&| x | X |feat\.?|ft\.?)\s*)"))).value(0);
     return {artist.trimmed(), track.trimmed()};

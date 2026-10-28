@@ -86,6 +86,8 @@ private:
     void markPlaying();
     void layoutHeader();
     void fitTitle();
+    static QString titleSheet(qreal points, bool hidden);
+    qreal m_titlePt = 40;
     void renamePlaylist(int index);
     void finishRename();
     void renameTo(int index, const QString &name);

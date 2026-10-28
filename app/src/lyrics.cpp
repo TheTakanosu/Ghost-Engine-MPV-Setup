@@ -88,7 +88,7 @@ void LyricsSource::fetch(const QString &artist, const QString &track, double dur
         const bool miss = o.value("miss").toBool();
         const QDateTime when = QDateTime::fromString(o.value("at").toString(), Qt::ISODate);
         if (!miss || when.daysTo(QDateTime::currentDateTime()) < kMissKeptDays) {
-            emit ready(key, miss ? Lyrics{} : pick(QJsonDocument(o.value("results").toArray()).toJson(), duration));
+            emit ready(key, miss ? Lyrics{} : pick(QJsonDocument(o.value("results").toArray()).toJson(), duration, key));
             return;
         }
     }
@@ -117,7 +117,7 @@ void LyricsSource::ask(const QString &key, const QString &query, double duration
             emit ready(key, Lyrics{});   // offline: not remembered, asked again next time
             return;
         }
-        Lyrics lyrics = pick(body, duration);
+        Lyrics lyrics = pick(body, duration, key);
         if (!lyrics.found && !broad) {
             // Titles from YouTube rarely split as LRCLIB has them; one free
             // search over everything comes next.
@@ -132,8 +132,29 @@ void LyricsSource::ask(const QString &key, const QString &query, double duration
     });
 }
 
-Lyrics LyricsSource::pick(const QByteArray &json, double duration) const
+Lyrics LyricsSource::pick(const QByteArray &json, double duration, const QString &key) const
 {
+    // Names compared as letters and digits only, case and accents aside:
+    // "BEGE" is "bege", "Işıklarım Ol" is "isiklarim ol".
+    auto plain = [](QString s) {
+        s = s.toLower().replace(QChar(0x0131), 'i').normalized(QString::NormalizationForm_D);
+        QString out;
+        for (const QChar c : s)
+            if (c.isLetterOrNumber())
+                out += c;
+        return out;
+    };
+    const QStringList parts = key.split(QStringLiteral(" | "));
+    const QString artist = plain(parts.value(0));
+    const QString track = plain(parts.value(1));
+    auto belongs = [&](const QJsonObject &o) {
+        const QString a = plain(o.value("artistName").toString());
+        const QString t = plain(o.value("trackName").toString());
+        if (!artist.isEmpty())
+            return a.contains(artist) || artist.contains(a) || t.contains(artist);
+        // No artist known: only the very same title.
+        return !track.isEmpty() && t == track;
+    };
     // Timed lyrics of a version the same length first, then any lyrics. A
     // timed version of another length (slowed, sped up, live) is shown as
     // plain text: its times would be wrong.
@@ -142,7 +163,7 @@ Lyrics LyricsSource::pick(const QByteArray &json, double duration) const
     double bestScore = -1;
     for (const QJsonValue &v : results) {
         const QJsonObject o = v.toObject();
-        if (o.value("instrumental").toBool())
+        if (o.value("instrumental").toBool() || !belongs(o))
             continue;
         const QString synced = o.value("syncedLyrics").toString();
         const QString plain = o.value("plainLyrics").toString();

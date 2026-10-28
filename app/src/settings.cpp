@@ -284,6 +284,12 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     addRow(downloads, "Download quality",
            "The sound of songs downloaded from now on. Only songs are downloaded, as YouTube serves them; "
            "they play from your disk, at once and without the internet.", m_offlineQuality);
+    // One row per downloaded list, between the quality and the total.
+    m_listsBox = new QWidget;
+    auto *listsLayout = new QVBoxLayout(m_listsBox);
+    listsLayout->setContentsMargins(0, 0, 0, 0);
+    listsLayout->setSpacing(8);
+    downloads->addWidget(m_listsBox);
     m_offlineUsed = new QLabel;
     m_offlineUsed->setObjectName("statLabel");
     auto *clear = new QPushButton("Remove all downloads");
@@ -431,6 +437,54 @@ void SettingsPage::load()
     m_volumeNumber->setChecked(settings.value("look/volumeNumber", false).toBool());
     m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));
     m_offlineUsed->setText(downloadsSummary ? downloadsSummary() : QString());
+    // The downloaded lists, built again each time the page is shown.
+    QLayout *rows = m_listsBox->layout();
+    while (QLayoutItem *item = rows->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    const QList<DownloadedList> lists = downloadedLists ? downloadedLists() : QList<DownloadedList>();
+    for (const DownloadedList &l : lists) {
+        auto *row = new QWidget;
+        row->setObjectName("downloadRow");
+        row->setAttribute(Qt::WA_StyledBackground);
+        auto *line = new QHBoxLayout(row);
+        line->setContentsMargins(10, 6, 10, 6);
+        line->setSpacing(12);
+        auto *cover = new QLabel;
+        cover->setFixedSize(36, 36);
+        cover->setPixmap(l.cover);
+        auto *name = new QLabel(l.name);
+        name->setObjectName("settingName");
+        QString detail = QStringLiteral("%1 %2 · %3 MB").arg(l.songs).arg(l.songs == 1 ? "song" : "songs")
+                             .arg(double(l.bytes) / (1024 * 1024), 0, 'f', 1);
+        if (l.toGo > 0)
+            detail += QStringLiteral(" · downloading, %1 to go").arg(l.toGo);
+        auto *size = new QLabel(detail);
+        size->setObjectName("statLabel");
+        auto *words = new QVBoxLayout;
+        words->setSpacing(0);
+        words->addWidget(name);
+        words->addWidget(size);
+        auto *drop = new QPushButton(QString(QChar(0xE711)));   // a cross
+        drop->setObjectName("glyph");
+        drop->setToolTip("Remove this list's download");
+        drop->setCursor(Qt::PointingHandCursor);
+        const QString path = l.path, listName = l.name;
+        connect(drop, &QPushButton::clicked, this, [this, path, listName] {
+            if (QMessageBox::question(this, "Remove download",
+                    QStringLiteral("Remove the downloaded songs of \"%1\"?").arg(listName)) != QMessageBox::Yes)
+                return;
+            if (onRemoveListDownload)
+                onRemoveListDownload(path);
+            load();
+        });
+        line->addWidget(cover);
+        line->addLayout(words, 1);
+        line->addWidget(drop);
+        rows->addWidget(row);
+    }
+    m_listsBox->setVisible(!lists.isEmpty());
     m_confPath->setText(QStringLiteral("Playback settings are kept in %1, and updates keep them.")
                             .arg(QDir::toNativeSeparators(mpvconf::path())));
     m_loading = false;

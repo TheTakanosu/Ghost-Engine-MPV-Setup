@@ -38,6 +38,9 @@ public:
 
     int pending(const QString &listPath) const;   // songs of that list still to fetch
     qint64 bytesUsed() const;
+    // What one list's songs take: files on disk (shared ones counted once).
+    int filesFor(const QStringList &targets) const;
+    qint64 bytesFor(const QStringList &targets) const;
     // Files, not entries: two entries that play the same video share one.
     int songCount() const;
 

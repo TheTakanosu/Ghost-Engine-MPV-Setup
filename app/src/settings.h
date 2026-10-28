@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractButton>
+#include <QPixmap>
 #include <QString>
 #include <QWidget>
 #include <functional>
@@ -46,6 +47,17 @@ public:
     // Downloads: a line on what is kept, and clearing all of it.
     std::function<QString()> downloadsSummary;
     std::function<void()> onRemoveDownloads;
+    // Each downloaded list, shown with its cover and what it takes.
+    struct DownloadedList {
+        QString path;
+        QString name;
+        QPixmap cover;
+        int songs = 0;
+        qint64 bytes = 0;
+        int toGo = 0;
+    };
+    std::function<QList<DownloadedList>()> downloadedLists;
+    std::function<void(const QString &path)> onRemoveListDownload;
 
     // Read again from mpv.conf and the app's settings, when the page opens.
     void load();
@@ -62,5 +74,6 @@ private:
     QLabel *m_confPath;
     QComboBox *m_offlineQuality;
     QLabel *m_offlineUsed;
+    QWidget *m_listsBox;
     bool m_loading = false;
 };

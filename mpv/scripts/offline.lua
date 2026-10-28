@@ -25,6 +25,7 @@ local index_path = folder .. "\\index.tsv"
 
 -- Read again only when the app has written it since.
 local files, read_size, read_time = {}, -1, -1
+local playing_id = nil   -- the video of the file being opened, if it is ours
 
 local function load_index()
     local info = utils.file_info(index_path)
@@ -56,4 +57,15 @@ mp.add_hook("on_load", 4, function()
     local title = mp.get_property("playlist/" .. mp.get_property("playlist-pos", "0") .. "/title", ""):match("^%s*(.-)%s*$")
     if title ~= "" then mp.set_property("file-local-options/force-media-title", title) end
     mp.msg.info("playing the downloaded copy: " .. name)
+    -- The file is named after its video; that is said once the file has
+    -- loaded (songmatch.lua clears it on every load), so the app and Rich
+    -- Presence still find the song's cover.
+    playing_id = name:match("^([%w_-]+)%.")
+end)
+
+mp.register_event("file-loaded", function()
+    if playing_id then
+        mp.set_property_native("user-data/ghost/source", "https://www.youtube.com/watch?v=" .. playing_id)
+        playing_id = nil
+    end
 end)
