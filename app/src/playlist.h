@@ -10,6 +10,7 @@
 struct PlaylistEntry {
     QString title;
     QString target;
+    QDateTime added;   // "#GHOST_ADDED:" above it; songs added in the app have one
 };
 
 // An .m3u file as the library shows it. The header is only read when listing
@@ -37,4 +38,10 @@ public:
     // the lines above it; an index left out removes that entry. The header,
     // line endings and the file's date stay, so "Date added" does not jump.
     static bool writeOrder(const QString &path, const QVector<int> &order);
+
+    // A new, empty song list, and songs added to the end of one. Each added
+    // song carries the moment it was added, so "Date added" means that song
+    // and not the whole file; players skip the line as a comment.
+    static bool create(const QString &path, const QString &name);
+    static bool append(const QString &path, const QVector<PlaylistEntry> &entries);
 };

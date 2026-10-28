@@ -1,6 +1,8 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QEvent>
+#include <QMenu>
 #include <QFont>
 #include <QPalette>
 #include <QProxyStyle>
@@ -48,9 +50,30 @@ public:
 
 } // namespace
 
+// A menu is its own window, and the rounded box QSS draws sat on its square
+// corners. A see-through window shows only the box; Windows' square shadow
+// would outline the corners again, so it goes too.
+class RoundMenus : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Polish)
+            if (auto *menu = qobject_cast<QMenu *>(watched)) {
+                menu->setWindowFlag(Qt::FramelessWindowHint);
+                menu->setWindowFlag(Qt::NoDropShadowWindowHint);
+                menu->setAttribute(Qt::WA_TranslucentBackground);
+            }
+        return false;
+    }
+};
+
 void apply(QApplication &app)
 {
     app.setStyle(new ClickToJumpStyle(QStyleFactory::create("Fusion")));
+    app.installEventFilter(new RoundMenus(&app));
     QFont font("Segoe UI");
     font.setPointSizeF(10 * g_zoom);
     app.setFont(font);
@@ -88,6 +111,7 @@ void apply(QApplication &app)
         QPushButton#bigGlyph:hover { color: white; }
         QWidget#columns { border-bottom: 1px solid rgb(44,42,54); }
         QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
+        QLabel#toast { background: rgb(236,236,241); color: rgb(24,18,34); border-radius: 16px; font-weight: 600; }
         QPushButton#columnButton, QPushButton#clockHeader {
             background: transparent; border: none; padding: 0; color: rgb(154,152,166); font-size: 9pt; text-align: left;
         }

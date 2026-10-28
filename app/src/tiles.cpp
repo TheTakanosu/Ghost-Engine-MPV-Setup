@@ -8,6 +8,24 @@
 
 namespace tiles {
 
+namespace {
+
+// The pin of a pinned row, from the Windows icon font, before its subtitle;
+// returns how far the subtitle moves over.
+qreal paintPin(QPainter *painter, const QRectF &text, Qt::Alignment vertical)
+{
+    QFont f(QStringLiteral("Segoe Fluent Icons"));
+    f.setPixelSize(11);
+    painter->save();
+    painter->setFont(f);
+    painter->setPen(theme::accent());
+    painter->drawText(text, Qt::AlignLeft | vertical, QString(QChar(0xE718)));
+    painter->restore();
+    return 16;
+}
+
+} // namespace
+
 void paintCover(QPainter &painter, const QRectF &rect, const QPixmap &pixmap,
                 const QString &name, qreal radius)
 {
@@ -126,10 +144,15 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     }
     const QString name = index.data(Qt::DisplayRole).toString();
     const bool folder = !index.data(kFolderRole).toString().isEmpty();
-    const qreal indent = index.data(kInFolderRole).toBool() && !m_compact ? 18 : 0;
+    const qreal indent = index.data(kInFolderRole).toBool() && !m_compact ? (m_dense ? 30 : 18) : 0;
 
     if (m_dense && !m_compact) {
         // One line: a folder's mark or nothing, the name, then what it is.
+        // A thin line down the left of a folder's lists ties them to it.
+        if (indent > 0) {
+            painter->setPen(QPen(QColor(70, 68, 84), 1.5));
+            painter->drawLine(QPointF(row.left() + 18, row.top() - 2), QPointF(row.left() + 18, row.bottom() + 2));
+        }
         qreal x = row.left() + 10 + indent;
         if (folder) {
             icons::paint(*painter, icons::Icon::Folder, QRectF(x, row.center().y() - 8, 16, 16),
@@ -145,7 +168,9 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         painter->setFont(nameFont);
         painter->setPen(selected ? theme::accentText() : theme::text());
         painter->drawText(text, Qt::AlignLeft | Qt::AlignVCenter, shownName);
-        const qreal used = nameMetrics.horizontalAdvance(shownName);
+        qreal used = nameMetrics.horizontalAdvance(shownName);
+        if (index.data(kPinnedRole).toBool())
+            used += 8 + paintPin(painter, text.adjusted(used + 8, 0, 0, 0), Qt::AlignVCenter) - 8;
         painter->setFont(option.font);
         painter->setPen(theme::muted());
         painter->drawText(text.adjusted(used, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
@@ -176,11 +201,14 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         painter->setPen(selected ? theme::accentText() : theme::text());
         painter->drawText(text, Qt::AlignLeft | Qt::AlignTop,
                           QFontMetrics(titleFont).elidedText(name, Qt::ElideRight, int(text.width())));
+        QRectF sub = text;
+        if (index.data(kPinnedRole).toBool())
+            sub.setLeft(sub.left() + paintPin(painter, text, Qt::AlignBottom));
         painter->setFont(option.font);
         painter->setPen(theme::muted());
-        painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom,
+        painter->drawText(sub, Qt::AlignLeft | Qt::AlignBottom,
                           QFontMetrics(option.font).elidedText(index.data(kSubtitleRole).toString(),
-                                                               Qt::ElideRight, int(text.width())));
+                                                               Qt::ElideRight, int(sub.width())));
     }
     painter->restore();
 }

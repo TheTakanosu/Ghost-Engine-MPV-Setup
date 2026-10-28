@@ -18,6 +18,9 @@ public:
     NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent = nullptr);
 
     void refreshCover();
+    // The next list mpv loads starts shuffled (or not); the app knows, mpv
+    // does not say.
+    void expectList(bool shuffled);
 
 signals:
     // The cover was clicked: show the list mpv is playing.
@@ -38,6 +41,12 @@ private:
     QLabel *m_elapsed;
     QLabel *m_total;
     icons::IconButton *m_playPause;
+    icons::IconButton *m_shuffle;
+    icons::IconButton *m_repeat;
+    bool m_shuffled = false;
+    int m_expect = -1;   // -1: no list on its way; else 0 or 1 for shuffled
+    void showShuffle();
+    void showRepeat();
     QSlider *m_position;
     QSlider *m_volume;
     bool m_dragging = false;

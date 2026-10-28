@@ -26,6 +26,28 @@ QString Library::homeFolder()
     return QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + "/Ghost Engine");
 }
 
+// A random file name: the list's name goes inside it (#PLAYLIST:), so a name
+// may hold characters Windows refuses in file names, and two lists of the
+// same name never collide.
+static QString freshPath(const QString &dir, const QString &suffix)
+{
+    static const QString alphabet = QStringLiteral("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789");
+    QString target;
+    do {
+        QString key;
+        for (int i = 0; i < 16; ++i)
+            key += alphabet[QRandomGenerator::global()->bounded(alphabet.size())];
+        target = dir + '/' + key + '.' + suffix;
+    } while (QFileInfo::exists(target));
+    return target;
+}
+
+QString Library::createPlaylist(const QString &name, const QString &folder)
+{
+    const QString target = freshPath(folder.isEmpty() ? homeFolder() : homeFolder() + '/' + folder, QStringLiteral("m3u"));
+    return Playlist::create(target, name) ? target : QString();
+}
+
 QString Library::importFile(const QString &path)
 {
     const QFileInfo source(path);
@@ -36,17 +58,7 @@ QString Library::importFile(const QString &path)
         from.startsWith(homeFolder() + '/', Qt::CaseInsensitive))
         return source.absoluteFilePath();   // already in the library
 
-    // A random file name: the list's name goes inside it (#PLAYLIST:), so a
-    // name may hold characters Windows refuses in file names, and two lists
-    // of the same name never collide.
-    static const QString alphabet = QStringLiteral("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789");
-    QString target;
-    do {
-        QString key;
-        for (int i = 0; i < 16; ++i)
-            key += alphabet[QRandomGenerator::global()->bounded(alphabet.size())];
-        target = homeFolder() + '/' + key + '.' + source.suffix().toLower();
-    } while (QFileInfo::exists(target));
+    const QString target = freshPath(homeFolder(), source.suffix().toLower());
     const QString name = Playlist::peek(path).name;
 
     // rename moves within a drive; across drives it is a copy and a delete.

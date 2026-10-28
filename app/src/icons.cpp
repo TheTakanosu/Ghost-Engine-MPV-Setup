@@ -97,6 +97,36 @@ void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color
         painter.drawPath(p);
         break;
     }
+    case Icon::Repeat:
+    case Icon::RepeatOne: {
+        // A loop with a gap at the top right and an arrowhead closing it.
+        painter.setPen(QPen(color, line, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.setBrush(Qt::NoBrush);
+        const QRectF loop = r.adjusted(s * 0.1, s * 0.24, -s * 0.1, -s * 0.24);
+        const qreal round = loop.height() * 0.45;
+        QPainterPath p;
+        p.moveTo(loop.right() - s * 0.18, loop.top());
+        p.lineTo(loop.left() + round, loop.top());
+        p.arcTo(QRectF(loop.left(), loop.top(), 2 * round, 2 * round), 90, 90);
+        p.lineTo(loop.left(), loop.bottom() - round);
+        p.arcTo(QRectF(loop.left(), loop.bottom() - 2 * round, 2 * round, 2 * round), 180, 90);
+        p.lineTo(loop.right() - round, loop.bottom());
+        p.arcTo(QRectF(loop.right() - 2 * round, loop.bottom() - 2 * round, 2 * round, 2 * round), 270, 90);
+        p.lineTo(loop.right(), loop.top() + round);
+        painter.drawPath(p);
+        const qreal head = s * 0.13;
+        const QPointF tip(loop.right() - s * 0.18, loop.top());
+        painter.drawLine(tip, tip + QPointF(-head, -head));
+        painter.drawLine(tip, tip + QPointF(-head, head));
+        if (icon == Icon::RepeatOne) {
+            QFont f = painter.font();
+            f.setPixelSize(int(s * 0.36));
+            f.setBold(true);
+            painter.setFont(f);
+            painter.drawText(loop, Qt::AlignCenter, QStringLiteral("1"));
+        }
+        break;
+    }
     case Icon::Clock: {
         painter.setPen(QPen(color, line * 0.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter.setBrush(Qt::NoBrush);

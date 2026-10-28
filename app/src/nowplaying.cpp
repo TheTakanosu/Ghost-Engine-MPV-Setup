@@ -60,6 +60,12 @@ protected:
 
 } // namespace
 
+// mpv reports a loop as "inf", a count, or false (JSON) when off.
+static bool looping(const QVariant &v)
+{
+    return v.isValid() && v.toString() != QLatin1String("no") && v.toString() != QLatin1String("false");
+}
+
 NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
     : QWidget(parent), m_mpv(mpv), m_covers(covers)
 {
@@ -95,12 +101,18 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     auto *next = new icons::IconButton(icons::Icon::Next, 32, "Next");
     for (auto *b : {prev, next})
         b->setColors(QColor(200, 198, 210), Qt::white);
+    // Shuffle and repeat act on what is playing, as in Spotify; the shuffle
+    // on a playlist page starts that list shuffled instead.
+    m_shuffle = new icons::IconButton(icons::Icon::Shuffle, 28, "Shuffle what is playing");
+    m_repeat = new icons::IconButton(icons::Icon::Repeat, 28, "Repeat");
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(20);
     buttons->addStretch();
+    buttons->addWidget(m_shuffle);
     buttons->addWidget(prev);
     buttons->addWidget(m_playPause);
     buttons->addWidget(next);
+    buttons->addWidget(m_repeat);
     buttons->addStretch();
 
     m_elapsed = new QLabel("--:--");
@@ -155,6 +167,28 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     connect(prev, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-prev"}); });
     connect(next, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-next"}); });
     connect(m_playPause, &QAbstractButton::clicked, this, [this] { m_mpv->command({"cycle", "pause"}); });
+    connect(m_shuffle, &QAbstractButton::clicked, this, [this] {
+        if (!m_mpv->connected())
+            return;
+        // Unshuffling puts the list back in its own order, the song playing
+        // keeps playing.
+        m_mpv->command({m_shuffled ? "playlist-unshuffle" : "playlist-shuffle"});
+        m_shuffled = !m_shuffled;
+        showShuffle();
+    });
+    connect(m_repeat, &QAbstractButton::clicked, this, [this] {
+        // Off, the whole list, this song, off again.
+        const bool all = looping(m_mpv->property("loop-playlist"));
+        const bool one = looping(m_mpv->property("loop-file"));
+        if (one) {
+            m_mpv->setProperty("loop-file", "no");
+            m_mpv->setProperty("loop-playlist", "no");
+        } else if (all) {
+            m_mpv->setProperty("loop-file", "inf");
+        } else {
+            m_mpv->setProperty("loop-playlist", "inf");
+        }
+    });
     connect(m_position, &QSlider::sliderPressed, this, [this] { m_dragging = true; });
     connect(m_position, &QSlider::sliderReleased, this, [this] {
         m_dragging = false;
@@ -199,6 +233,32 @@ void NowPlayingBar::showIdle()
     m_position->setValue(0);
     m_playPause->setIcon(icons::Icon::Play);
     m_cover->setPixmap(rounded({}, "G", 58));
+    m_shuffled = false;
+    showShuffle();
+    showRepeat();
+}
+
+void NowPlayingBar::expectList(bool shuffled)
+{
+    m_expect = shuffled ? 1 : 0;
+    m_shuffled = shuffled;
+    showShuffle();
+}
+
+void NowPlayingBar::showShuffle()
+{
+    const QColor on = theme::accent();
+    m_shuffle->setColors(m_shuffled ? on : QColor(170, 168, 182), m_shuffled ? on.lighter(120) : Qt::white);
+    m_shuffle->setToolTip(m_shuffled ? "Shuffle is on: back to the list's order" : "Shuffle what is playing");
+}
+
+void NowPlayingBar::showRepeat()
+{
+    const bool one = looping(m_mpv->property("loop-file")), all = looping(m_mpv->property("loop-playlist"));
+    const QColor on = theme::accent();
+    m_repeat->setIcon(one ? icons::Icon::RepeatOne : icons::Icon::Repeat);
+    m_repeat->setColors(one || all ? on : QColor(170, 168, 182), one || all ? on.lighter(120) : Qt::white);
+    m_repeat->setToolTip(one ? "Repeating this song" : all ? "Repeating the list" : "Repeat is off");
 }
 
 void NowPlayingBar::refreshCover()
@@ -236,6 +296,14 @@ void NowPlayingBar::onProperty(const QString &name)
         m_total->setText(clock(duration));
         if (!m_dragging)
             m_position->setValue(duration > 0 && pos >= 0 ? int(pos / duration * 1000) : 0);
+    }
+    if (name == "loop-file" || name == "loop-playlist")
+        showRepeat();
+    if (name == "playlist-path") {
+        // A new list is in its own order, unless this app asked otherwise.
+        m_shuffled = m_expect == 1;
+        m_expect = -1;
+        showShuffle();
     }
     if (name == "volume" && !m_volume->isSliderDown())
         m_volume->setValue(int(m_mpv->property("volume").toDouble()));

@@ -64,9 +64,12 @@ QVector<PlaylistEntry> Playlist::readEntries() const
     QTextStream in(&file);
     in.setEncoding(QStringConverter::Utf8);
     QString pendingTitle;
+    QDateTime pendingAdded;
     while (!in.atEnd()) {
         const QString line = in.readLine().trimmed();
-        if (line.startsWith("#EXTINF:")) {
+        if (line.startsWith(QStringLiteral("#GHOST_ADDED:"))) {
+            pendingAdded = QDateTime::fromString(line.mid(13).trimmed(), Qt::ISODate);
+        } else if (line.startsWith("#EXTINF:")) {
             // "#EXTINF:-1, Artist - Track": the title is after the first comma.
             const int comma = line.indexOf(',');
             pendingTitle = comma >= 0 ? line.mid(comma + 1).trimmed() : QString();
@@ -77,8 +80,9 @@ QVector<PlaylistEntry> Playlist::readEntries() const
                 title = line;
                 title.remove(QStringLiteral("ytdl://ytsearch1:"));
             }
-            entries.append({title, line});
+            entries.append({title, line, pendingAdded});
             pendingTitle.clear();
+            pendingAdded = {};
         }
     }
     return entries;
@@ -109,6 +113,37 @@ bool Playlist::writeName(const QString &path, const QString &name)
         return false;
     file.write(lines.join(crlf ? "\r\n" : "\n").toUtf8());
     return true;
+}
+
+bool Playlist::create(const QString &path, const QString &name)
+{
+    QFile file(path);
+    if (file.exists() || !file.open(QIODevice::WriteOnly))
+        return false;
+    file.write(QStringLiteral("#EXTM3U\r\n#GHOST_AUDIO\r\n#PLAYLIST:%1\r\n").arg(name).toUtf8());
+    return true;
+}
+
+bool Playlist::append(const QString &path, const QVector<PlaylistEntry> &entries)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray raw = file.readAll();
+    file.close();
+    const QByteArray eol = raw.contains("\r\n") || raw.isEmpty() ? "\r\n" : "\n";
+    QByteArray out;
+    if (!raw.isEmpty() && !raw.endsWith('\n'))
+        out += eol;
+    const QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
+    for (const PlaylistEntry &e : entries) {
+        out += "#GHOST_ADDED:" + now.toUtf8() + eol;
+        out += "#EXTINF:-1, " + e.title.toUtf8() + eol;
+        out += e.target.toUtf8() + eol;
+    }
+    if (!file.open(QIODevice::Append))
+        return false;
+    return file.write(out) == out.size();
 }
 
 bool Playlist::writeOrder(const QString &path, const QVector<int> &order)

@@ -65,6 +65,9 @@ private:
     QVector<int> shownOrder() const;
     void saveSongOrder();
     void removeSelectedSongs();
+    void addSelectedSongsTo(const QString &path);
+    void newPlaylist(const QString &folder = QString(), bool addSelected = false);
+    void toast(const QString &text);
     void undoSongEdit();
     void applyPendingOrder();
     void showHome();
@@ -97,6 +100,12 @@ private:
     void renameFolder(const QString &folder);
     void deleteFolder(const QString &folder);
     void saveOpenFolders();
+    // The library panel's own order: pinned rows first, rows nobody placed
+    // yet (new ones) next, then the order the last drag left.
+    QStringList arranged(const QStringList &keys, const QString &level) const;
+    void libraryDrop(const QStringList &moving, const QString &targetKey, int position);
+    void togglePin(const QString &key);
+    void renameKey(const QString &from, const QString &to);
 
     QVector<QPixmap> coversFor(int index);
     // A picture chosen for a list replaces its collage. Kept apart from the
@@ -144,6 +153,9 @@ private:
     // pages
     QStackedWidget *m_pages = nullptr;
     QLabel *m_greeting = nullptr;
+    QLabel *m_toast = nullptr;
+    QTimer m_toastTimer;
+    QLabel *m_emptyHint = nullptr;
     QLabel *m_statLists = nullptr;
     QLabel *m_statSongs = nullptr;
     QLabel *m_statHours = nullptr;
