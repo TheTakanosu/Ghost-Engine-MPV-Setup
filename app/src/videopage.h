@@ -2,7 +2,6 @@
 
 #include <QPixmap>
 #include <QString>
-#include <QTimer>
 #include <QVariant>
 #include <QVector>
 #include <QWidget>
@@ -12,22 +11,36 @@ class QLabel;
 class QListWidget;
 class QPushButton;
 class QSlider;
-class QStackedWidget;
 class QTextBrowser;
+namespace icons { class IconButton; }
 
 // The page a video list plays on, laid out like YouTube's watch page: the
-// player large on the left with its own controls, the title, channel and
-// description under it, the list's videos down the right. The picture is
-// mpv itself, drawing into surface() (started with --wid), so quality and
-// speed are those of its own window; the controls under it are the app's,
-// and stay under the picture in full screen too.
+// player large on the left, the title, channel and description under it,
+// the list's videos down the right. With the library collapsed it becomes a
+// cinema: only the player, as large as the page lets it be.
+//
+// The picture is mpv itself, drawing into surface() (started with --wid).
+// The surface is not part of the page: it is a native window over the main
+// window, which the main window puts over screen() here, or small in a
+// corner (the mini player) while another page is open. Native windows sit
+// above everything the app paints, so the controls over the picture and the
+// mini player's buttons are small windows of their own, kept on top of it.
 class VideoPage : public QWidget {
 public:
     explicit VideoPage(QWidget *parent = nullptr);
 
-    // The native window mpv draws into. Created at once and kept, so its
-    // handle stays valid for as long as the app runs.
+    // Made once the main window is set up, as a child of host; its handle
+    // stays valid for as long as the app runs.
+    void attachSurface(QWidget *host);
     QWidget *surface() const { return m_surface; }
+    void setSurfaceCorner(int radius);
+    // Where the picture goes on this page.
+    QWidget *screen() const { return m_screen; }
+    // The see-through bar of controls laid over the picture, and the mini
+    // player's buttons: windows of their own, owned by the main window.
+    QWidget *controls() const { return m_controls; }
+    QWidget *mini() const { return m_mini; }
+    void setOwner(QWidget *window);
 
     struct Entry {
         QString title;
@@ -35,19 +48,25 @@ public:
     };
     void setList(const QString &name, const QVector<Entry> &entries);
     void setPlaying(const QString &target, const QString &title, const QString &channel, const QString &link);
-    void setDescription(const QString &text);
+    // The description, and a line over it such as "1,234 views · Oct 2, 2026".
+    void setDescription(const QString &text, const QString &meta = {});
     // What mpv says: position and length in seconds, paused or not, its
-    // tracks (for the subtitles menu), the height cap and the speed.
+    // tracks (for the subtitles menu), the height cap, the speed, the
+    // volume and the picture's shape.
     void setTimes(double position, double duration);
     void setPaused(bool paused);
+    bool paused() const { return m_paused; }
     void setTracks(const QVariantList &tracks);
     void setQualityCap(int height);   // 0: best
     void setSpeed(double speed);
+    void setVolume(int volume, bool muted);
+    void setAspect(double aspect);
     // mpv was moved to its own window: the player area says so instead.
     void setPoppedOut(bool out);
-    // Only the player and its controls, filling the screen; the controls
-    // hide when the mouse rests.
+    // Only the player, filling the screen.
     void setFullScreen(bool full);
+    // Only the player, as large as the page lets it be.
+    void setCinema(bool cinema);
     void refreshCovers() const;
 
     std::function<QPixmap(const QString &target)> coverFor;
@@ -57,36 +76,53 @@ public:
     std::function<void()> onBringBack;
     std::function<void()> onFullScreen;
     std::function<void()> onTogglePause;
+    std::function<void()> onPrevious;
+    std::function<void()> onNext;
     std::function<void(double seconds)> onSeek;      // to this second
     std::function<void(double seconds)> onSkip;      // by this many
     std::function<void(const QVariant &sid)> onSubtitle;   // a track id, or "no"
     std::function<void(int height)> onQuality;       // 0: best
     std::function<void(double speed)> onSpeed;
+    std::function<void(int volume)> onVolume;
+    std::function<void()> onToggleMute;
+    std::function<void()> onScreenMoved;   // screen() moved or changed size
+    std::function<void()> onRestore;       // the mini player was clicked
+    std::function<void()> onCloseMini;
 
 protected:
     void resizeEvent(QResizeEvent *) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void fitPlayer();
+    void placeScreen();
     QWidget *buildControls();
-    void showControls();
+    QWidget *buildMini();
+    void setExpanded(bool expanded);
 
-    QWidget *m_surface;
-    QWidget *m_away;            // shown in the player's place while mpv is popped out
-    QStackedWidget *m_player;
+    QWidget *m_surface = nullptr;
+    QWidget *m_screen;          // the picture's place, under the surface
+    QWidget *m_away;            // shown in its place while mpv is popped out
+    QWidget *m_player;          // holds the screen, centred at the picture's shape
     QWidget *m_controls;
+    QWidget *m_mini;
     QWidget *m_info;
     QWidget *m_side;
     QLabel *m_title;
     QLabel *m_channel;
     QLabel *m_listName;
     QPushButton *m_youtube;
+    QWidget *m_card;            // the description's box
+    QLabel *m_meta;
     QTextBrowser *m_description;
     QPushButton *m_more;
     QListWidget *m_list;
-    QPushButton *m_play;
+    icons::IconButton *m_play;
+    icons::IconButton *m_miniPlay;
     QSlider *m_seek;
     QLabel *m_time;
+    QPushButton *m_mute;
+    QSlider *m_volume;
     QPushButton *m_subs;
     QPushButton *m_quality;
     QPushButton *m_speed;
@@ -94,10 +130,13 @@ private:
     int m_cap = 0;
     double m_speedNow = 1;
     double m_duration = 0;
+    double m_aspect = 16.0 / 9.0;
     bool m_dragging = false;
+    bool m_paused = false;
+    bool m_popped = false;
     QString m_link;
     bool m_full = false;
+    bool m_cinema = false;
     bool m_expanded = false;
-    QTimer m_idle;              // full screen: hides the controls when the mouse rests
-    QPoint m_lastMouse;
+    bool m_hasDescription = false;
 };

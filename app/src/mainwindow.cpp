@@ -310,6 +310,7 @@ MainWindow::MainWindow()
         m_videoPoppedOut = true;
         m_videoPage->setPoppedOut(true);
         setVideoFullScreen(false);
+        schedulePlace();
         restartPlayer(QueuedPlay{playingListPath(), false, m_mpv.property("playlist-pos").toInt(), {}},
                       m_mpv.property("time-pos").toDouble());
     };
@@ -321,6 +322,17 @@ MainWindow::MainWindow()
     };
     m_videoPage->onFullScreen = [this] { setVideoFullScreen(!m_videoFull); };
     m_videoPage->onTogglePause = [this] { m_mpv.command({"cycle", "pause"}); };
+    m_videoPage->onPrevious = [this] { m_mpv.command({"playlist-prev"}); };
+    m_videoPage->onNext = [this] { m_mpv.command({"playlist-next"}); };
+    m_videoPage->onVolume = [this](int v) { m_mpv.setProperty("volume", v); };
+    m_videoPage->onToggleMute = [this] { m_mpv.command({"cycle", "mute"}); };
+    m_videoPage->onScreenMoved = [this] { schedulePlace(); };
+    m_videoPage->onRestore = [this] { showVideoPage(); };
+    m_videoPage->onCloseMini = [this] {
+        m_miniClosed = true;
+        m_mpv.setProperty("pause", true);
+        schedulePlace();
+    };
     m_videoPage->onSeek = [this](double s) { m_mpv.command({"seek", s, "absolute"}); };
     m_videoPage->onSkip = [this](double s) { m_mpv.command({"seek", s}); };
     m_videoPage->onSubtitle = [this](const QVariant &sid) { m_mpv.setProperty("sid", sid); };
@@ -465,6 +477,20 @@ MainWindow::MainWindow()
     central->setLayout(root);
     setCentralWidget(central);
 
+    // mpv's window lives over the whole window, not in the page, so it can
+    // also sit in a corner while another page is open.
+    m_videoPage->attachSurface(central);
+    m_videoPage->setOwner(this);
+    m_placeTimer = new QTimer(this);
+    m_placeTimer->setSingleShot(true);
+    m_placeTimer->setInterval(0);
+    connect(m_placeTimer, &QTimer::timeout, this, &MainWindow::placeSurface);
+    m_videoMouse = new QTimer(this);
+    m_videoMouse->setInterval(200);
+    connect(m_videoMouse, &QTimer::timeout, this, &MainWindow::watchVideoMouse);
+    m_videoMouse->start();
+    connect(m_pages, &QStackedWidget::currentChanged, this, &MainWindow::schedulePlace);
+
     QSettings settings;
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
@@ -530,13 +556,20 @@ MainWindow::MainWindow()
         if (name == "path" || name == "media-title" || name == "metadata/by-key/uploader" ||
             name == "playlist-path" || name == "user-data/ghost/source")
             updateVideoPage();
+        if (name == "user-data/ghost/audio")
+            schedulePlace();
+        // Over the picture and on the mini player, whichever page is open.
+        if (name == "pause")
+            m_videoPage->setPaused(m_mpv.property("pause").toBool());
+        if (name == "volume" || name == "mute")
+            m_videoPage->setVolume(int(m_mpv.property("volume").toDouble()), m_mpv.property("mute").toBool());
+        if (name == "video-params/aspect")
+            m_videoPage->setAspect(m_mpv.property("video-params/aspect").toDouble());
         // The video page's own controls.
         if (m_pages->currentWidget() == m_videoPage) {
             if (name == "time-pos" || name == "duration")
                 m_videoPage->setTimes(m_mpv.property("time-pos").isValid() ? m_mpv.property("time-pos").toDouble() : -1,
                                       m_mpv.property("duration").isValid() ? m_mpv.property("duration").toDouble() : -1);
-            if (name == "pause")
-                m_videoPage->setPaused(m_mpv.property("pause").toBool());
             if (name == "track-list")
                 m_videoPage->setTracks(m_mpv.property("track-list").toList());
             if (name == "speed")
@@ -594,6 +627,7 @@ MainWindow::MainWindow()
 
     applyLook();
     connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
+        schedulePlace();
         if (!on) {
             m_mpvEmbedded = false;
             if (m_restartPlay) {
@@ -697,6 +731,8 @@ void MainWindow::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::WindowStateChange && m_maxButton)
         m_maxButton->setText(QString(isMaximized() ? kIconRestore : kIconMax));
+    if (event->type() == QEvent::WindowStateChange)
+        schedulePlace();   // the windows over the picture go and come with it
     QMainWindow::changeEvent(event);
 }
 
@@ -950,6 +986,9 @@ void MainWindow::setLibraryCompact(bool compact)
     m_collapse->setText(QString(compact ? kIconExpand : kIconCollapse));
     m_collapse->setToolTip(compact ? "Expand library" : "Collapse library");
     m_rowDelegate->setCompact(compact);
+    // The video page with the library folded away: a cinema.
+    if (m_videoPage)
+        m_videoPage->setCinema(compact);
     // A scroll bar in a cover-wide panel would cut the covers off.
     m_libraryList->setVerticalScrollBarPolicy(compact ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
     m_libraryList->doItemsLayout();
@@ -1728,6 +1767,8 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_pages && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
+        schedulePlace();
     if (watched == m_libraryPanel && event->type() == QEvent::Resize && m_rowDelegate && !m_videoFull) {
         const bool compact = m_libraryPanel->width() < kCompactBelow;
         if (compact != m_compact)
@@ -1821,6 +1862,13 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     restoreLibraryWidth();
     layoutHeader();
     syncSearchWidth();
+    schedulePlace();
+}
+
+void MainWindow::moveEvent(QMoveEvent *event)
+{
+    QMainWindow::moveEvent(event);
+    schedulePlace();   // the windows over the picture follow
 }
 
 void MainWindow::syncSearchWidth()
@@ -1834,7 +1882,9 @@ void MainWindow::syncSearchWidth()
 
 void MainWindow::openPlayingList()
 {
-    if (m_mpvEmbedded && m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool()) {
+    // A video list goes to its watch page, also while mpv plays it in its own
+    // window: that page is where it is brought back from.
+    if ((m_mpvEmbedded || m_videoPoppedOut) && m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool()) {
         showVideoPage();
         return;
     }
@@ -2695,6 +2745,7 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
 {
     rememberPlayed(path);
     m_nowPlaying->expectList(shuffle);
+    m_miniClosed = false;
     m_pendingPath = path;
     m_pendingOrder = order;
     // A list that never loads should not reorder a later one.
@@ -2799,8 +2850,106 @@ void MainWindow::showVideoPage()
     m_videoPage->setSpeed(m_mpv.property("speed").isValid() ? m_mpv.property("speed").toDouble() : 1.0);
     static const QRegularExpression cap(QStringLiteral(R"(height<=(\d+))"));
     m_videoPage->setQualityCap(cap.match(m_mpv.property("ytdl-format").toString()).captured(1).toInt());
+    m_videoPage->setVolume(int(m_mpv.property("volume").toDouble()), m_mpv.property("mute").toBool());
+    m_videoPage->setCinema(m_compact);
+    m_miniClosed = false;
     m_pages->setCurrentWidget(m_videoPage);
     m_nowPlaying->setLyricsOpen(false);
+    schedulePlace();
+}
+
+bool MainWindow::videoShowing() const
+{
+    return m_mpvEmbedded && m_mpv.connected() && !m_videoPoppedOut &&
+           !m_mpv.property("user-data/ghost/audio").toBool();
+}
+
+void MainWindow::schedulePlace()
+{
+    if (m_placeTimer)
+        m_placeTimer->start();   // once, after the layout has settled
+}
+
+void MainWindow::placeSurface()
+{
+    QWidget *surface = m_videoPage->surface();
+    if (!surface)
+        return;
+    QWidget *host = surface->parentWidget();
+    const bool video = videoShowing() && !isMinimized();
+    const bool onPage = video && m_pages->currentWidget() == m_videoPage;
+    const bool mini = video && !onPage && !m_miniClosed;
+    if (onPage) {
+        QWidget *screen = m_videoPage->screen();
+        m_videoPage->setSurfaceCorner(m_videoFull ? 0 : 12);
+        surface->setGeometry(QRect(screen->mapTo(host, QPoint()), screen->size()));
+    } else if (mini) {
+        // Bottom right of the page, over whatever it shows there.
+        const QSize size(int(352 * theme::zoom()), int(198 * theme::zoom()));
+        const QRect pages(m_pages->mapTo(host, QPoint()), m_pages->size());
+        m_videoPage->setSurfaceCorner(10);
+        surface->setGeometry(QRect(QPoint(pages.right() - size.width() - 16, pages.bottom() - size.height() - 16), size));
+    }
+    surface->setVisible(onPage || mini);
+    if (onPage || mini)
+        surface->raise();
+    m_surfaceOnPage = onPage;
+
+    const QRect global(surface->mapToGlobal(QPoint()), surface->size());
+    QWidget *face = m_videoPage->mini();
+    if (mini) {
+        face->setGeometry(global);
+        face->show();
+        face->raise();
+    } else {
+        face->hide();
+    }
+    QWidget *controls = m_videoPage->controls();
+    if (onPage) {
+        const int h = controls->sizeHint().height();
+        controls->setGeometry(global.left(), global.bottom() + 1 - h, global.width(), h);
+    } else {
+        controls->hide();
+    }
+    // The song bar is for songs: on the video page the controls over the
+    // picture stand in for it.
+    m_nowPlaying->setVisible(!m_videoFull && !(m_pages->currentWidget() == m_videoPage && !m_videoPoppedOut));
+}
+
+void MainWindow::watchVideoMouse()
+{
+    // mpv's window takes the mouse, so the app does not hear it move there;
+    // where it is gets looked at a few times a second instead. The controls
+    // show while it moves on the picture and go once it has rested, unless
+    // the video is paused or a menu of theirs is open.
+    QWidget *controls = m_videoPage->controls();
+    if (!m_surfaceOnPage) {
+        controls->hide();
+        return;
+    }
+    QWidget *surface = m_videoPage->surface();
+    const QRect area(surface->mapToGlobal(QPoint()), surface->size());
+    const QPoint at = QCursor::pos();
+    POINT pt;
+    GetCursorPos(&pt);
+    const HWND top = GetAncestor(WindowFromPoint(pt), GA_ROOT);
+    // Not when another program's window is over it.
+    const bool over = area.contains(at) &&
+                      (top == reinterpret_cast<HWND>(winId()) || top == reinterpret_cast<HWND>(controls->winId()));
+    if (at != m_lastVideoMouse) {
+        m_lastVideoMouse = at;
+        m_videoMouseStill = 0;
+        if (over && !controls->isVisible()) {
+            controls->show();
+            controls->raise();
+        }
+    } else {
+        ++m_videoMouseStill;
+    }
+    const bool onBar = controls->isVisible() && controls->geometry().contains(at);
+    const bool keep = onBar || QApplication::activePopupWidget() || (over && m_videoPage->paused());
+    if (controls->isVisible() && !keep && (!over || m_videoMouseStill >= 12))   // 2.4 seconds
+        controls->hide();
 }
 
 void MainWindow::updateVideoPage()
@@ -2833,8 +2982,25 @@ void MainWindow::describeVideo(const QString &id)
 {
     // Only for videos, only once each: one yt-dlp call that downloads
     // nothing, after the video has started, so it never delays playing.
+    // The first line yt-dlp prints is "views|upload date", the rest is the
+    // description.
+    auto show = [this](const QString &printed) {
+        const qsizetype newline = printed.indexOf('\n');
+        const QStringList facts = printed.left(newline < 0 ? printed.size() : newline).split('|');
+        const QString text = newline < 0 ? QString() : printed.mid(newline + 1);
+        const QLocale english(QLocale::English);
+        QStringList meta;
+        bool counted = false;
+        const qlonglong views = facts.value(0).toLongLong(&counted);
+        if (counted)
+            meta << english.toString(views) + (views == 1 ? " view" : " views");
+        const QDate date = QDate::fromString(facts.value(1).trimmed(), QStringLiteral("yyyyMMdd"));
+        if (date.isValid())
+            meta << english.toString(date, QStringLiteral("MMM d, yyyy"));
+        m_videoPage->setDescription(text, meta.join(QStringLiteral("  ·  ")));
+    };
     if (m_descriptions.contains(id)) {
-        m_videoPage->setDescription(m_descriptions.value(id));
+        show(m_descriptions.value(id));
         return;
     }
     if (m_describing == id)
@@ -2846,7 +3012,7 @@ void MainWindow::describeVideo(const QString &id)
     env.insert("PYTHONIOENCODING", "utf-8");
     env.insert("PYTHONUTF8", "1");
     proc->setProcessEnvironment(env);
-    connect(proc, &QProcess::finished, this, [this, proc, id] {
+    connect(proc, &QProcess::finished, this, [this, proc, id, show] {
         proc->deleteLater();
         const QString text = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
         m_descriptions.insert(id, text);
@@ -2856,10 +3022,11 @@ void MainWindow::describeVideo(const QString &id)
                                                  ? m_mpv.property("path").toString()
                                                  : m_mpv.property("user-data/ghost/source").toString());
         if (now == id)
-            m_videoPage->setDescription(text);
+            show(text);
     });
     proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
-                {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8", "--print", "description",
+                {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
+                 "--print", "%(view_count)s|%(upload_date)s", "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
 }
 
@@ -2877,7 +3044,7 @@ void MainWindow::setVideoFullScreen(bool full)
     }
     m_topBar->setVisible(!full);
     m_split->widget(0)->setVisible(!full);
-    m_nowPlaying->setVisible(!full);
+    schedulePlace();
     // No gap around the picture either.
     if (auto *body = centralWidget()->layout()->itemAt(1)->layout())
         body->setContentsMargins(full ? 0 : 8, 0, full ? 0 : 8, 0);

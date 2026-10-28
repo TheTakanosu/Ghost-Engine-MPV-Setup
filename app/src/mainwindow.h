@@ -45,6 +45,7 @@ protected:
     void changeEvent(QEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
 
 private:
     enum Filter { AllLists, Songs, Videos };
@@ -198,6 +199,19 @@ private:
     void restartPlayer(const QueuedPlay &q, double seconds);
     void showVideoPage();
     void updateVideoPage();
+    // mpv's window over the video page's screen, or small in the corner (the
+    // mini player) while a video plays and another page is open; the bar of
+    // controls over it shows while the mouse moves on the picture.
+    void placeSurface();
+    void schedulePlace();
+    void watchVideoMouse();
+    bool videoShowing() const;
+    QTimer *m_placeTimer = nullptr;
+    QTimer *m_videoMouse = nullptr;
+    QPoint m_lastVideoMouse;
+    int m_videoMouseStill = 0;
+    bool m_surfaceOnPage = false;
+    bool m_miniClosed = false;      // the mini player was closed for this video
     void setVideoFullScreen(bool full);
     LyricsSource m_lyricsSource;
     OfflineStore m_offline;

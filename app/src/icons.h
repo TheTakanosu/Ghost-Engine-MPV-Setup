@@ -10,7 +10,7 @@ class QPainter;
 // centre and thin out at small sizes, and these are centred to the pixel.
 namespace icons {
 
-enum class Icon { Play, Pause, Previous, Next, Shuffle, Folder, Playing, Clock, Repeat, RepeatOne };
+enum class Icon { Play, Pause, Previous, Next, Shuffle, Folder, Playing, Clock, Repeat, RepeatOne, Back10, Forward10 };
 
 void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color);
 

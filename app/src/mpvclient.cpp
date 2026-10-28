@@ -10,7 +10,7 @@ namespace {
 const char *const kObserved[] = {
     "media-title", "pause", "time-pos", "duration", "volume",
     "playlist-pos", "playlist-count", "path", "user-data/ghost/source",
-    "metadata/by-key/uploader", "playlist-path", "loop-playlist", "loop-file", "user-data/ghost/audio", "mute", "pid", "playlist", "track-list", "speed", "ytdl-format",
+    "metadata/by-key/uploader", "playlist-path", "loop-playlist", "loop-file", "user-data/ghost/audio", "mute", "pid", "playlist", "track-list", "speed", "ytdl-format", "video-params/aspect",
 };
 
 } // namespace

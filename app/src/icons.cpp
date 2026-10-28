@@ -135,6 +135,38 @@ void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color
         }
         break;
     }
+    case Icon::Back10:
+    case Icon::Forward10: {
+        // A circling arrow with "10" inside: a jump of ten seconds, not a
+        // step to the next video (which the plain triangles are).
+        painter.save();
+        if (icon == Icon::Back10) {
+            painter.translate(r.center());
+            painter.scale(-1, 1);
+            painter.translate(-r.center());
+        }
+        painter.setPen(QPen(color, line * 0.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.setBrush(Qt::NoBrush);
+        const qreal rad = s * 0.42;
+        const QRectF ring(r.center().x() - rad, r.center().y() - rad, 2 * rad, 2 * rad);
+        QPainterPath arc;
+        arc.arcMoveTo(ring, 90);
+        arc.arcTo(ring, 90, 290);
+        painter.drawPath(arc);
+        const qreal head = s * 0.13;
+        const QPointF tip(r.center().x() + head * 0.7, ring.top());
+        painter.drawLine(tip, tip + QPointF(-head, -head));
+        painter.drawLine(tip, tip + QPointF(-head, head));
+        painter.drawLine(QPointF(ring.center().x(), ring.top()), tip);
+        painter.restore();
+        QFont f = painter.font();
+        f.setPixelSize(qMax(7, int(s * 0.34)));
+        f.setWeight(QFont::Bold);
+        painter.setFont(f);
+        painter.setPen(color);
+        painter.drawText(r.adjusted(0, s * 0.04, 0, 0), Qt::AlignCenter, QStringLiteral("10"));
+        break;
+    }
     case Icon::Clock: {
         painter.setPen(QPen(color, line * 0.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter.setBrush(Qt::NoBrush);
