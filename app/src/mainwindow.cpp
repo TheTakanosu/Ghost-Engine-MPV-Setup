@@ -11,6 +11,7 @@
 #include <QButtonGroup>
 #include <QCloseEvent>
 #include <QCollator>
+#include <QContextMenuEvent>
 #include <QColorDialog>
 #include <QCoreApplication>
 #include <QCursor>
@@ -655,58 +656,7 @@ QWidget *MainWindow::buildLibrary()
             menu.exec(m_libraryList->viewport()->mapToGlobal(pos));
             return;
         }
-        const Playlist list = m_library.playlists().value(item->data(tiles::kIndexRole).toInt());
-        const QString path = list.path;
-        QMenu menu(this);
-        menu.addAction("Play", this, [this, path] { play(path); });
-        menu.addAction("Shuffle", this, [this, path] { play(path, true); });
-        const int index = item->data(tiles::kIndexRole).toInt();
-        const QString listKey = item->data(tiles::kKeyRole).toString();
-        menu.addSeparator();
-        menu.addAction(item->data(tiles::kPinnedRole).toBool() ? "Unpin playlist" : "Pin playlist", this,
-                       [this, listKey] { togglePin(listKey); });
-        // Only lists in the library proper go into its folders; one in
-        // Downloads or an added folder is imported first.
-        const QString home = Library::homeFolder();
-        const QString dir = QDir::cleanPath(QFileInfo(path).absolutePath());
-        if (dir.compare(home, Qt::CaseInsensitive) == 0 || dir.startsWith(home + '/', Qt::CaseInsensitive)) {
-            QMenu *into = menu.addMenu("Move to folder");
-            for (const QString &f : m_library.subfolders())
-                if (f != list.folder)
-                    into->addAction(f, this, [this, path, f] { moveToFolder(path, f); });
-            if (!into->isEmpty())
-                into->addSeparator();
-            into->addAction("New folder...", this, [this, path] { newFolder(path); });
-            if (!list.folder.isEmpty())
-                menu.addAction("Take out of \"" + list.folder + "\"", this, [this, path] { moveToFolder(path, QString()); });
-        }
-        menu.addAction("Rename", this, [this, index] { renamePlaylist(index); });
-        menu.addAction("Change cover...", this, [this, index] { chooseCover(index); });
-        const QString colorKey = "headerColor/" + QFileInfo(path).fileName();
-        menu.addAction("Header colour...", this, [this, index, colorKey] {
-            const QColor now = QSettings().value(colorKey).value<QColor>();
-            const QColor picked = QColorDialog::getColor(now.isValid() ? now : theme::accent(), this, "Header colour");
-            if (!picked.isValid())
-                return;
-            QSettings().setValue(colorKey, picked);
-            if (index == m_open)
-                static_cast<PlaylistHeader *>(m_playlistCover)->setTint(picked);
-        });
-        if (QSettings().contains(colorKey))
-            menu.addAction("Header colour from the cover", this, [this, index, colorKey] {
-                QSettings().remove(colorKey);
-                if (index == m_open)
-                    static_cast<PlaylistHeader *>(m_playlistCover)->setTint(QColor());
-            });
-        if (QFileInfo::exists(customCoverPath(path)))
-            menu.addAction("Remove custom image", this, [this, index] { removeCover(index); });
-        menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
-        menu.addAction("Show in folder", this, [path] {
-            QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
-        });
-        menu.addSeparator();
-        menu.addAction("Delete", this, [this, index] { deletePlaylist(index); });
-        menu.exec(m_libraryList->viewport()->mapToGlobal(pos));
+        showPlaylistMenu(item->data(tiles::kIndexRole).toInt(), m_libraryList->viewport()->mapToGlobal(pos));
     });
 
     auto *panel = new QWidget;
@@ -725,6 +675,64 @@ QWidget *MainWindow::buildLibrary()
     box->addWidget(m_chipRow);
     box->addWidget(m_libraryList, 1);
     return panel;
+}
+
+void MainWindow::showPlaylistMenu(int index, const QPoint &at)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const Playlist list = all[index];
+    const QString path = list.path;
+    QMenu menu(this);
+    menu.addAction("Play", this, [this, path] { play(path); });
+    menu.addAction("Shuffle", this, [this, path] { play(path, true); });
+    const QString listKey = QFileInfo(path).fileName();
+    menu.addSeparator();
+    menu.addAction(QSettings().value("library/pinned").toStringList().contains(listKey) ? "Unpin playlist" : "Pin playlist", this,
+                   [this, listKey] { togglePin(listKey); });
+    // Only lists in the library proper go into its folders; one in
+    // Downloads or an added folder is imported first.
+    const QString home = Library::homeFolder();
+    const QString dir = QDir::cleanPath(QFileInfo(path).absolutePath());
+    if (dir.compare(home, Qt::CaseInsensitive) == 0 || dir.startsWith(home + '/', Qt::CaseInsensitive)) {
+        QMenu *into = menu.addMenu("Move to folder");
+        for (const QString &f : m_library.subfolders())
+            if (f != list.folder)
+                into->addAction(f, this, [this, path, f] { moveToFolder(path, f); });
+        if (!into->isEmpty())
+            into->addSeparator();
+        into->addAction("New folder...", this, [this, path] { newFolder(path); });
+        if (!list.folder.isEmpty())
+            menu.addAction("Take out of \"" + list.folder + "\"", this, [this, path] { moveToFolder(path, QString()); });
+    }
+    menu.addAction("Rename", this, [this, index] { renamePlaylist(index); });
+    menu.addAction("Change cover...", this, [this, index] { chooseCover(index); });
+    const QString colorKey = "headerColor/" + QFileInfo(path).fileName();
+    menu.addAction("Header colour...", this, [this, index, colorKey] {
+        const QColor now = QSettings().value(colorKey).value<QColor>();
+        const QColor picked = QColorDialog::getColor(now.isValid() ? now : theme::accent(), this, "Header colour");
+        if (!picked.isValid())
+            return;
+        QSettings().setValue(colorKey, picked);
+        if (index == m_open)
+            static_cast<PlaylistHeader *>(m_playlistCover)->setTint(picked);
+    });
+    if (QSettings().contains(colorKey))
+        menu.addAction("Header colour from the cover", this, [this, index, colorKey] {
+            QSettings().remove(colorKey);
+            if (index == m_open)
+                static_cast<PlaylistHeader *>(m_playlistCover)->setTint(QColor());
+        });
+    if (QFileInfo::exists(customCoverPath(path)))
+        menu.addAction("Remove custom image", this, [this, index] { removeCover(index); });
+    menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
+    menu.addAction("Show in folder", this, [path] {
+        QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
+    });
+    menu.addSeparator();
+    menu.addAction("Delete", this, [this, index] { deletePlaylist(index); });
+    menu.exec(at);
 }
 
 void MainWindow::setLibraryCompact(bool compact)
@@ -1551,6 +1559,13 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     }
     if (watched == m_playlistCover && m_open >= 0) {
         auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
+        if (event->type() == QEvent::ContextMenu) {
+            auto *menuEvent = static_cast<QContextMenuEvent *>(event);
+            if (header->coverRect().contains(menuEvent->pos())) {
+                showPlaylistMenu(m_open, menuEvent->globalPos());
+                return true;
+            }
+        }
         if (event->type() == QEvent::MouseMove)
             header->setCursor(header->coverRect().contains(static_cast<QMouseEvent *>(event)->position().toPoint())
                               ? Qt::PointingHandCursor : Qt::ArrowCursor);
@@ -1717,6 +1732,7 @@ void MainWindow::applyLook()
     QSettings settings;
     tiles::setCircleCovers(settings.value("look/circleCovers").toBool());
     m_nowPlaying->setVolumeNumber(settings.value("look/volumeNumber", false).toBool());
+    m_nowPlaying->refreshCover();
     for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed})
         v->viewport()->update();
     m_playlistCover->update();

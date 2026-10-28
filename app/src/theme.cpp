@@ -46,6 +46,7 @@ public:
             return Qt::LeftButton;
         return QProxyStyle::styleHint(hint, option, widget, returnData);
     }
+
 };
 
 } // namespace
@@ -113,8 +114,12 @@ void apply(QApplication &app)
         QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
         QPushButton#link { background: transparent; border: none; color: rgb(176,127,224); padding: 0 4px; }
         QPushButton#link:hover { color: rgb(206,170,244); text-decoration: underline; }
+        QLabel#npVolume { font-weight: 800; font-size: 9.5pt; color: rgb(236,236,241); }
         QLabel#settingName { font-size: 10.5pt; font-weight: 600; color: rgb(236,236,241); }
-        QComboBox { background: rgb(40,39,50); border: 1px solid rgb(58,56,70); border-radius: 8px; padding: 6px 12px; color: rgb(236,236,241); }
+        QComboBox { background: rgb(40,39,50); border: 1px solid rgb(58,56,70); border-radius: 8px; padding: 6px 12px; color: rgb(236,236,241);
+                    combobox-popup: 0; }
+        QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 26px; border: none; background: transparent; }
+        QComboBox::down-arrow { image: url(:/assets/chevron-down.png); width: 12px; height: 12px; }
         QComboBox:hover { border-color: rgb(176,127,224); }
         QComboBox QAbstractItemView { background: rgb(33,32,41); border: 1px solid rgb(52,50,64); selection-background-color: rgb(60,48,84); outline: none; padding: 4px; }
         QLabel#toast { background: rgb(236,236,241); color: rgb(24,18,34); border-radius: 16px; font-weight: 600; }

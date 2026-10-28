@@ -98,6 +98,8 @@ private:
     void playOpen(int startAt, bool shuffle = false);
     void addFolder();
     void showLibraryMenu(const QPoint &pos);
+    // A playlist's menu, from its row in the library or its cover on its page.
+    void showPlaylistMenu(int index, const QPoint &at);
     void setLibraryDense(bool dense);
     void newFolder(const QString &thenMove = QString());
     void moveToFolder(const QString &path, const QString &folder);

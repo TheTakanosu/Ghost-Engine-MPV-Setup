@@ -25,5 +25,6 @@ qt_add_executable(GhostEngine WIN32
     src/covercrop.h src/covercrop.cpp
     src/settings.h src/settings.cpp
 )
+qt_add_resources(GhostEngine "assets" PREFIX "/" FILES assets/chevron-down.png)
 target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network dwmapi)
 target_compile_definitions(GhostEngine PRIVATE GHOST_VERSION="${PROJECT_VERSION}")

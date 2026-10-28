@@ -5,6 +5,7 @@
 
 class MpvClient;
 class ThumbnailCache;
+class QAbstractButton;
 class QLabel;
 class QSlider;
 namespace icons { class IconButton; }
@@ -56,5 +57,6 @@ private:
     QSlider *m_position;
     QSlider *m_volume;
     QLabel *m_volumeNumber;
+    QAbstractButton *m_speaker;
     bool m_dragging = false;
 };

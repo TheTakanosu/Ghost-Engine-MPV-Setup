@@ -33,29 +33,56 @@ QPixmap rounded(const QPixmap &cover, const QString &name, int size)
     QPixmap out(size * 2, size * 2);   // drawn at 2x, shown at 1x: crisp on HiDPI
     out.fill(Qt::transparent);
     QPainter p(&out);
-    tiles::paintCover(p, QRectF(0, 0, size * 2, size * 2), cover, name, 12);
+    const QRectF box(0, 0, size * 2, size * 2);
+    tiles::paintCover(p, box, cover, name, tiles::playlistRadius(box, 12));
     p.end();
     out.setDevicePixelRatio(2);
     return out;
 }
 
 // Volume icon drawn like the rest: a speaker and two arcs.
-class SpeakerIcon : public QWidget {
+class SpeakerIcon : public QAbstractButton {
 public:
-    SpeakerIcon() { setFixedSize(20, 20); }
+    SpeakerIcon()
+    {
+        setFixedSize(24, 22);
+        setCursor(Qt::PointingHandCursor);
+        setAttribute(Qt::WA_Hover);
+    }
+    // 0 (or muted) draws a cross; otherwise as many waves as the level earns.
+    void setLevel(int volume, bool muted)
+    {
+        const int waves = muted || volume <= 0 ? 0 : volume < 50 ? 1 : volume < 75 ? 2 : 3;
+        if (waves != m_waves) {
+            m_waves = waves;
+            update();
+        }
+    }
+
 protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QPen(theme::muted(), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p.setBrush(theme::muted());
-        QPolygonF body({{3, 8}, {7, 8}, {11, 4}, {11, 16}, {7, 12}, {3, 12}});
-        p.drawPolygon(body);
+        const QColor ink = underMouse() ? Qt::white : theme::muted();
+        p.setPen(QPen(ink, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(ink);
+        p.drawPolygon(QPolygonF({{3, 9}, {7, 9}, {11, 5}, {11, 17}, {7, 13}, {3, 13}}));
         p.setBrush(Qt::NoBrush);
-        p.drawArc(QRectF(9, 6, 6, 8), -60 * 16, 120 * 16);
-        p.drawArc(QRectF(9, 3, 10, 14), -60 * 16, 120 * 16);
+        if (m_waves == 0) {
+            p.drawLine(QPointF(15, 8), QPointF(21, 14));
+            p.drawLine(QPointF(21, 8), QPointF(15, 14));
+            return;
+        }
+        const QRectF arcs[] = {{10, 8, 5, 6}, {10, 5, 9, 12}, {10, 2, 13, 18}};
+        for (int i = 0; i < m_waves; ++i)
+            p.drawArc(arcs[i], -55 * 16, 110 * 16);
     }
+    void enterEvent(QEnterEvent *) override { update(); }
+    void leaveEvent(QEvent *) override { update(); }
+
+private:
+    int m_waves = 2;
 };
 
 } // namespace
@@ -146,14 +173,20 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     auto *right = new QHBoxLayout(rightBox);
     right->setContentsMargins(0, 0, 0, 0);
     right->addStretch();
-    right->addWidget(new SpeakerIcon);
+    m_speaker = new SpeakerIcon;
+    connect(m_speaker, &QAbstractButton::clicked, this, [this] { m_mpv->command({"cycle", "mute"}); });
+    right->addWidget(m_speaker);
     right->addWidget(m_volume);
     m_volumeNumber = new QLabel;
-    m_volumeNumber->setObjectName("npTime");
+    m_volumeNumber->setObjectName("npVolume");
     m_volumeNumber->setFixedWidth(38);
     m_volumeNumber->setVisible(false);
     right->addWidget(m_volumeNumber);
-    connect(m_volume, &QSlider::valueChanged, this, [this](int v) { m_volumeNumber->setText(QStringLiteral("%1%").arg(v)); });
+    connect(m_volume, &QSlider::valueChanged, this, [this](int v) {
+        m_volumeNumber->setText(QStringLiteral("%1%").arg(v));
+        static_cast<SpeakerIcon *>(m_speaker)->setLevel(v, m_mpv->property("mute").toBool());
+    });
+    static_cast<SpeakerIcon *>(m_speaker)->setLevel(m_volume->value(), false);   // before mpv says anything
 
     // Equal side columns keep the controls on the window's centre line,
     // whatever the title on the left is.
@@ -283,8 +316,10 @@ void NowPlayingBar::showRepeat()
 
 void NowPlayingBar::refreshCover()
 {
-    if (!m_mpv->connected())
+    if (!m_mpv->connected()) {
+        m_cover->setPixmap(rounded({}, "G", 58));   // in the shape the settings ask for
         return;
+    }
     QString id = youtube::videoId(m_mpv->property("user-data/ghost/source").toString());
     if (id.isEmpty())
         id = youtube::videoId(m_mpv->property("path").toString());
@@ -328,6 +363,9 @@ void NowPlayingBar::onProperty(const QString &name)
         m_expect = -1;
         showShuffle();
     }
+    if (name == "mute" || name == "volume")
+        static_cast<SpeakerIcon *>(m_speaker)->setLevel(int(m_mpv->property("volume").toDouble()),
+                                                        m_mpv->property("mute").toBool());
     if (name == "volume" && !m_volume->isSliderDown())
         m_volume->setValue(int(m_mpv->property("volume").toDouble()));
 }
