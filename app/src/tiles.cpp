@@ -106,7 +106,7 @@ RowDelegate::RowDelegate(CoversFor coversFor, QObject *parent)
 
 QSize RowDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
 {
-    const int h = int(64 * theme::zoom());
+    const int h = int((m_dense && !m_compact ? 34 : 64) * theme::zoom());
     return {m_compact ? h : 240, h};
 }
 
@@ -124,10 +124,49 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         bg.addRoundedRect(row, 8, 8);
         painter->fillPath(bg, selected ? theme::cardSelected() : theme::cardHover());
     }
-    const qreal side = row.height() - 12;
-    const QRectF cover(m_compact ? row.center().x() - side / 2 : row.left() + 6, row.top() + 6, side, side);
     const QString name = index.data(Qt::DisplayRole).toString();
-    paintCollage(*painter, cover, m_coversFor(index), name, 6);
+    const bool folder = !index.data(kFolderRole).toString().isEmpty();
+    const qreal indent = index.data(kInFolderRole).toBool() && !m_compact ? 18 : 0;
+
+    if (m_dense && !m_compact) {
+        // One line: a folder's mark or nothing, the name, then what it is.
+        qreal x = row.left() + 10 + indent;
+        if (folder) {
+            icons::paint(*painter, icons::Icon::Folder, QRectF(x, row.center().y() - 8, 16, 16),
+                         index.data(kOpenRole).toBool() ? theme::accent() : theme::muted());
+            x += 24;
+        }
+        const QRectF text(x, row.top(), row.right() - x - 8, row.height());
+        QFont nameFont = option.font;
+        nameFont.setWeight(QFont::DemiBold);
+        const QString kind = QStringLiteral("  ·  ") + index.data(kSubtitleRole).toString();
+        const QFontMetrics nameMetrics(nameFont);
+        const QString shownName = nameMetrics.elidedText(name, Qt::ElideRight, int(text.width()));
+        painter->setFont(nameFont);
+        painter->setPen(selected ? theme::accentText() : theme::text());
+        painter->drawText(text, Qt::AlignLeft | Qt::AlignVCenter, shownName);
+        const qreal used = nameMetrics.horizontalAdvance(shownName);
+        painter->setFont(option.font);
+        painter->setPen(theme::muted());
+        painter->drawText(text.adjusted(used, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                          QFontMetrics(option.font).elidedText(kind, Qt::ElideRight, int(text.width() - used)));
+        painter->restore();
+        return;
+    }
+
+    const qreal side = row.height() - 12;
+    const QRectF cover(m_compact ? row.center().x() - side / 2 : row.left() + 6 + indent, row.top() + 6, side, side);
+    if (folder) {
+        QPainterPath tile;
+        tile.addRoundedRect(cover, 6, 6);
+        painter->fillPath(tile, QColor(40, 39, 50));
+        const qreal mark = side * 0.42;
+        icons::paint(*painter, icons::Icon::Folder,
+                     QRectF(cover.center().x() - mark / 2, cover.center().y() - mark / 2, mark, mark),
+                     index.data(kOpenRole).toBool() ? theme::accent() : theme::text());
+    } else {
+        paintCollage(*painter, cover, m_coversFor(index), name, 6);
+    }
 
     if (!m_compact) {
         const QRectF text(cover.right() + 12, row.top() + 10, row.right() - cover.right() - 20, row.height() - 20);

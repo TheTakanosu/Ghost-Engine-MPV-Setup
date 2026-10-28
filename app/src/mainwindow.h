@@ -6,7 +6,11 @@
 #include "thumbnails.h"
 #include "youtube.h"
 
+#include <QElapsedTimer>
+#include <QHash>
+#include <QPixmap>
 #include <QFileSystemWatcher>
+#include <QSet>
 #include <QMainWindow>
 #include <QTimer>
 
@@ -87,8 +91,19 @@ private:
     void playOpen(int startAt, bool shuffle = false);
     void addFolder();
     void showLibraryMenu(const QPoint &pos);
+    void setLibraryDense(bool dense);
+    void newFolder(const QString &thenMove = QString());
+    void moveToFolder(const QString &path, const QString &folder);
+    void renameFolder(const QString &folder);
+    void deleteFolder(const QString &folder);
+    void saveOpenFolders();
 
     QVector<QPixmap> coversFor(int index);
+    // A picture chosen for a list replaces its collage. Kept apart from the
+    // .m3u, under the list's file name, which a move or rename keeps.
+    static QString customCoverPath(const QString &playlistPath);
+    void chooseCover(int index);
+    void removeCover(int index);
     QStringList coverIds(const Playlist &p, int wanted);
     QString idForTarget(const QString &target);
     QString findMpv() const;
@@ -114,6 +129,12 @@ private:
     QWidget *m_libraryHead = nullptr;
     QLabel *m_libraryTitle = nullptr;
     QPushButton *m_collapse = nullptr;
+    QPushButton *m_viewToggle = nullptr;
+    QPushButton *m_addButton = nullptr;
+    QHash<QString, QPixmap> m_customCovers;   // by customCoverPath(); a null one: none
+    QSet<QString> m_openFolders;   // library folders showing their playlists
+    QString m_lastToggled;         // a double-click is two clicks; see buildLibrary
+    QElapsedTimer m_toggleClock;
     QWidget *m_chipRow = nullptr;
     QButtonGroup *m_chips = nullptr;
     QLineEdit *m_search = nullptr;

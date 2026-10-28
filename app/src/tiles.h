@@ -39,14 +39,23 @@ private:
     CoversFor m_coversFor;
 };
 
+// A library folder's row carries its name here; its playlists, shown under
+// it while it is open, are marked as inside one.
+constexpr int kFolderRole = Qt::UserRole + 8;
+constexpr int kInFolderRole = Qt::UserRole + 9;
+constexpr int kOpenRole = Qt::UserRole + 10;     // a folder showing its playlists
+
 // A playlist as a row in the library panel: small cover, name, count. In a
-// narrow panel only the cover is left, as Spotify's library does.
+// narrow panel only the cover is left, as Spotify's library does; the dense
+// view drops the covers and keeps one line per list.
 class RowDelegate : public QStyledItemDelegate {
 public:
     using CoversFor = std::function<QVector<QPixmap>(const QModelIndex &)>;
 
     RowDelegate(CoversFor coversFor, QObject *parent);
     void setCompact(bool compact) { m_compact = compact; }
+    void setDense(bool dense) { m_dense = dense; }
+    bool dense() const { return m_dense; }
 
     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -55,6 +64,7 @@ public:
 private:
     CoversFor m_coversFor;
     bool m_compact = false;
+    bool m_dense = false;
 };
 
 // A song in a playlist page: number, cover, track and artist.

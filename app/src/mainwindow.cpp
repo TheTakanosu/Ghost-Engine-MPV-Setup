@@ -16,6 +16,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QImage>
 #include <QKeyEvent>
 #include <QShortcut>
 #include <QHBoxLayout>
@@ -63,7 +64,8 @@ constexpr int kCompactBelow = 150;  // narrower than this, the panel goes compac
 
 // Segoe Fluent Icons (Windows 11) / MDL2 Assets (10): same code points.
 const QChar kIconHome(0xE80F), kIconMin(0xE921), kIconMax(0xE922), kIconRestore(0xE923),
-    kIconClose(0xE8BB), kIconCollapse(0xE76B), kIconExpand(0xE76C), kIconAdd(0xE710);
+    kIconClose(0xE8BB), kIconCollapse(0xE76B), kIconExpand(0xE76C), kIconAdd(0xE710),
+    kIconDense(0xE8FD), kIconCovers(0xE8B9);
 
 QString subtitleFor(const Playlist &p)
 {
@@ -329,6 +331,10 @@ MainWindow::MainWindow()
     if (!qFuzzyCompare(savedZoom, 1.0))
         QTimer::singleShot(0, this, [this, savedZoom] { changeZoom(savedZoom - theme::zoom()); });
 
+    for (const QString &folder : QSettings().value("library/openFolders").toStringList())
+        m_openFolders.insert(folder);
+    if (QSettings().value("library/dense").toBool())
+        setLibraryDense(true);
     rescan();
     showHome();
     QTimer::singleShot(800, this, [this] { importStray(true); });
@@ -454,14 +460,19 @@ QWidget *MainWindow::buildLibrary()
         m_split->setSizes({left, total - left});
         setLibraryCompact(compact);
     });
-    auto *add = glyphButton(kIconAdd, "Add a folder or refresh");
+    auto *add = glyphButton(kIconAdd, "New folder, add a folder, refresh");
+    m_addButton = add;
     connect(add, &QPushButton::clicked, this, [this, add] { showLibraryMenu(add->mapToGlobal(QPoint(0, add->height()))); });
+    // Covers or one line per list, as Spotify's "Compact" view.
+    m_viewToggle = glyphButton(kIconDense, "Compact list");
+    connect(m_viewToggle, &QPushButton::clicked, this, [this] { setLibraryDense(!m_rowDelegate->dense()); });
 
     m_libraryHead = new QWidget;
     auto *head = new QHBoxLayout(m_libraryHead);
     head->setContentsMargins(0, 0, 0, 0);
     head->addWidget(m_collapse);
     head->addWidget(m_libraryTitle, 1);
+    head->addWidget(m_viewToggle);
     head->addWidget(add);
 
     m_chips = new QButtonGroup(this);
@@ -495,9 +506,28 @@ QWidget *MainWindow::buildLibrary()
     }, m_libraryList);
     m_libraryList->setItemDelegate(m_rowDelegate);
     connect(m_libraryList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
-        openPlaylist(item->data(tiles::kIndexRole).toInt());
+        const QString folder = item->data(tiles::kFolderRole).toString();
+        if (folder.isEmpty()) {
+            openPlaylist(item->data(tiles::kIndexRole).toInt());
+            return;
+        }
+        // A folder opens and closes in place. A double-click arrives as a
+        // second click too; it must not close what the first one opened.
+        if (folder == m_lastToggled && m_toggleClock.isValid() &&
+            m_toggleClock.elapsed() < QApplication::doubleClickInterval())
+            return;
+        m_lastToggled = folder;
+        m_toggleClock.start();
+        if (m_openFolders.contains(folder))
+            m_openFolders.remove(folder);
+        else
+            m_openFolders.insert(folder);
+        saveOpenFolders();
+        refill();
     });
     connect(m_libraryList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        if (!item->data(tiles::kFolderRole).toString().isEmpty())
+            return;
         const auto &all = m_library.playlists();
         const int i = item->data(tiles::kIndexRole).toInt();
         if (i >= 0 && i < all.size())
@@ -507,13 +537,44 @@ QWidget *MainWindow::buildLibrary()
         QListWidgetItem *item = m_libraryList->itemAt(pos);
         if (!item)
             return;
-        const QString path = m_library.playlists().value(item->data(tiles::kIndexRole).toInt()).path;
+        const QString folder = item->data(tiles::kFolderRole).toString();
+        if (!folder.isEmpty()) {
+            QMenu menu(this);
+            menu.addAction("Rename folder", this, [this, folder] { renameFolder(folder); });
+            menu.addAction("Show in folder", this, [folder] {
+                QProcess::startDetached("explorer.exe", {QDir::toNativeSeparators(Library::homeFolder() + '/' + folder)});
+            });
+            menu.addSeparator();
+            menu.addAction("Delete folder (keeps its playlists)", this, [this, folder] { deleteFolder(folder); });
+            menu.exec(m_libraryList->viewport()->mapToGlobal(pos));
+            return;
+        }
+        const Playlist list = m_library.playlists().value(item->data(tiles::kIndexRole).toInt());
+        const QString path = list.path;
         QMenu menu(this);
         menu.addAction("Play", this, [this, path] { play(path); });
         menu.addAction("Shuffle", this, [this, path] { play(path, true); });
         const int index = item->data(tiles::kIndexRole).toInt();
         menu.addSeparator();
+        // Only lists in the library proper go into its folders; one in
+        // Downloads or an added folder is imported first.
+        const QString home = Library::homeFolder();
+        const QString dir = QDir::cleanPath(QFileInfo(path).absolutePath());
+        if (dir.compare(home, Qt::CaseInsensitive) == 0 || dir.startsWith(home + '/', Qt::CaseInsensitive)) {
+            QMenu *into = menu.addMenu("Move to folder");
+            for (const QString &f : m_library.subfolders())
+                if (f != list.folder)
+                    into->addAction(f, this, [this, path, f] { moveToFolder(path, f); });
+            if (!into->isEmpty())
+                into->addSeparator();
+            into->addAction("New folder...", this, [this, path] { newFolder(path); });
+            if (!list.folder.isEmpty())
+                menu.addAction("Take out of \"" + list.folder + "\"", this, [this, path] { moveToFolder(path, QString()); });
+        }
         menu.addAction("Rename", this, [this, index] { renamePlaylist(index); });
+        menu.addAction("Change cover...", this, [this, index] { chooseCover(index); });
+        if (QFileInfo::exists(customCoverPath(path)))
+            menu.addAction("Use the songs' covers again", this, [this, index] { removeCover(index); });
         menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
         menu.addAction("Show in folder", this, [path] {
             QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
@@ -546,7 +607,8 @@ void MainWindow::setLibraryCompact(bool compact)
     m_compact = compact;
     m_libraryTitle->setVisible(!compact);
     m_chipRow->setVisible(!compact);
-    m_libraryHead->layout()->itemAt(2)->widget()->setVisible(!compact);
+    m_addButton->setVisible(!compact);
+    m_viewToggle->setVisible(!compact);
     m_collapse->setText(QString(compact ? kIconExpand : kIconCollapse));
     m_collapse->setToolTip(compact ? "Expand library" : "Collapse library");
     m_rowDelegate->setCompact(compact);
@@ -558,6 +620,8 @@ void MainWindow::setLibraryCompact(bool compact)
 void MainWindow::showLibraryMenu(const QPoint &at)
 {
     QMenu menu(this);
+    menu.addAction("New folder...", this, [this] { newFolder(); });
+    menu.addSeparator();
     menu.addAction("Add a folder with playlists...", this, &MainWindow::addFolder);
     menu.addAction("Refresh", this, &MainWindow::rescan);
     menu.addSeparator();
@@ -565,6 +629,107 @@ void MainWindow::showLibraryMenu(const QPoint &at)
         QProcess::startDetached("explorer.exe", {QDir::toNativeSeparators(Library::homeFolder())});
     });
     menu.exec(at);
+}
+
+void MainWindow::setLibraryDense(bool dense)
+{
+    m_rowDelegate->setDense(dense);
+    QSettings().setValue("library/dense", dense);
+    m_viewToggle->setText(QString(dense ? kIconCovers : kIconDense));
+    m_viewToggle->setToolTip(dense ? "List with covers" : "Compact list");
+    refill();
+    m_libraryList->doItemsLayout();
+}
+
+void MainWindow::saveOpenFolders()
+{
+    QSettings().setValue("library/openFolders", QStringList(m_openFolders.begin(), m_openFolders.end()));
+}
+
+void MainWindow::newFolder(const QString &thenMove)
+{
+    bool ok = false;
+    const QString typed = QInputDialog::getText(this, "New folder", "Folder name:", QLineEdit::Normal, QString(), &ok);
+    const QString name = Library::cleanFolderName(typed);
+    if (!ok || name.isEmpty())
+        return;
+    if (!m_library.subfolders().contains(name, Qt::CaseInsensitive) && !m_library.createSubfolder(name)) {
+        QMessageBox::warning(this, "New folder", "The folder couldn't be made.");
+        return;
+    }
+    m_openFolders.insert(name);
+    saveOpenFolders();
+    if (!thenMove.isEmpty())
+        moveToFolder(thenMove, name);
+    else
+        rescan();
+}
+
+void MainWindow::moveToFolder(const QString &path, const QString &folder)
+{
+    const bool wasOpen = m_open >= 0 && m_library.playlists()[m_open].path == path;
+    const QString moved = m_library.moveToSubfolder(path, folder);
+    if (moved.isEmpty()) {
+        QMessageBox::warning(this, "Move to folder", "The playlist couldn't be moved.");
+        return;
+    }
+    movedPlayed(path, moved);
+    if (wasOpen)
+        reopenAfter(moved);
+    else
+        rescan();
+}
+
+void MainWindow::renameFolder(const QString &folder)
+{
+    bool ok = false;
+    const QString typed = QInputDialog::getText(this, "Rename folder", "Folder name:", QLineEdit::Normal, folder, &ok);
+    const QString name = Library::cleanFolderName(typed);
+    if (!ok || name.isEmpty() || name == folder)
+        return;
+    const QString openPath = m_open >= 0 ? m_library.playlists()[m_open].path : QString();
+    if (!m_library.renameSubfolder(folder, name)) {
+        QMessageBox::warning(this, "Rename folder", "The folder couldn't be renamed. Is a list in it playing?");
+        return;
+    }
+    const QString from = Library::homeFolder() + '/' + folder + '/';
+    const QString to = Library::homeFolder() + '/' + name + '/';
+    for (const Playlist &p : m_library.playlists())
+        if (p.folder == folder)
+            movedPlayed(p.path, to + QFileInfo(p.path).fileName());
+    if (m_openFolders.remove(folder))
+        m_openFolders.insert(name);
+    saveOpenFolders();
+    if (openPath.startsWith(from, Qt::CaseInsensitive))
+        reopenAfter(to + openPath.mid(from.size()));
+    else
+        rescan();
+}
+
+void MainWindow::deleteFolder(const QString &folder)
+{
+    if (QMessageBox::question(this, "Delete folder",
+            QStringLiteral("Delete the folder \"%1\"?\n\nIts playlists stay in your library.").arg(folder)) != QMessageBox::Yes)
+        return;
+    const QString openPath = m_open >= 0 ? m_library.playlists()[m_open].path : QString();
+    QString reopen;
+    for (const Playlist &p : m_library.playlists()) {
+        if (p.folder != folder)
+            continue;
+        const QString to = Library::homeFolder() + '/' + QFileInfo(p.path).fileName();
+        movedPlayed(p.path, to);
+        if (p.path == openPath)
+            reopen = to;
+    }
+    if (!m_library.dissolveSubfolder(folder))
+        QMessageBox::warning(this, "Delete folder",
+            "Its playlists were moved out, but the folder has other files in it, so it was left in place.");
+    m_openFolders.remove(folder);
+    saveOpenFolders();
+    if (!reopen.isEmpty())
+        reopenAfter(reopen);
+    else
+        rescan();
 }
 
 // -- pages ---------------------------------------------------------------------
@@ -652,6 +817,9 @@ QWidget *MainWindow::buildPlaylistPage()
     connect(m_nameEdit, &QLineEdit::editingFinished, this, &MainWindow::finishRename);
     m_nameEdit->installEventFilter(this);
     m_playlistName->installEventFilter(this);
+    header->installEventFilter(this);
+    header->setMouseTracking(true);
+    header->setToolTip("Click the cover to choose your own picture");
     m_playlistName->setMinimumWidth(10);
     m_playlistName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_playlistInfo = new QLabel;
@@ -1049,6 +1217,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
         return true;
     }
+    if (watched == m_playlistCover && m_open >= 0) {
+        auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
+        if (event->type() == QEvent::MouseMove)
+            header->setCursor(header->coverRect().contains(static_cast<QMouseEvent *>(event)->position().toPoint())
+                              ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        if (event->type() == QEvent::MouseButtonRelease &&
+            static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton &&
+            header->coverRect().contains(static_cast<QMouseEvent *>(event)->position().toPoint())) {
+            chooseCover(m_open);
+            return true;
+        }
+    }
     if (watched == m_playlistName && event->type() == QEvent::MouseButtonDblClick) {
         renamePlaylist(m_open);
         return true;
@@ -1086,6 +1266,51 @@ void MainWindow::openPlayingList()
             });
         return;
     }
+}
+
+void MainWindow::chooseCover(int index)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const QString picked = QFileDialog::getOpenFileName(this, "Choose a cover",
+        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
+        "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)");
+    if (picked.isEmpty())
+        return;
+    QImage image(picked);
+    if (image.isNull()) {
+        QMessageBox::warning(this, "Choose a cover", "That picture couldn't be read.");
+        return;
+    }
+    // Square from the middle, as the collage is, and no bigger than the
+    // largest place it is drawn.
+    const int side = qMin(image.width(), image.height());
+    image = image.copy((image.width() - side) / 2, (image.height() - side) / 2, side, side)
+                 .scaled(qMin(side, 640), qMin(side, 640), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    const QString target = customCoverPath(all[index].path);
+    QDir().mkpath(QFileInfo(target).absolutePath());
+    if (!image.save(target, "JPG", 92)) {
+        QMessageBox::warning(this, "Choose a cover", "The cover couldn't be saved.");
+        return;
+    }
+    m_customCovers.remove(target);
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed})
+        v->viewport()->update();
+    m_playlistCover->update();
+}
+
+void MainWindow::removeCover(int index)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const QString target = customCoverPath(all[index].path);
+    QFile::remove(target);
+    m_customCovers.remove(target);
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed})
+        v->viewport()->update();
+    m_playlistCover->update();
 }
 
 void MainWindow::exportPlaylist(int index)
@@ -1409,9 +1634,9 @@ void MainWindow::rescan()
 {
     if (!m_watcher.directories().isEmpty())
         m_watcher.removePaths(m_watcher.directories());
-    m_watcher.addPaths(m_library.folders());
     const QString openPath = m_open >= 0 ? m_library.playlists().value(m_open).path : QString();
     m_library.rescan();
+    m_watcher.addPaths(m_library.watchPaths());
     m_open = -1;
     refill();
     const auto &all = m_library.playlists();
@@ -1437,20 +1662,46 @@ void MainWindow::refill()
     // library panel
     const QString needle = m_search->text().trimmed();
     m_libraryList->clear();
-    for (int i = 0; i < all.size(); ++i) {
+    auto shown = [&](const Playlist &p) {
+        return !((m_filter == Songs && !p.audio) || (m_filter == Videos && p.audio)) &&
+               (needle.isEmpty() || p.name.contains(needle, Qt::CaseInsensitive));
+    };
+    auto addList = [&](int i, bool inFolder) {
         const Playlist &p = all[i];
-        if ((m_filter == Songs && !p.audio) || (m_filter == Videos && p.audio))
-            continue;
-        if (!needle.isEmpty() && !p.name.contains(needle, Qt::CaseInsensitive))
-            continue;
         auto *row = new QListWidgetItem(p.name);
         row->setData(tiles::kIndexRole, i);
-        row->setData(tiles::kSubtitleRole, subtitleFor(p));
+        row->setData(tiles::kSubtitleRole, m_rowDelegate->dense() ? QStringLiteral("Playlist") : subtitleFor(p));
+        row->setData(tiles::kInFolderRole, inFolder);
         row->setToolTip(p.name);
         m_libraryList->addItem(row);
         if (i == m_open)
             m_libraryList->setCurrentItem(row);
+    };
+    // Folders first, each followed by its lists while it is open. A search
+    // looks through every list, in a folder or not, so nothing it finds hides.
+    if (needle.isEmpty()) {
+        for (const QString &folder : m_library.subfolders()) {
+            QVector<int> inside;
+            for (int i = 0; i < all.size(); ++i)
+                if (all[i].folder == folder && shown(all[i]))
+                    inside << i;
+            const bool open = m_openFolders.contains(folder);
+            auto *row = new QListWidgetItem(folder);
+            row->setData(tiles::kIndexRole, -1);
+            row->setData(tiles::kFolderRole, folder);
+            row->setData(tiles::kOpenRole, open);
+            row->setData(tiles::kSubtitleRole, QStringLiteral("Folder · %1 %2").arg(inside.size())
+                                                   .arg(inside.size() == 1 ? "playlist" : "playlists"));
+            row->setToolTip(folder);
+            m_libraryList->addItem(row);
+            if (open)
+                for (int i : inside)
+                    addList(i, true);
+        }
     }
+    for (int i = 0; i < all.size(); ++i)
+        if (shown(all[i]) && (all[i].folder.isEmpty() || !needle.isEmpty()))
+            addList(i, false);
 
     // Home
     m_greeting->setText(greetingFor(QTime::currentTime()));
@@ -1502,12 +1753,25 @@ QString MainWindow::idForTarget(const QString &target)
     return id.isEmpty() ? m_resolver.idFor(query) : id;
 }
 
+QString MainWindow::customCoverPath(const QString &playlistPath)
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) +
+           QStringLiteral("/playlist-covers/") + QFileInfo(playlistPath).completeBaseName() + QStringLiteral(".jpg");
+}
+
 QVector<QPixmap> MainWindow::coversFor(int index)
 {
     const auto &all = m_library.playlists();
     QVector<QPixmap> covers;
     if (index < 0 || index >= all.size())
         return covers;
+    // Painted for every row on every repaint, so the disk is asked once.
+    const QString custom = customCoverPath(all[index].path);
+    auto cached = m_customCovers.constFind(custom);
+    if (cached == m_customCovers.constEnd())
+        cached = m_customCovers.insert(custom, QFileInfo::exists(custom) ? QPixmap(custom) : QPixmap());
+    if (!cached->isNull())
+        return {*cached};
     for (const QString &id : coverIds(all[index], 4))
         covers << m_covers.get(id, ThumbnailCache::Size::Card);
     return covers;

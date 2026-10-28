@@ -25,6 +25,7 @@ public:
     int count = 0;        // entries, counted while peeking
     QStringList preview;  // the first few entries, where a cover is looked for
     QDateTime modified;
+    QString folder;       // the library folder it sits in (Music\Ghost Engine\<folder>), or empty
 
     QVector<PlaylistEntry> readEntries() const;
 
