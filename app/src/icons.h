@@ -23,6 +23,8 @@ public:
     void setIcon(Icon icon) { m_icon = icon; update(); }
     void setRound(const QColor &fill, const QColor &fillHover, const QColor &glyph);
     void setColors(const QColor &normal, const QColor &hover);
+    // A small dot under the icon, as Spotify marks shuffle and repeat that are on.
+    void setDot(bool dot) { m_dot = dot; update(); }
 
     QSize sizeHint() const override { return {m_size, m_size}; }
 
@@ -35,6 +37,7 @@ private:
     Icon m_icon;
     int m_size;
     bool m_round = false;
+    bool m_dot = false;
     QColor m_fill, m_fillHover, m_normal{170, 168, 182}, m_hover{Qt::white};
 };
 

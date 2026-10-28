@@ -103,8 +103,8 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
         b->setColors(QColor(200, 198, 210), Qt::white);
     // Shuffle and repeat act on what is playing, as in Spotify; the shuffle
     // on a playlist page starts that list shuffled instead.
-    m_shuffle = new icons::IconButton(icons::Icon::Shuffle, 28, "Shuffle what is playing");
-    m_repeat = new icons::IconButton(icons::Icon::Repeat, 28, "Repeat");
+    m_shuffle = new icons::IconButton(icons::Icon::Shuffle, 32, "Shuffle what is playing");
+    m_repeat = new icons::IconButton(icons::Icon::Repeat, 32, "Repeat");
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(20);
     buttons->addStretch();
@@ -238,6 +238,12 @@ void NowPlayingBar::showIdle()
     showRepeat();
 }
 
+void NowPlayingBar::refreshPosition()
+{
+    if (m_mpv->connected())
+        onProperty("playlist-pos");
+}
+
 void NowPlayingBar::expectList(bool shuffled)
 {
     m_expect = shuffled ? 1 : 0;
@@ -249,6 +255,7 @@ void NowPlayingBar::showShuffle()
 {
     const QColor on = theme::accent();
     m_shuffle->setColors(m_shuffled ? on : QColor(170, 168, 182), m_shuffled ? on.lighter(120) : Qt::white);
+    m_shuffle->setDot(m_shuffled);
     m_shuffle->setToolTip(m_shuffled ? "Shuffle is on: back to the list's order" : "Shuffle what is playing");
 }
 
@@ -258,6 +265,7 @@ void NowPlayingBar::showRepeat()
     const QColor on = theme::accent();
     m_repeat->setIcon(one ? icons::Icon::RepeatOne : icons::Icon::Repeat);
     m_repeat->setColors(one || all ? on : QColor(170, 168, 182), one || all ? on.lighter(120) : Qt::white);
+    m_repeat->setDot(one || all);
     m_repeat->setToolTip(one ? "Repeating this song" : all ? "Repeating the list" : "Repeat is off");
 }
 
@@ -274,13 +282,16 @@ void NowPlayingBar::refreshCover()
 
 void NowPlayingBar::onProperty(const QString &name)
 {
-    if (name == "media-title" || name == "metadata/by-key/uploader" || name == "playlist-pos" || name == "playlist-count") {
+    if (name == "media-title" || name == "metadata/by-key/uploader" || name == "playlist-pos" ||
+        name == "playlist-count" || name == "path") {
         const QString title = m_mpv->property("media-title").toString();
         m_title->setText(QFontMetrics(m_title->font()).elidedText(title, Qt::ElideRight, qMax(120, m_title->width())));
         m_title->setToolTip(title);
         const QString uploader = m_mpv->property("metadata/by-key/uploader").toString();
-        const int pos = m_mpv->property("playlist-pos").toInt(), count = m_mpv->property("playlist-count").toInt();
-        QString sub = count > 0 ? QStringLiteral("%1 of %2").arg(pos + 1).arg(count) : QString();
+        const int count = m_mpv->property("playlist-count").toInt();
+        const int number = numberFor ? numberFor() : 0;
+        const int pos = number > 0 ? number : m_mpv->property("playlist-pos").toInt() + 1;
+        QString sub = count > 0 ? QStringLiteral("%1 of %2").arg(pos).arg(count) : QString();
         if (!uploader.isEmpty())
             sub = uploader + (sub.isEmpty() ? QString() : QStringLiteral("  ·  ") + sub);
         m_subtitle->setText(sub);

@@ -38,6 +38,7 @@
 #include <QPainterPath>
 #include <QProcess>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSet>
@@ -50,6 +51,7 @@
 #include <algorithm>
 #include <functional>
 #include <numeric>
+#include <random>
 
 #include <windows.h>
 #include <dwmapi.h>
@@ -292,6 +294,25 @@ MainWindow::MainWindow()
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
+    m_nowPlaying->numberFor = [this] {
+        // The number the song has where it is shown: its row in the open
+        // list when that is the one playing, else its place in the file.
+        if (m_playingRow >= 0)
+            return m_songs->item(m_playingRow)->data(tiles::kNumberRole).toInt();
+        const QString list = playingListPath();
+        const QString path = m_mpv.property("path").toString();
+        if (list.isEmpty() || path.isEmpty())
+            return 0;
+        if (list != m_numberedList) {
+            m_numberedList = list;
+            m_numberedEntries.clear();
+            Playlist p;
+            p.path = list;
+            for (const PlaylistEntry &e : p.readEntries())
+                m_numberedEntries << e.target;
+        }
+        return int(m_numberedEntries.indexOf(path)) + 1;
+    };
     connect(m_nowPlaying, &NowPlayingBar::openPlaying, this, &MainWindow::openPlayingList);
 
     auto *root = new QVBoxLayout;
@@ -354,6 +375,12 @@ MainWindow::MainWindow()
     m_rescanSoon.setSingleShot(true);
     m_rescanSoon.setInterval(600);
     connect(&m_rescanSoon, &QTimer::timeout, this, [this] {
+        // Our own move just changed the folder, and the user may already be
+        // dragging the next list; filling the panel again would drop it.
+        if (QApplication::mouseButtons() != Qt::NoButton) {
+            m_rescanSoon.start();
+            return;
+        }
         if (QSettings().value("library/autoImport").toBool())
             importStray(false);
         rescan();
@@ -1082,8 +1109,19 @@ QWidget *MainWindow::buildPlaylistPage()
     auto *shuffleButton = new icons::IconButton(icons::Icon::Shuffle, 40, "Shuffle");
     auto *folderButton = new icons::IconButton(icons::Icon::Folder, 40, "Show in folder");
     connect(playButton, &QAbstractButton::clicked, this, [this] { playOpen(0); });
+    shuffleButton->setToolTip("Shuffle the order of this list");
+    m_pageShuffle = shuffleButton;
     connect(shuffleButton, &QAbstractButton::clicked, this, [this] {
-        if (m_open >= 0) play(m_library.playlists()[m_open].path, true);
+        // On: the songs in a new random order. Off: back to the list's own.
+        // Nothing starts playing; Play then follows the order shown.
+        if (m_open < 0)
+            return;
+        if (m_sortKey == SortKey::Shuffled) {
+            sortBy(SortKey::Custom);
+        } else {
+            m_shuffleSeed = QRandomGenerator::global()->generate();
+            sortBy(SortKey::Shuffled);
+        }
     });
     connect(folderButton, &QAbstractButton::clicked, this, [this] {
         if (m_open >= 0)
@@ -1518,7 +1556,7 @@ void MainWindow::syncSearchWidth()
 
 void MainWindow::openPlayingList()
 {
-    const QString playing = QFileInfo(m_mpv.property("playlist-path").toString()).absoluteFilePath();
+    const QString playing = playingListPath();
     const auto &all = m_library.playlists();
     for (int i = 0; i < all.size(); ++i) {
         if (QFileInfo(all[i].path).absoluteFilePath().compare(playing, Qt::CaseInsensitive) != 0)
@@ -1618,7 +1656,7 @@ void MainWindow::markPlaying()
     // The song mpv is on, when the list open here is the one it plays.
     const auto &all = m_library.playlists();
     const bool same = m_open >= 0 && m_open < all.size() && m_mpv.connected() &&
-        QFileInfo(m_mpv.property("playlist-path").toString()).absoluteFilePath()
+        playingListPath()
             .compare(QFileInfo(all[m_open].path).absoluteFilePath(), Qt::CaseInsensitive) == 0;
     // Matched by the entry itself, not its position: shuffled, mpv's order
     // is no longer the file's.
@@ -1632,6 +1670,8 @@ void MainWindow::markPlaying()
         m_songs->item(row)->setData(tiles::kPlayingRole, on);
     }
     m_playingRow = playing;
+    if (m_nowPlaying)
+        m_nowPlaying->refreshPosition();   // its number may be this row now
 }
 
 void MainWindow::showHome()
@@ -1678,6 +1718,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     // Each list keeps the sort it was last shown with, as in Spotify.
     const QStringList sort = QSettings().value("sort/" + QFileInfo(p.path).fileName()).toStringList();
     m_sortKey = static_cast<SortKey>(sort.value(0).toInt());
+    m_shuffleSeed = sort.value(2).toUInt();
     m_sortDescending = sort.value(1) == "desc";
     fillDurations();
     applySort();
@@ -1717,7 +1758,8 @@ void MainWindow::sortBy(SortKey key)
             settings.remove("sort/" + file);
         else
             settings.setValue("sort/" + file, QStringList{QString::number(int(m_sortKey)),
-                                                          m_sortDescending ? "desc" : "asc"});
+                                                          m_sortDescending ? "desc" : "asc",
+                                                          QString::number(m_shuffleSeed)});
     }
     applySort();
 }
@@ -1734,6 +1776,13 @@ void MainWindow::applySort()
     auto entry = [](const QListWidgetItem *item) { return item->data(tiles::kEntryRole).toInt(); };
     const SortKey key = m_sortKey;
     const bool down = m_sortDescending;
+    // A shuffled list keeps its order across visits: the same seed gives the
+    // same permutation of the file's entries.
+    QVector<int> rank(items.size());
+    if (key == SortKey::Shuffled) {
+        std::iota(rank.begin(), rank.end(), 0);
+        std::shuffle(rank.begin(), rank.end(), std::mt19937(m_shuffleSeed));
+    }
     std::stable_sort(items.begin(), items.end(), [&](const QListWidgetItem *a, const QListWidgetItem *b) {
         int c = 0;
         switch (key) {
@@ -1761,6 +1810,9 @@ void MainWindow::applySort()
             c = x < y ? -1 : x > y ? 1 : 0;
             break;
         }
+        case SortKey::Shuffled:
+            c = rank.value(entry(a)) - rank.value(entry(b));
+            break;
         case SortKey::Custom:
             break;
         }
@@ -1782,6 +1834,12 @@ void MainWindow::applySort()
         button->style()->unpolish(button);
         button->style()->polish(button);
         button->update();
+    }
+    if (m_pageShuffle) {
+        auto *b = static_cast<icons::IconButton *>(m_pageShuffle);
+        const bool on = m_sortKey == SortKey::Shuffled;
+        b->setColors(on ? theme::accent() : QColor(170, 168, 182), on ? theme::accent().lighter(120) : Qt::white);
+        b->setDot(on);
     }
     filterSongs();
     markPlaying();
@@ -2167,6 +2225,20 @@ QStringList MainWindow::coverIds(const Playlist &p, int wanted)
 }
 
 // -- actions -------------------------------------------------------------------
+
+QString MainWindow::playingListPath() const
+{
+    const QString mpvSays = m_mpv.property("playlist-path").toString();
+    if (mpvSays.isEmpty())
+        return {};
+    const QFileInfo info(mpvSays);
+    if (info.exists())
+        return info.absoluteFilePath();
+    for (const Playlist &p : m_library.playlists())
+        if (QFileInfo(p.path).fileName().compare(info.fileName(), Qt::CaseInsensitive) == 0)
+            return QFileInfo(p.path).absoluteFilePath();
+    return info.absoluteFilePath();
+}
 
 QString MainWindow::findMpv() const
 {

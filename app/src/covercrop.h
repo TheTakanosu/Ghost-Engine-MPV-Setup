@@ -4,7 +4,7 @@
 #include <QImage>
 
 // Picks the square of a picture that becomes a playlist's cover: the square
-// is dragged to move it, its corner (or the mouse wheel) resizes it, and the
+// stays fixed while the picture is dragged and zoomed behind it, and the
 // rest of the picture is dimmed, the way profile pictures are cropped.
 class CoverCropDialog : public QDialog {
 public:

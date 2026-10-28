@@ -119,11 +119,19 @@ void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color
         painter.drawLine(tip, tip + QPointF(-head, -head));
         painter.drawLine(tip, tip + QPointF(-head, head));
         if (icon == Icon::RepeatOne) {
+            // A filled badge on the loop's top right with the "1" cut out of
+            // it in the bar's dark, big enough to read at the bar's size.
+            const qreal d = s * 0.64;
+            const QRectF badge(r.right() - d * 0.92, r.top() - d * 0.12, d, d);
+            painter.setPen(QPen(QColor(12, 11, 15), s * 0.08));
+            painter.setBrush(color);
+            painter.drawEllipse(badge);
             QFont f = painter.font();
-            f.setPixelSize(int(s * 0.36));
-            f.setBold(true);
+            f.setPixelSize(qMax(8, int(d * 0.82)));
+            f.setWeight(QFont::Black);
             painter.setFont(f);
-            painter.drawText(loop, Qt::AlignCenter, QStringLiteral("1"));
+            painter.setPen(QColor(12, 11, 15));
+            painter.drawText(badge.adjusted(0, -d * 0.04, 0, 0), Qt::AlignCenter, QStringLiteral("1"));
         }
         break;
     }
@@ -192,8 +200,16 @@ void IconButton::paintEvent(QPaintEvent *)
         p.drawEllipse(QRectF(box.center().x() - d / 2, box.center().y() - d / 2, d, d));
     }
     const qreal glyph = (m_round ? 0.4 : 0.62) * box.width() * scale;
-    paint(p, m_icon, QRectF(box.center().x() - glyph / 2, box.center().y() - glyph / 2, glyph, glyph),
+    // With a dot, the icon moves up a little to make room under it.
+    const qreal lift = m_dot ? box.height() * 0.1 : 0;
+    paint(p, m_icon, QRectF(box.center().x() - glyph / 2, box.center().y() - glyph / 2 - lift, glyph, glyph),
           hot ? m_hover : m_normal);
+    if (m_dot) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_normal);
+        const qreal d = qMax(3.0, box.width() * 0.13);
+        p.drawEllipse(QRectF(box.center().x() - d / 2, box.bottom() - d - 0.5, d, d));
+    }
 }
 
 } // namespace icons

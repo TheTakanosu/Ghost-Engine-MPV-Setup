@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <functional>
 
 class MpvClient;
 class ThumbnailCache;
@@ -21,6 +22,10 @@ public:
     // The next list mpv loads starts shuffled (or not); the app knows, mpv
     // does not say.
     void expectList(bool shuffled);
+    // The playing song's number as the app shows it (row in the open list,
+    // or its place in the file); 0 when it cannot tell.
+    std::function<int()> numberFor;
+    void refreshPosition();
 
 signals:
     // The cover was clicked: show the list mpv is playing.

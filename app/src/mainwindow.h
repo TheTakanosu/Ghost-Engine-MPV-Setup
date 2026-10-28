@@ -47,7 +47,7 @@ private:
     enum Filter { AllLists, Songs, Videos };
     // How the open list's songs are shown. Custom is the file's own order,
     // the only one a drag can change.
-    enum class SortKey { Custom, Title, Artist, Added, Duration };
+    enum class SortKey { Custom, Title, Artist, Added, Duration, Shuffled };
 
     QWidget *buildTopBar();
     QWidget *buildLibrary();
@@ -116,6 +116,9 @@ private:
     QStringList coverIds(const Playlist &p, int wanted);
     QString idForTarget(const QString &target);
     QString findMpv() const;
+    // The file of the list mpv is playing. A list moved into a folder while
+    // playing keeps its file name, so it is found by that.
+    QString playingListPath() const;
     void rememberPlayed(const QString &path);
 
     Library m_library;
@@ -176,6 +179,8 @@ private:
     QList<std::pair<SortKey, QPushButton *>> m_sortButtons;
     SortKey m_sortKey = SortKey::Custom;
     bool m_sortDescending = false;
+    quint32 m_shuffleSeed = 0;     // the order a shuffled list is shown in
+    QWidget *m_pageShuffle = nullptr;
     // The file as it was before the last drag or removal, for Ctrl+Z.
     QString m_undoPath;
     QByteArray m_undoBytes;
@@ -183,6 +188,9 @@ private:
     QString m_pendingPath;
     QVector<int> m_pendingOrder;
     int m_pendingSerial = 0;
+    // The playing list's entries, for the bar's song number.
+    QString m_numberedList;
+    QStringList m_numberedEntries;
     QWidget *m_homeScroll = nullptr;
     QFileSystemWatcher m_watcher;
     QTimer m_rescanSoon;
