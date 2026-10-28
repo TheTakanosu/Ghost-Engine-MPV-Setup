@@ -432,8 +432,20 @@ MainWindow::MainWindow()
 
     applyLook();
     connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
-        if (on)
-            sendWindowChoice();
+        if (!on)
+            return;
+        sendWindowChoice();
+        m_launching.invalidate();
+        // A Play pressed while mpv was starting goes to it now.
+        if (m_queuedPlay) {
+            const QueuedPlay q = *m_queuedPlay;
+            m_queuedPlay.reset();
+            play(q.path, q.shuffle, q.startAt, q.order);
+        }
+        // Once mpv has said which process it is, any other mpv this app
+        // started (two Plays before the first one answered, in an older
+        // build) is closed.
+        QTimer::singleShot(1500, this, [this] { closeExtraPlayers(false); });
     });
     for (const QString &folder : QSettings().value("library/openFolders").toStringList())
         m_openFolders.insert(folder);
@@ -450,6 +462,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_mpv.property("user-data/ghost/audio").toBool()) {
         m_mpv.command({"quit"});
         m_mpv.flush();
+        closeExtraPlayers(true);
     }
     QSettings settings;
     settings.setValue("window/geometry", saveGeometry());
@@ -2435,6 +2448,10 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         QTimer::singleShot(15000, this, [this, serial] { if (m_pendingSerial == serial) m_pendingOrder.clear(); });
     // An mpv already open takes the list over IPC, so a second window does
     // not start on top of the first.
+    if (!m_mpv.connected() && m_launching.isValid() && m_launching.elapsed() < 15000) {
+        m_queuedPlay = QueuedPlay{path, shuffle, startAt, order};   // the latest click wins
+        return;
+    }
     if (m_mpv.connected()) {
         m_mpv.command({"loadfile", path, "replace", -1, QStringLiteral("playlist-start=%1").arg(startAt)});
         if (shuffle)
@@ -2458,7 +2475,41 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
     args << "--" << path;
     // From mpv's own folder, the way a double-click on the .m3u starts it, so
     // its scripts and the presence agent behave the same.
-    QProcess::startDetached(mpv, args, QFileInfo(mpv).absolutePath());
+    qint64 pid = 0;
+    if (QProcess::startDetached(mpv, args, QFileInfo(mpv).absolutePath(), &pid)) {
+        m_launchedPids << pid;
+        m_launching.start();
+        m_mpv.hurry();
+    }
+}
+
+void MainWindow::closeExtraPlayers(bool all)
+{
+    // mpv processes this app started that are not the one it talks to (or,
+    // closing with no window, every one of them): ended, so none plays on
+    // where nobody can see or stop it. Each is checked to still be mpv.exe,
+    // since Windows reuses process ids.
+    const qint64 ours = m_mpv.property("pid").toLongLong();
+    QList<qint64> keep;
+    for (qint64 pid : std::as_const(m_launchedPids)) {
+        HANDLE h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pid));
+        if (!h)
+            continue;   // gone already
+        wchar_t name[MAX_PATH];
+        DWORD size = MAX_PATH;
+        DWORD code = 0;
+        const bool alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+        const bool isMpv = QueryFullProcessImageNameW(h, 0, name, &size) &&
+                           QString::fromWCharArray(name, int(size)).endsWith(QStringLiteral("mpv.exe"), Qt::CaseInsensitive);
+        if (alive && isMpv) {
+            if (all || pid != ours)
+                TerminateProcess(h, 0);
+            else
+                keep << pid;
+        }
+        CloseHandle(h);
+    }
+    m_launchedPids = keep;
 }
 
 void MainWindow::rememberPlayed(const QString &path)

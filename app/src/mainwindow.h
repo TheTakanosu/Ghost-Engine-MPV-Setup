@@ -12,6 +12,7 @@
 #include <QPixmap>
 #include <QFileSystemWatcher>
 #include <QSet>
+#include <optional>
 #include <QMainWindow>
 #include <QTimer>
 
@@ -202,6 +203,14 @@ private:
     QString m_undoPath;
     QByteArray m_undoBytes;
     // Applied to mpv's playlist once it has loaded the list (see play()).
+    // One mpv for the app. While the one just started is not answering yet,
+    // a second Play waits for it instead of starting another (which, with
+    // no window, would play unseen and outlive the app).
+    QElapsedTimer m_launching;
+    struct QueuedPlay { QString path; bool shuffle = false; int startAt = 0; QVector<int> order; };
+    std::optional<QueuedPlay> m_queuedPlay;
+    QList<qint64> m_launchedPids;
+    void closeExtraPlayers(bool all);
     QString m_pendingPath;
     QVector<int> m_pendingOrder;
     int m_pendingSerial = 0;

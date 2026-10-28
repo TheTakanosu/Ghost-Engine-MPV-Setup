@@ -10,7 +10,7 @@ namespace {
 const char *const kObserved[] = {
     "media-title", "pause", "time-pos", "duration", "volume",
     "playlist-pos", "playlist-count", "path", "user-data/ghost/source",
-    "metadata/by-key/uploader", "playlist-path", "loop-playlist", "loop-file", "user-data/ghost/audio", "mute",
+    "metadata/by-key/uploader", "playlist-path", "loop-playlist", "loop-file", "user-data/ghost/audio", "mute", "pid",
 };
 
 } // namespace
@@ -30,6 +30,15 @@ MpvClient::MpvClient(QObject *parent) : QObject(parent)
     tryConnect();
 }
 
+void MpvClient::hurry()
+{
+    if (connected())
+        return;
+    m_retry.setInterval(200);
+    m_retry.start();
+    QTimer::singleShot(15000, this, [this] { m_retry.setInterval(2000); });
+}
+
 void MpvClient::tryConnect()
 {
     if (m_socket.state() != QLocalSocket::UnconnectedState)
@@ -40,6 +49,7 @@ void MpvClient::tryConnect()
 void MpvClient::onConnected()
 {
     m_retry.stop();
+    m_retry.setInterval(2000);
     m_buffer.clear();
     int id = 1;
     for (const char *name : kObserved)

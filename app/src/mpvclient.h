@@ -25,6 +25,9 @@ public:
     // Waits (briefly) until what was sent has left, for a command sent
     // just before the app quits.
     void flush() { m_socket.waitForBytesWritten(300); }
+    // An mpv was just started: look for it every fifth of a second for a
+    // while instead of every two seconds.
+    void hurry();
 
 signals:
     void connectionChanged(bool connected);
