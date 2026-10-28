@@ -392,9 +392,18 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
 
     painter->setFont(small);
     painter->setPen(QColor(154, 152, 166));
-    QString under = index.data(kAddedRole).toString();
+    // The channel, then when it was added, as YouTube's cards have them.
+    QStringList parts;
+    if (channelFor) {
+        const QString channel = channelFor(index);
+        if (!channel.isEmpty())
+            parts << channel;
+    }
     if (index.data(kOfflineRole).toBool())
-        under = QStringLiteral("Downloaded  ·  ") + under;
+        parts << QStringLiteral("Downloaded");
+    if (!index.data(kAddedRole).toString().isEmpty())
+        parts << index.data(kAddedRole).toString();
+    const QString under = QFontMetricsF(small).elidedText(parts.join(QStringLiteral("  ·  ")), Qt::ElideRight, titleBox.width());
     painter->drawText(QRectF(titleBox.left(), titleBox.bottom() + 2, titleBox.width(), QFontMetricsF(small).lineSpacing()),
                       Qt::AlignLeft | Qt::AlignVCenter, under);
     painter->restore();

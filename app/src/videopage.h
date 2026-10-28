@@ -9,6 +9,7 @@
 
 class QGridLayout;
 class QLabel;
+class QAbstractScrollArea;
 class QScrollArea;
 class QListWidget;
 class QPushButton;
@@ -36,6 +37,12 @@ public:
     void attachSurface(QWidget *host);
     QWidget *surface() const { return m_surface; }
     void setSurfaceCorner(int radius);
+    void setSurfaceVisibleArea(const QRect &area);   // its own coordinates; empty: all
+    // The window over the picture's visible part (global coordinates).
+    void placeOverPicture(const QRect &picture, const QRect &visible);
+    // The page's scrolling area, the part of the window the picture may show in.
+    QWidget *viewport() const;
+    QAbstractScrollArea *scrollArea() const;
     // Where the picture goes on this page.
     QWidget *screen() const { return m_screen; }
     // The see-through bar of controls laid over the picture, the page-coloured
@@ -77,6 +84,7 @@ public:
 
     std::function<QPixmap(const QString &target)> coverFor;
     std::function<QString(const QString &target)> lengthFor;
+    std::function<QString(const QString &target)> channelFor;
     std::function<void(const QString &target)> onPick;
     std::function<void()> onPopOut;
     std::function<void()> onBringBack;
@@ -95,6 +103,7 @@ public:
     std::function<void()> onRestore;       // the mini player was clicked
     std::function<void()> onCloseMini;
     std::function<void(const QPoint &at)> onMiniMoved;   // dragged there
+    std::function<void(const QSize &size)> onMiniResized;
 
 protected:
     void resizeEvent(QResizeEvent *) override;
@@ -117,7 +126,8 @@ private:
     QWidget *m_miniWindow;
     QWidget *m_corners;
     QGridLayout *m_grid;
-    QScrollArea *m_infoScroll;
+    QScrollArea *m_page;
+    QWidget *m_content;
     int m_under = 0;            // the height under the player, the description closed
     QWidget *m_info;
     QWidget *m_side;

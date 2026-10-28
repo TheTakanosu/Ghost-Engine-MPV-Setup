@@ -32,6 +32,7 @@ CoverResolver::CoverResolver(QObject *parent) : QObject(parent)
     QDir().mkpath(dir);
     m_file = dir + QStringLiteral("/cover-ids.tsv");
     m_durationFile = dir + QStringLiteral("/durations.tsv");
+    m_channelFile = dir + QStringLiteral("/channels.tsv");
 
     // query <TAB> id [<TAB> seconds]; an empty id is a search that found nothing.
     QFile file(m_file);
@@ -60,6 +61,35 @@ CoverResolver::CoverResolver(QObject *parent) : QObject(parent)
                 m_durations.insert(parts[0], parts[1].toInt());
         }
     }
+    // id <TAB> channel name.
+    QFile channels(m_channelFile);
+    if (channels.open(QIODevice::ReadOnly)) {
+        QTextStream in(&channels);
+        in.setEncoding(QStringConverter::Utf8);
+        while (!in.atEnd()) {
+            const QStringList parts = in.readLine().split('\t');
+            if (parts.size() == 2 && !parts[1].isEmpty())
+                m_channels.insert(parts[0], parts[1]);
+        }
+    }
+}
+
+void CoverResolver::rememberChannel(const QString &id, const QString &channel)
+{
+    const QString name = channel.trimmed();
+    if (id.isEmpty() || name.isEmpty() || name == QStringLiteral("NA") || m_channels.value(id) == name)
+        return;
+    m_channels.insert(id, name);
+    appendLine(m_channelFile, id + '\t' + QString(name).replace('\t', ' '));
+}
+
+void CoverResolver::requestChannel(const QString &id)
+{
+    if (id.isEmpty() || m_channels.contains(id) || m_lengthAsked.contains(id))
+        return;
+    m_lengthAsked.insert(id);
+    m_queue.enqueue(QStringLiteral("id:") + id);
+    startNext();
 }
 
 QString CoverResolver::idFor(const QString &query)
@@ -98,25 +128,32 @@ void CoverResolver::startNext()
     while (m_running < kParallel && !m_queue.isEmpty()) {
         const QString query = m_queue.dequeue();
         auto *process = new QProcess(this);
+        // Python's own output encoding, so channel names keep their letters.
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("PYTHONIOENCODING", "utf-8");
+        env.insert("PYTHONUTF8", "1");
+        process->setProcessEnvironment(env);
         ++m_running;
         connect(process, &QProcess::finished, this, [this, process, query] {
-            static const QRegularExpression line(QStringLiteral(R"(^([A-Za-z0-9_-]{11})\s+(\S*)$)"));
+            // id <TAB> seconds <TAB> channel
+            static const QRegularExpression line(QStringLiteral(R"(^([A-Za-z0-9_-]{11})\t([^\t]*)(?:\t(.*))?$)"));
             // Several lines for an id search: keep the one that is that video.
             const QString wanted = query.startsWith(QStringLiteral("id:")) ? query.mid(3) : QString();
             QRegularExpressionMatch m;
             for (const QString &out : QString::fromUtf8(process->readAllStandardOutput()).split('\n')) {
-                m = line.match(out.trimmed());
+                m = line.match(QString(out).remove('\r'));
                 if (m.hasMatch() && (wanted.isEmpty() || m.captured(1) == wanted))
                     break;
                 m = QRegularExpressionMatch();
             }
             const QString id = m.hasMatch() ? m.captured(1) : QString();
             const int seconds = m.hasMatch() ? int(m.captured(2).toDouble()) : 0;
+            rememberChannel(id, m.hasMatch() ? m.captured(3) : QString());
             process->deleteLater();
             --m_running;
             if (query.startsWith(QStringLiteral("id:"))) {
                 rememberDuration(id, seconds);
-                if (seconds > 0)
+                if (seconds > 0 || !m_channels.value(id).isEmpty())
                     emit resolved(QString(), id);
             } else {
                 remember(query, id, seconds);
@@ -131,11 +168,11 @@ void CoverResolver::startNext()
         // looking for ffmpeg (a broken ffmpeg.exe beside it popped up a
         // Windows error box per song).
         if (query.startsWith(QStringLiteral("id:")))
-            process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "%(id)s %(duration)s",
-                                     "ytsearch3:" + query.mid(3)});
+            process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--encoding", "utf-8",
+                                     "--print", "%(id)s\t%(duration)s\t%(channel)s", "ytsearch3:" + query.mid(3)});
         else
-            process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--print", "%(id)s %(duration)s",
-                                     "ytsearch1:" + query});
+            process->start(m_ytdlp, {"--no-warnings", "--flat-playlist", "--encoding", "utf-8",
+                                     "--print", "%(id)s\t%(duration)s\t%(channel)s", "ytsearch1:" + query});
     }
 }
 

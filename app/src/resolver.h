@@ -27,6 +27,11 @@ public:
     void rememberDuration(const QString &id, int seconds);
     // Looks a known video's length up (once a session) when nobody has.
     void requestDuration(const QString &id);
+    // The channel a video is from, or empty until it has been looked up
+    // (the same search as its length gives it).
+    QString channelFor(const QString &id) const { return m_channels.value(id); }
+    void rememberChannel(const QString &id, const QString &channel);
+    void requestChannel(const QString &id);
 
 signals:
     void resolved(const QString &query, const QString &id);
@@ -38,6 +43,8 @@ private:
     QString m_ytdlp;
     QString m_file;
     QString m_durationFile;
+    QString m_channelFile;
+    QHash<QString, QString> m_channels;
     QHash<QString, QString> m_ids;
     QHash<QString, int> m_durations;
     QSet<QString> m_known;     // asked already, found or not

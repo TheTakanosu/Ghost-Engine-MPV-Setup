@@ -288,6 +288,13 @@ MainWindow::MainWindow()
     m_videoPage->coverFor = [this](const QString &target) {
         return m_covers.get(idForTarget(target), ThumbnailCache::Size::Card);
     };
+    m_videoPage->channelFor = [this](const QString &target) {
+        const QString id = idForTarget(target);
+        const QString channel = m_resolver.channelFor(id);
+        if (channel.isEmpty())
+            m_resolver.requestChannel(id);
+        return channel;
+    };
     m_videoPage->lengthFor = [this](const QString &target) {
         const QString id = idForTarget(target);
         const int seconds = m_resolver.durationFor(id);
@@ -330,7 +337,21 @@ MainWindow::MainWindow()
     m_videoPage->onToggleMute = [this] { m_mpv.command({"cycle", "mute"}); };
     m_videoPage->onScreenMoved = [this] { schedulePlace(); };
     m_videoPage->onRestore = [this] { showVideoPage(); };
-    m_videoPage->onMiniMoved = [this](const QPoint &at) { m_miniAt = at; };
+    m_videoPage->onMiniMoved = [this](const QPoint &at) {
+        m_miniAt = at;
+        QSettings().setValue("video/miniAt", at);
+    };
+    m_videoPage->onMiniResized = [this](const QSize &size) {
+        // mpv's window follows the mini player's edges as they are dragged.
+        if (m_videoPage->surface() && m_videoPage->miniWindow()->isVisible()) {
+            m_videoPage->surface()->setGeometry(QRect(QPoint(0, 0), size));
+            m_miniWidth = size.width();
+            QSettings().setValue("video/miniWidth", m_miniWidth);
+        }
+    };
+    if (QSettings().contains("video/miniAt"))
+        m_miniAt = QSettings().value("video/miniAt").toPoint();
+    m_miniWidth = QSettings().value("video/miniWidth", 0).toInt();
     m_videoPage->onCloseMini = [this] {
         m_miniClosed = true;
         m_mpv.setProperty("pause", true);
@@ -561,6 +582,11 @@ MainWindow::MainWindow()
             updateVideoPage();
         if (name == "user-data/ghost/audio")
             schedulePlace();
+        if (name == "metadata/by-key/uploader" && !m_mpv.property("user-data/ghost/audio").toBool()) {
+            const QString source = m_mpv.property("user-data/ghost/source").toString();
+            m_resolver.rememberChannel(youtube::videoId(source.isEmpty() ? m_mpv.property("path").toString() : source),
+                                       m_mpv.property("metadata/by-key/uploader").toString());
+        }
         // Over the picture and on the mini player, whichever page is open.
         if (name == "pause")
             m_videoPage->setPaused(m_mpv.property("pause").toBool());
@@ -600,6 +626,7 @@ MainWindow::MainWindow()
                                       static_cast<QAbstractScrollArea *>(m_libraryList),
                                       static_cast<QAbstractScrollArea *>(m_homeScroll)})
         new SmoothScroll(area);
+    new SmoothScroll(m_videoPage->scrollArea());
     m_songs->viewport()->installEventFilter(this);
 
     // Lists added, changed or deleted on disk show up without Refresh.
@@ -1490,6 +1517,13 @@ QWidget *MainWindow::buildPlaylistPage()
     m_cardDelegate = new tiles::VideoCardDelegate([this](const QModelIndex &index) {
         return m_covers.get(idForTarget(index.data(Qt::UserRole).toString()), ThumbnailCache::Size::Hero);
     }, m_songs);
+    m_cardDelegate->channelFor = [this](const QModelIndex &index) {
+        const QString id = idForTarget(index.data(Qt::UserRole).toString());
+        const QString channel = m_resolver.channelFor(id);
+        if (channel.isEmpty())
+            m_resolver.requestChannel(id);
+        return channel;
+    };
     // Scrolling the songs folds the header into a slim bar, as Spotify does:
     // the cover and title shrink over the first 170 px of scrolling.
     connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
@@ -2938,27 +2972,36 @@ void MainWindow::placeSurface()
     const HWND parent = reinterpret_cast<HWND>(mini ? miniWindow->winId() : winId());
     if (GetParent(handle) != parent)
         SetParent(handle, parent);
+    QRect visible;   // of the picture, in the host's coordinates
     if (onPage) {
+        // The page scrolls the picture up and out of view: only what is
+        // inside the page's scrolling area shows.
         QWidget *screen = m_videoPage->screen();
         m_videoPage->setSurfaceCorner(m_videoFull ? 0 : 12);
-        surface->setGeometry(QRect(screen->mapTo(host, QPoint()), screen->size()));
+        const QRect picture(screen->mapTo(host, QPoint()), screen->size());
+        const QRect view(m_videoPage->viewport()->mapTo(host, QPoint()), m_videoPage->viewport()->size());
+        visible = picture & view;
+        surface->setGeometry(picture);
+        m_videoPage->setSurfaceVisibleArea(visible.isEmpty() ? QRect(0, 0, 1, 1) : visible.translated(-picture.topLeft()));
         miniWindow->hide();
     } else if (mini) {
-        // The video's shape, 384 px wide; bottom right of the page until it
-        // is dragged somewhere else.
+        // The video's shape, 384 px wide unless it was resized; bottom right
+        // of the page until it is dragged somewhere else.
         const double aspect = qBound(0.5, m_mpv.property("video-params/aspect").isValid()
                                               ? m_mpv.property("video-params/aspect").toDouble() : 16.0 / 9.0, 2.6);
-        const int w = int(384 * theme::zoom());
+        const int w = m_miniWidth > 0 ? m_miniWidth : int(384 * theme::zoom());
         const QSize size(w, int(w / aspect));
         const QRect pages(m_pages->mapToGlobal(QPoint()), m_pages->size());
         QPoint at = m_miniAt.value_or(QPoint(pages.right() - size.width() - 16, pages.bottom() - size.height() - 16));
         if (const QScreen *screen = QGuiApplication::screenAt(at + QPoint(size.width() / 2, size.height() / 2)); !screen)
             at = QPoint(pages.right() - size.width() - 16, pages.bottom() - size.height() - 16);
-        miniWindow->setGeometry(QRect(at, size));
+        if (!miniWindow->isVisible())
+            miniWindow->setGeometry(QRect(at, size));
         m_videoPage->setSurfaceCorner(0);   // the window's own corners are round
+        m_videoPage->setSurfaceVisibleArea(QRect());
         // Inside the mini window, at its top left. Qt still takes the main
         // window for the parent; the place it gives is the same either way.
-        surface->setGeometry(QRect(QPoint(0, 0), size));
+        surface->setGeometry(QRect(QPoint(0, 0), miniWindow->size()));
         miniWindow->show();
     } else {
         miniWindow->hide();
@@ -2980,16 +3023,16 @@ void MainWindow::placeSurface()
     }
 
     const QRect global(surface->mapToGlobal(QPoint()), surface->size());
-    QWidget *corners = m_videoPage->corners();
-    if (onPage && !m_videoFull) {
-        corners->setGeometry(global);
-        corners->show();
-        corners->raise();
-    } else {
-        corners->hide();
-    }
+    m_videoArea = onPage ? QRect(host->mapToGlobal(visible.topLeft()), visible.size()) : QRect();
+    if (onPage)
+        m_videoPage->placeOverPicture(global, m_videoArea);
+    else
+        m_videoPage->corners()->hide();
+    // The controls sit on the picture's bottom edge, so only while that is
+    // in view.
     QWidget *controls = m_videoPage->controls();
-    if (onPage) {
+    m_barFits = onPage && !m_videoArea.isEmpty() && m_videoArea.bottom() >= global.bottom() - 1;
+    if (m_barFits) {
         const int h = controls->sizeHint().height();
         controls->setGeometry(global.left(), global.bottom() + 1 - h, global.width(), h);
         if (controls->isVisible())
@@ -3009,12 +3052,11 @@ void MainWindow::watchVideoMouse()
     // show while it moves on the picture and go once it has rested, unless
     // the video is paused or a menu of theirs is open.
     QWidget *controls = m_videoPage->controls();
-    if (!m_surfaceOnPage) {
+    if (!m_surfaceOnPage || !m_barFits) {
         controls->hide();
         return;
     }
-    QWidget *surface = m_videoPage->surface();
-    const QRect area(surface->mapToGlobal(QPoint()), surface->size());
+    const QRect area = m_videoArea;
     const QPoint at = QCursor::pos();
     POINT pt;
     GetCursorPos(&pt);

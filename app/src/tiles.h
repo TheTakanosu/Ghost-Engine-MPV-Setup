@@ -111,6 +111,7 @@ public:
     using CoverFor = std::function<QPixmap(const QModelIndex &)>;
 
     VideoCardDelegate(CoverFor coverFor, QObject *parent);
+    std::function<QString(const QModelIndex &)> channelFor;
     void setCardWidth(int width) { m_width = width; }
     QSize cardSize() const;
 

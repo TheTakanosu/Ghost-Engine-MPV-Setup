@@ -213,6 +213,9 @@ private:
     bool m_surfaceOnPage = false;
     bool m_miniClosed = false;      // the mini player was closed for this video
     std::optional<QPoint> m_miniAt; // where it was dragged to
+    int m_miniWidth = 0;            // as it was sized (0: the default)
+    QRect m_videoArea;              // the picture's visible part, global
+    bool m_barFits = false;         // its bottom edge is in view, so the controls can show there
     int m_keepAspect = -1;          // what mpv was last told: its window has the video's shape
     // A video list's page shows its videos as YouTube's grid of cards.
     tiles::VideoCardDelegate *m_cardDelegate = nullptr;
