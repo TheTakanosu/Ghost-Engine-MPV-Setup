@@ -27,7 +27,7 @@ class QPushButton;
 class QSplitter;
 class QStackedWidget;
 class QWidget;
-namespace tiles { class RowDelegate; }
+namespace tiles { class RowDelegate; class VideoCardDelegate; }
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -212,6 +212,15 @@ private:
     int m_videoMouseStill = 0;
     bool m_surfaceOnPage = false;
     bool m_miniClosed = false;      // the mini player was closed for this video
+    std::optional<QPoint> m_miniAt; // where it was dragged to
+    int m_keepAspect = -1;          // what mpv was last told: its window has the video's shape
+    // A video list's page shows its videos as YouTube's grid of cards.
+    tiles::VideoCardDelegate *m_cardDelegate = nullptr;
+    class QStyledItemDelegate *m_rowDelegateSongs = nullptr;
+    QWidget *m_columnsBar = nullptr;
+    bool m_videoGrid = false;
+    void setVideoGrid(bool grid);
+    void fitVideoGrid();
     void setVideoFullScreen(bool full);
     LyricsSource m_lyricsSource;
     OfflineStore m_offline;

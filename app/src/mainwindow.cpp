@@ -22,6 +22,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QGuiApplication>
 #include <QImage>
 #include <QKeyEvent>
 #include <QShortcut>
@@ -45,6 +46,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSet>
+#include <QScreen>
 #include <QSettings>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -328,6 +330,7 @@ MainWindow::MainWindow()
     m_videoPage->onToggleMute = [this] { m_mpv.command({"cycle", "mute"}); };
     m_videoPage->onScreenMoved = [this] { schedulePlace(); };
     m_videoPage->onRestore = [this] { showVideoPage(); };
+    m_videoPage->onMiniMoved = [this](const QPoint &at) { m_miniAt = at; };
     m_videoPage->onCloseMini = [this] {
         m_miniClosed = true;
         m_mpv.setProperty("pause", true);
@@ -638,6 +641,7 @@ MainWindow::MainWindow()
             return;
         }
         m_mpvEmbedded = m_launching.isValid() && m_launchEmbedded;
+        m_keepAspect = -1;
         sendWindowChoice();
         m_launching.invalidate();
         // A Play pressed while mpv was starting goes to it now.
@@ -1434,6 +1438,7 @@ QWidget *MainWindow::buildPlaylistPage()
     // sorts by itself, as in Spotify: once up, once down, a third time back
     // to the list's own order ("#" goes straight back).
     auto *columns = new QWidget;
+    m_columnsBar = columns;
     columns->setObjectName("columns");
     columns->setAttribute(Qt::WA_StyledBackground);
     auto *colRow = new QHBoxLayout(columns);
@@ -1478,9 +1483,13 @@ QWidget *MainWindow::buildPlaylistPage()
     m_songs->setMouseTracking(true);
     m_songs->setUniformItemSizes(true);
     m_songs->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    m_songs->setItemDelegate(new tiles::SongDelegate([this](const QModelIndex &index) {
+    m_rowDelegateSongs = new tiles::SongDelegate([this](const QModelIndex &index) {
         return m_covers.get(idForTarget(index.data(Qt::UserRole).toString()), ThumbnailCache::Size::Card);
-    }, m_songs));
+    }, m_songs);
+    m_songs->setItemDelegate(m_rowDelegateSongs);
+    m_cardDelegate = new tiles::VideoCardDelegate([this](const QModelIndex &index) {
+        return m_covers.get(idForTarget(index.data(Qt::UserRole).toString()), ThumbnailCache::Size::Hero);
+    }, m_songs);
     // Scrolling the songs folds the header into a slim bar, as Spotify does:
     // the cover and title shrink over the first 170 px of scrolling.
     connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
@@ -1796,7 +1805,19 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         const qreal addedLeft = m_songs->viewport()->width() - 4 - 8 - tiles::kDurationColumn - tiles::kAddedColumn;
         m_addedHeader->setVisible(addedLeft - coverRight > 260);
     }
-    if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease) {
+    if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::Resize && m_videoGrid)
+        fitVideoGrid();
+    if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease && m_videoGrid) {
+        // A card is played with one click, as on YouTube.
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        QListWidgetItem *item = m_songs->itemAt(mouse->position().toPoint());
+        if (item && mouse->button() == Qt::LeftButton && !(mouse->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) &&
+            m_open >= 0) {
+            playOpen(m_songs->row(item));
+            return true;
+        }
+    }
+    if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease && !m_videoGrid) {
         auto *mouse = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_songs->itemAt(mouse->position().toPoint());
         if (item && mouse->button() == Qt::LeftButton && mouse->position().x() < 48 && m_open >= 0) {
@@ -2140,6 +2161,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     static_cast<PlaylistHeader *>(m_playlistCover)->setTint(
         QSettings().value("headerColor/" + QFileInfo(p.path).fileName()).value<QColor>());
 
+    setVideoGrid(!p.audio);
     m_songSearch->blockSignals(true);
     m_songSearch->setText(searched);
     m_songSearch->blockSignals(false);
@@ -2299,7 +2321,7 @@ void MainWindow::filterSongs()
     }
     // A drag moves songs in the file, so only where the rows are the file's
     // own order, all of them shown.
-    const bool canDrag = m_sortKey == SortKey::Custom && needle.isEmpty();
+    const bool canDrag = m_sortKey == SortKey::Custom && needle.isEmpty() && !m_videoGrid;
     m_songs->setDragDropMode(canDrag ? QAbstractItemView::InternalMove : QAbstractItemView::NoDragDrop);
 }
 
@@ -2858,6 +2880,36 @@ void MainWindow::showVideoPage()
     schedulePlace();
 }
 
+void MainWindow::setVideoGrid(bool grid)
+{
+    // Videos as cards, YouTube's way; songs as rows, Spotify's.
+    if (grid != m_videoGrid) {
+        m_videoGrid = grid;
+        m_songs->setViewMode(grid ? QListView::IconMode : QListView::ListMode);
+        m_songs->setItemDelegate(grid ? static_cast<QAbstractItemDelegate *>(m_cardDelegate) : m_rowDelegateSongs);
+        m_songs->setMovement(QListView::Static);
+        m_songs->setFlow(grid ? QListView::LeftToRight : QListView::TopToBottom);
+        m_songs->setWrapping(grid);
+        m_songs->setResizeMode(grid ? QListView::Adjust : QListView::Fixed);
+        if (!grid)
+            m_songs->setGridSize(QSize());
+        m_columnsBar->setVisible(!grid);
+    }
+    fitVideoGrid();
+}
+
+void MainWindow::fitVideoGrid()
+{
+    // As many columns as fit at 280 px or more, sharing the width.
+    if (!m_videoGrid)
+        return;
+    const int width = m_songs->viewport()->width() - 4;
+    const int columns = qMax(1, width / int(280 * theme::zoom()));
+    m_cardDelegate->setCardWidth(width / columns);
+    if (m_songs->gridSize() != m_cardDelegate->cardSize())
+        m_songs->setGridSize(m_cardDelegate->cardSize());
+}
+
 bool MainWindow::videoShowing() const
 {
     return m_mpvEmbedded && m_mpv.connected() && !m_videoPoppedOut &&
@@ -2879,35 +2931,69 @@ void MainWindow::placeSurface()
     const bool video = videoShowing() && !isMinimized();
     const bool onPage = video && m_pages->currentWidget() == m_videoPage;
     const bool mini = video && !onPage && !m_miniClosed;
+    QWidget *miniWindow = m_videoPage->miniWindow();
+    // mpv's window goes into the mini player's window and back: the same
+    // window handle, given another parent, so mpv never notices.
+    const HWND handle = reinterpret_cast<HWND>(surface->winId());
+    const HWND parent = reinterpret_cast<HWND>(mini ? miniWindow->winId() : winId());
+    if (GetParent(handle) != parent)
+        SetParent(handle, parent);
     if (onPage) {
         QWidget *screen = m_videoPage->screen();
         m_videoPage->setSurfaceCorner(m_videoFull ? 0 : 12);
         surface->setGeometry(QRect(screen->mapTo(host, QPoint()), screen->size()));
+        miniWindow->hide();
     } else if (mini) {
-        // Bottom right of the page, over whatever it shows there.
-        const QSize size(int(352 * theme::zoom()), int(198 * theme::zoom()));
-        const QRect pages(m_pages->mapTo(host, QPoint()), m_pages->size());
-        m_videoPage->setSurfaceCorner(10);
-        surface->setGeometry(QRect(QPoint(pages.right() - size.width() - 16, pages.bottom() - size.height() - 16), size));
+        // The video's shape, 384 px wide; bottom right of the page until it
+        // is dragged somewhere else.
+        const double aspect = qBound(0.5, m_mpv.property("video-params/aspect").isValid()
+                                              ? m_mpv.property("video-params/aspect").toDouble() : 16.0 / 9.0, 2.6);
+        const int w = int(384 * theme::zoom());
+        const QSize size(w, int(w / aspect));
+        const QRect pages(m_pages->mapToGlobal(QPoint()), m_pages->size());
+        QPoint at = m_miniAt.value_or(QPoint(pages.right() - size.width() - 16, pages.bottom() - size.height() - 16));
+        if (const QScreen *screen = QGuiApplication::screenAt(at + QPoint(size.width() / 2, size.height() / 2)); !screen)
+            at = QPoint(pages.right() - size.width() - 16, pages.bottom() - size.height() - 16);
+        miniWindow->setGeometry(QRect(at, size));
+        m_videoPage->setSurfaceCorner(0);   // the window's own corners are round
+        // Inside the mini window, at its top left. Qt still takes the main
+        // window for the parent; the place it gives is the same either way.
+        surface->setGeometry(QRect(QPoint(0, 0), size));
+        miniWindow->show();
+    } else {
+        miniWindow->hide();
     }
     surface->setVisible(onPage || mini);
     if (onPage || mini)
         surface->raise();
     m_surfaceOnPage = onPage;
 
+    // mpv fills its window when the window already has the video's shape,
+    // so no hairline of black is left at its edges; in full screen it keeps
+    // the shape and draws its black around it.
+    if (m_mpv.connected() && m_mpvEmbedded && (onPage || mini)) {
+        const int keep = onPage && m_videoFull ? 1 : 0;
+        if (keep != m_keepAspect) {
+            m_keepAspect = keep;
+            m_mpv.setProperty("keepaspect", bool(keep));
+        }
+    }
+
     const QRect global(surface->mapToGlobal(QPoint()), surface->size());
-    QWidget *face = m_videoPage->mini();
-    if (mini) {
-        face->setGeometry(global);
-        face->show();
-        face->raise();
+    QWidget *corners = m_videoPage->corners();
+    if (onPage && !m_videoFull) {
+        corners->setGeometry(global);
+        corners->show();
+        corners->raise();
     } else {
-        face->hide();
+        corners->hide();
     }
     QWidget *controls = m_videoPage->controls();
     if (onPage) {
         const int h = controls->sizeHint().height();
         controls->setGeometry(global.left(), global.bottom() + 1 - h, global.width(), h);
+        if (controls->isVisible())
+            controls->raise();
     } else {
         controls->hide();
     }
@@ -2935,7 +3021,8 @@ void MainWindow::watchVideoMouse()
     const HWND top = GetAncestor(WindowFromPoint(pt), GA_ROOT);
     // Not when another program's window is over it.
     const bool over = area.contains(at) &&
-                      (top == reinterpret_cast<HWND>(winId()) || top == reinterpret_cast<HWND>(controls->winId()));
+                      (top == reinterpret_cast<HWND>(winId()) || top == reinterpret_cast<HWND>(controls->winId()) ||
+                       top == reinterpret_cast<HWND>(m_videoPage->corners()->winId()));
     if (at != m_lastVideoMouse) {
         m_lastVideoMouse = at;
         m_videoMouseStill = 0;

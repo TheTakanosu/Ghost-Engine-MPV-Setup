@@ -7,7 +7,9 @@
 #include <QWidget>
 #include <functional>
 
+class QGridLayout;
 class QLabel;
+class QScrollArea;
 class QListWidget;
 class QPushButton;
 class QSlider;
@@ -36,9 +38,13 @@ public:
     void setSurfaceCorner(int radius);
     // Where the picture goes on this page.
     QWidget *screen() const { return m_screen; }
-    // The see-through bar of controls laid over the picture, and the mini
-    // player's buttons: windows of their own, owned by the main window.
+    // The see-through bar of controls laid over the picture, the page-coloured
+    // corners laid over its square ones (a window region cannot be smoothed),
+    // and the mini player: a small window of its own that the surface moves
+    // into, with its buttons on top. All owned by the main window.
     QWidget *controls() const { return m_controls; }
+    QWidget *corners() const { return m_corners; }
+    QWidget *miniWindow() const { return m_miniWindow; }
     QWidget *mini() const { return m_mini; }
     void setOwner(QWidget *window);
 
@@ -88,6 +94,7 @@ public:
     std::function<void()> onScreenMoved;   // screen() moved or changed size
     std::function<void()> onRestore;       // the mini player was clicked
     std::function<void()> onCloseMini;
+    std::function<void(const QPoint &at)> onMiniMoved;   // dragged there
 
 protected:
     void resizeEvent(QResizeEvent *) override;
@@ -99,6 +106,7 @@ private:
     QWidget *buildControls();
     QWidget *buildMini();
     void setExpanded(bool expanded);
+    void arrange();
 
     QWidget *m_surface = nullptr;
     QWidget *m_screen;          // the picture's place, under the surface
@@ -106,6 +114,11 @@ private:
     QWidget *m_player;          // holds the screen, centred at the picture's shape
     QWidget *m_controls;
     QWidget *m_mini;
+    QWidget *m_miniWindow;
+    QWidget *m_corners;
+    QGridLayout *m_grid;
+    QScrollArea *m_infoScroll;
+    int m_under = 0;            // the height under the player, the description closed
     QWidget *m_info;
     QWidget *m_side;
     QLabel *m_title;

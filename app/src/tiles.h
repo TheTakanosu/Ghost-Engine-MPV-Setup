@@ -103,4 +103,24 @@ private:
     CoverFor m_coverFor;
 };
 
+// A video in a video list's page, as a card in YouTube's grid: the
+// thumbnail with its length on it, the title on up to two lines, then who
+// made it and when it was added.
+class VideoCardDelegate : public QStyledItemDelegate {
+public:
+    using CoverFor = std::function<QPixmap(const QModelIndex &)>;
+
+    VideoCardDelegate(CoverFor coverFor, QObject *parent);
+    void setCardWidth(int width) { m_width = width; }
+    QSize cardSize() const;
+
+    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override;
+
+private:
+    CoverFor m_coverFor;
+    int m_width = 300;
+};
+
 } // namespace tiles

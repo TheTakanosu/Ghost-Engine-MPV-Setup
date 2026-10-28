@@ -308,4 +308,96 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     painter->restore();
 }
 
+VideoCardDelegate::VideoCardDelegate(CoverFor coverFor, QObject *parent)
+    : QStyledItemDelegate(parent), m_coverFor(std::move(coverFor))
+{
+}
+
+QSize VideoCardDelegate::cardSize() const
+{
+    // The thumbnail at 16:9, then room for two lines of title and one more.
+    const int text = int(78 * theme::zoom());
+    return {m_width, m_width * 9 / 16 + text};
+}
+
+QSize VideoCardDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
+{
+    return cardSize();
+}
+
+void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
+                              const QModelIndex &index) const
+{
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    const QRectF card = QRectF(option.rect).adjusted(8, 8, -8, -4);
+    const bool selected = option.state & QStyle::State_Selected;
+    const bool hover = option.state & QStyle::State_MouseOver;
+    const bool playing = index.data(kPlayingRole).toBool();
+    if (selected || hover) {
+        QPainterPath bg;
+        bg.addRoundedRect(card.adjusted(-6, -6, 6, 2), 14, 14);
+        painter->fillPath(bg, selected ? theme::cardSelected() : theme::cardHover());
+    }
+    const QRectF thumb(card.left(), card.top(), card.width(), card.width() * 9 / 16);
+    paintCover(*painter, thumb, m_coverFor ? m_coverFor(index) : QPixmap(), index.data(Qt::DisplayRole).toString(), 12);
+    if (playing) {
+        QPainterPath ring;
+        ring.addRoundedRect(thumb.adjusted(1, 1, -1, -1), 12, 12);
+        painter->setPen(QPen(theme::accent(), 3));
+        painter->drawPath(ring);
+    }
+
+    QFont small = option.font;
+    small.setPointSizeF(small.pointSizeF() * 0.85);
+    small.setWeight(QFont::DemiBold);
+    const QString length = index.data(kDurationRole).toString();
+    if (!length.isEmpty() || playing) {
+        const QString badgeText = playing ? QStringLiteral("Now playing") : length;
+        const QFontMetricsF fm(small);
+        const QRectF badge(thumb.right() - fm.horizontalAdvance(badgeText) - 16, thumb.bottom() - fm.height() - 10,
+                           fm.horizontalAdvance(badgeText) + 10, fm.height() + 4);
+        QPainterPath b;
+        b.addRoundedRect(badge, 5, 5);
+        painter->fillPath(b, playing ? theme::accent() : QColor(0, 0, 0, 200));
+        painter->setFont(small);
+        painter->setPen(playing ? theme::accentText() : Qt::white);
+        painter->drawText(badge, Qt::AlignCenter, badgeText);
+    }
+
+    QFont title = option.font;
+    title.setPointSizeF(title.pointSizeF() * 1.05);
+    title.setWeight(QFont::DemiBold);
+    const QFontMetricsF tm(title);
+    const QRectF titleBox(card.left() + 2, thumb.bottom() + 8, card.width() - 4, tm.lineSpacing() * 2);
+    painter->setFont(title);
+    painter->setPen(playing ? theme::accent() : theme::text());
+    // Two lines at most, the second cut with an ellipsis.
+    QString text = index.data(Qt::DisplayRole).toString();
+    const QString artist = index.data(kArtistRole).toString();
+    if (!artist.isEmpty())
+        text = artist + QStringLiteral(" - ") + text;
+    int fit = 0;
+    for (int i = text.size(); i > 0; --i)
+        if (tm.horizontalAdvance(text.left(i)) <= titleBox.width()) { fit = i; break; }
+    int cut = fit < text.size() ? int(text.left(fit).lastIndexOf(' ')) : fit;
+    if (cut <= 0)
+        cut = fit;
+    painter->drawText(QRectF(titleBox.left(), titleBox.top(), titleBox.width(), tm.lineSpacing()),
+                      Qt::AlignLeft | Qt::AlignVCenter, text.left(cut).trimmed());
+    if (cut < text.size())
+        painter->drawText(QRectF(titleBox.left(), titleBox.top() + tm.lineSpacing(), titleBox.width(), tm.lineSpacing()),
+                          Qt::AlignLeft | Qt::AlignVCenter,
+                          tm.elidedText(text.mid(cut).trimmed(), Qt::ElideRight, titleBox.width()));
+
+    painter->setFont(small);
+    painter->setPen(QColor(154, 152, 166));
+    QString under = index.data(kAddedRole).toString();
+    if (index.data(kOfflineRole).toBool())
+        under = QStringLiteral("Downloaded  ·  ") + under;
+    painter->drawText(QRectF(titleBox.left(), titleBox.bottom() + 2, titleBox.width(), QFontMetricsF(small).lineSpacing()),
+                      Qt::AlignLeft | Qt::AlignVCenter, under);
+    painter->restore();
+}
+
 } // namespace tiles

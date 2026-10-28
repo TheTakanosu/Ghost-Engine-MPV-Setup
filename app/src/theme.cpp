@@ -133,12 +133,16 @@ void apply(QApplication &app)
                                   min-height: 32px; max-height: 32px; color: rgb(236,236,241); font-family: "Segoe UI", "Segoe Fluent Icons"; }
         QPushButton#videoAction:hover { background: rgb(56,54,70); }
         QPushButton#videoControl { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: transparent; border: none;
-                                   color: rgb(236,236,241); font-size: 11pt; min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px; border-radius: 16px; }
-        QPushButton#videoControl:hover, QPushButton#videoTextControl:hover { background: rgba(255,255,255,40); color: white; }
+                                   color: rgb(236,236,241); font-size: 9.5pt; min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; border-radius: 14px; }
+        QPushButton#videoControl:hover, QPushButton#videoTextControl:hover { background: rgba(255,255,255,26); color: white; }
         QPushButton#videoTextControl { background: transparent; border: none; color: rgb(236,236,241); font-weight: 600;
-                                       min-height: 32px; max-height: 32px; padding: 0 9px; border-radius: 16px; }
+                                       min-height: 28px; max-height: 28px; padding: 0 7px; border-radius: 14px; }
+        QPushButton#miniControl { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: transparent; border: none;
+                                  color: white; font-size: 8pt; min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px; border-radius: 12px; }
+        QPushButton#miniControl:hover { background: rgba(255,255,255,30); }
+        QScrollArea#videoInfo { background: transparent; border: none; }
         QLabel#videoTime { color: rgb(236,236,241); font-weight: 600; }
-        QWidget#videoScreen { background: black; border-radius: 12px; }
+        QWidget#videoScreen { background: transparent; }
         QLabel#videoChannel { color: rgb(170,168,182); font-weight: 600; }
         QWidget#videoDescCard { background: rgb(36,35,45); border-radius: 12px; }
         QWidget#videoDescCard:hover { background: rgb(42,41,52); }

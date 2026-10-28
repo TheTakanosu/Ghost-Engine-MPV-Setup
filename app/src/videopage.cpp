@@ -5,6 +5,7 @@
 #include "tiles.h"
 
 #include <QDesktopServices>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLinearGradient>
@@ -15,6 +16,7 @@
 #include <QPainterPath>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QSlider>
 #include <QStyledItemDelegate>
@@ -24,6 +26,7 @@
 #include <QVBoxLayout>
 
 #include <windows.h>
+#include <dwmapi.h>
 
 namespace {
 
@@ -114,7 +117,9 @@ private:
     void clip()
     {
         const qreal dpr = devicePixelRatioF();
-        const int w = int(width() * dpr), h = int(height() * dpr), r = int(2 * m_corner * dpr);
+        // A little tighter than the round the corner mask paints over it, so
+        // the picture reaches under the mask's smooth edge everywhere.
+        const int w = int(width() * dpr), h = int(height() * dpr), r = int(2 * m_corner * 0.6 * dpr);
         SetWindowRgn(reinterpret_cast<HWND>(winId()),
                      r > 0 ? CreateRoundRectRgn(0, 0, w + 1, h + 1, r, r) : CreateRectRgn(0, 0, w, h), TRUE);
         if (parentWidget())
@@ -155,12 +160,85 @@ protected:
     }
 };
 
-// The mini player's face: clicked anywhere, it goes back to the video;
-// with the mouse on it, it darkens and shows its buttons. Never quite
-// clear, or clicks would fall through to mpv.
+// The page's colour over the picture's four corners, cut round with
+// antialiasing: the window region under it can only cut in whole pixels,
+// which left a stair of black dots. Only the corners are part of this
+// window, so clicks everywhere else reach mpv.
+class CornerMask : public Floating {
+public:
+    QColor fill{22, 21, 27};   // the panel the page sits on
+
+    void reshape()
+    {
+        const int r = corner + 2;
+        QRegion corners;
+        corners += QRect(0, 0, r, r);
+        corners += QRect(width() - r, 0, r, r);
+        corners += QRect(0, height() - r, r, r);
+        corners += QRect(width() - r, height() - r, r, r);
+        setMask(corners);
+        update();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *) override { reshape(); }
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath outside;
+        outside.addRect(QRectF(rect()));
+        QPainterPath picture;
+        picture.addRoundedRect(QRectF(rect()), corner, corner);
+        p.fillPath(outside.subtracted(picture), fill);
+    }
+};
+
+// The mini player: a small window of its own, so it can be dragged
+// anywhere on the screen. mpv's surface is moved into it; Windows 11
+// rounds its corners smoothly. Its face, a window of its own on top,
+// moves with it.
+class MiniWindow : public QWidget {
+public:
+    MiniWindow() : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus)
+    {
+        setAttribute(Qt::WA_ShowWithoutActivating);
+        setAutoFillBackground(true);
+        QPalette p = palette();
+        p.setColor(QPalette::Window, Qt::black);
+        setPalette(p);
+    }
+    QWidget *face = nullptr;
+
+protected:
+    void showEvent(QShowEvent *) override
+    {
+        const int round = 2;   // DWMWA_WINDOW_CORNER_PREFERENCE: round
+        DwmSetWindowAttribute(reinterpret_cast<HWND>(winId()), 33, &round, sizeof(round));
+        follow();
+        face->show();
+        face->raise();
+    }
+    void hideEvent(QHideEvent *) override { face->hide(); }
+    void moveEvent(QMoveEvent *) override { follow(); }
+    void resizeEvent(QResizeEvent *) override { follow(); }
+
+private:
+    void follow()
+    {
+        if (face)
+            face->setGeometry(geometry());
+    }
+};
+
+// The mini player's face: clicked, it goes back to the video; dragged, it
+// takes the mini player along; with the mouse on it, it darkens and shows
+// its buttons. Never quite clear, or clicks would fall through to mpv.
 class MiniFace : public Floating {
 public:
     std::function<void()> clicked;
+    std::function<void(const QPoint &)> moved;
+    QWidget *carry = nullptr;   // the mini player's window
     QList<QWidget *> buttons;
 
 protected:
@@ -178,10 +256,35 @@ protected:
     }
     void enterEvent(QEnterEvent *) override { setHot(true); }
     void leaveEvent(QEvent *) override { setHot(false); }
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() != Qt::LeftButton)
+            return;
+        m_press = event->globalPosition().toPoint();
+        m_start = carry ? carry->pos() : pos();
+        m_dragging = false;
+    }
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (!(event->buttons() & Qt::LeftButton) || !carry)
+            return;
+        const QPoint delta = event->globalPosition().toPoint() - m_press;
+        if (!m_dragging && delta.manhattanLength() < 5)
+            return;
+        m_dragging = true;
+        carry->move(m_start + delta);
+    }
     void mouseReleaseEvent(QMouseEvent *event) override
     {
-        if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint()) && clicked)
+        if (event->button() != Qt::LeftButton)
+            return;
+        if (m_dragging) {
+            m_dragging = false;
+            if (moved && carry)
+                moved(carry->pos());
+        } else if (rect().contains(event->position().toPoint()) && clicked) {
             clicked();
+        }
     }
     void resizeEvent(QResizeEvent *) override
     {
@@ -193,6 +296,8 @@ protected:
     }
 
 private:
+    QPoint m_press, m_start;
+    bool m_dragging = false;
     void setHot(bool hot)
     {
         m_hot = hot;
@@ -282,6 +387,15 @@ QPushButton *textButton(const QString &text, const QString &tip)
     return b;
 }
 
+QPushButton *miniButton(const QString &glyph, const QString &tip)
+{
+    auto *b = new QPushButton(glyph);
+    b->setObjectName("miniControl");
+    b->setToolTip(tip);
+    b->setCursor(Qt::PointingHandCursor);
+    return b;
+}
+
 icons::IconButton *iconButton(icons::Icon icon, int size, const QString &tip)
 {
     auto *b = new icons::IconButton(icon, size, tip);
@@ -325,6 +439,7 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
 
     m_controls = buildControls();
     m_mini = buildMini();
+    m_corners = new CornerMask;
 
     m_title = new QLabel;
     m_title->setObjectName("videoTitle");
@@ -392,11 +507,21 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     info->addSpacing(6);
     info->addWidget(m_card);
 
-    auto *left = new QVBoxLayout;
-    left->setSpacing(0);
-    left->addWidget(m_player);
-    left->addWidget(m_info);
-    left->addStretch();
+    // Under the player, the title and description scroll on their own: the
+    // picture stays where it is while a long description is read.
+    auto *infoPage = new QWidget;
+    auto *infoBox = new QVBoxLayout(infoPage);
+    infoBox->setContentsMargins(0, 0, 0, 0);
+    infoBox->addWidget(m_info);
+    infoBox->addStretch();
+    m_infoScroll = new QScrollArea;
+    m_infoScroll->setObjectName("videoInfo");
+    m_infoScroll->setWidget(infoPage);
+    m_infoScroll->setWidgetResizable(true);
+    m_infoScroll->setFrameShape(QFrame::NoFrame);
+    m_infoScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_infoScroll->viewport()->setAutoFillBackground(false);
+    infoPage->setAutoFillBackground(false);
 
     m_listName = new QLabel;
     m_listName->setObjectName("sectionTitle");
@@ -420,11 +545,30 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     side->addWidget(m_listName);
     side->addWidget(m_list, 1);
 
-    auto *box = new QHBoxLayout(this);
-    box->setContentsMargins(24, 20, 20, 12);
-    box->setSpacing(20);
-    box->addLayout(left, 1);
-    box->addWidget(m_side);
+    m_grid = new QGridLayout(this);
+    m_grid->setContentsMargins(24, 20, 20, 12);
+    m_grid->setHorizontalSpacing(20);
+    m_grid->setVerticalSpacing(0);
+    m_grid->setColumnStretch(0, 1);
+    m_grid->setRowStretch(1, 1);
+    arrange();
+}
+
+void VideoPage::arrange()
+{
+    // Beside the player, the list runs down the right. In the cinema the
+    // player takes the whole width and the list sits under it, beside the
+    // description, as in YouTube's theatre mode.
+    for (QWidget *w : {m_player, static_cast<QWidget *>(m_infoScroll), m_side})
+        m_grid->removeWidget(w);
+    const bool wide = m_cinema || m_full;
+    m_grid->addWidget(m_player, 0, 0, 1, wide ? 2 : 1);
+    m_grid->addWidget(m_infoScroll, 1, 0);
+    if (wide)
+        m_grid->addWidget(m_side, 1, 1);
+    else
+        m_grid->addWidget(m_side, 0, 1, 2, 1);
+    m_side->layout()->setContentsMargins(0, wide ? 14 : 0, 0, 0);
 }
 
 void VideoPage::attachSurface(QWidget *host)
@@ -436,16 +580,21 @@ void VideoPage::attachSurface(QWidget *host)
 void VideoPage::setSurfaceCorner(int radius)
 {
     static_cast<Surface *>(m_surface)->setCorner(radius);
-    for (QWidget *w : {m_controls, m_mini}) {
-        static_cast<Floating *>(w)->corner = radius;
-        w->update();
+    static_cast<Floating *>(m_controls)->corner = radius;
+    m_controls->update();
+    auto *corners = static_cast<CornerMask *>(m_corners);
+    if (corners->corner != radius) {
+        corners->corner = radius;
+        corners->reshape();
     }
 }
 
 void VideoPage::setOwner(QWidget *window)
 {
-    for (QWidget *w : {m_controls, m_mini})
+    for (QWidget *w : {m_controls, m_corners, m_miniWindow})
         w->setParent(window, w->windowFlags());
+    // The face over the mini player belongs to it, so it stays on top of it.
+    m_mini->setParent(m_miniWindow, m_mini->windowFlags());
 }
 
 QWidget *VideoPage::buildControls()
@@ -545,6 +694,7 @@ QWidget *VideoPage::buildControls()
         menu.exec(m_speed->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
     });
     auto *full = glyphButton(QString(QChar(0xE740)), "Full screen (F)");
+    full->setStyleSheet(QStringLiteral("font-size: 8pt;"));   // this glyph draws larger than the rest
     connect(full, &QPushButton::clicked, this, [this] { if (onFullScreen) onFullScreen(); });
 
     auto *row = new QHBoxLayout;
@@ -575,16 +725,21 @@ QWidget *VideoPage::buildControls()
 
 QWidget *VideoPage::buildMini()
 {
+    auto *window = new MiniWindow;
+    m_miniWindow = window;
     auto *face = new MiniFace;
-    face->corner = 10;
+    face->corner = 8;
+    face->carry = window;
+    window->face = face;
     face->clicked = [this] { if (onRestore) onRestore(); };
-    m_miniPlay = new icons::IconButton(icons::Icon::Pause, 48, "Play / pause", face);
+    face->moved = [this](const QPoint &at) { if (onMiniMoved) onMiniMoved(at); };
+    m_miniPlay = new icons::IconButton(icons::Icon::Pause, 40, "Play / pause", face);
     m_miniPlay->setRound(QColor(255, 255, 255, 230), Qt::white, QColor(16, 15, 20));
     connect(m_miniPlay, &QAbstractButton::clicked, this, [this] { if (onTogglePause) onTogglePause(); });
-    auto *expand = glyphButton(QString(QChar(0xE740)), "Back to the video");
+    auto *expand = miniButton(QString(QChar(0xE740)), "Back to the video");
     expand->setParent(face);
     connect(expand, &QPushButton::clicked, this, [this] { if (onRestore) onRestore(); });
-    auto *close = glyphButton(QString(QChar(0xE8BB)), "Close (pauses the video)");
+    auto *close = miniButton(QString(QChar(0xE8BB)), "Close (pauses the video)");
     close->setParent(face);
     connect(close, &QPushButton::clicked, this, [this] { if (onCloseMini) onCloseMini(); });
     face->buttons = {m_miniPlay, expand, close};
@@ -638,9 +793,12 @@ void VideoPage::setExpanded(bool expanded)
     const int collapsed = m_description->fontMetrics().lineSpacing() * kCollapsedLines + 2;
     m_description->document()->setTextWidth(m_description->viewport()->width());
     const int whole = int(m_description->document()->size().height()) + 2;
-    m_description->setFixedHeight(expanded ? qMin(whole, 300) : qMin(whole, collapsed));
-    m_description->setVerticalScrollBarPolicy(expanded ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    // Open, all of it shows, and the area under the player scrolls instead.
+    m_description->setFixedHeight(expanded ? whole : qMin(whole, collapsed));
+    m_description->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_description->verticalScrollBar()->setValue(0);
+    if (!expanded)
+        m_infoScroll->verticalScrollBar()->setValue(0);
     m_more->setText(expanded ? QStringLiteral("Show less") : QStringLiteral("...more"));
     m_more->setVisible(expanded || whole > collapsed);
     m_card->setCursor(expanded ? Qt::ArrowCursor : Qt::PointingHandCursor);
@@ -722,10 +880,10 @@ void VideoPage::setFullScreen(bool full)
 void VideoPage::setCinema(bool cinema)
 {
     m_cinema = cinema;
-    const bool bare = m_full || m_cinema;
-    m_info->setVisible(!bare);
-    m_side->setVisible(!bare);
-    layout()->setContentsMargins(m_full ? QMargins() : m_cinema ? QMargins(16, 12, 16, 12) : QMargins(24, 20, 20, 12));
+    m_infoScroll->setVisible(!m_full);
+    m_side->setVisible(!m_full);
+    arrange();
+    m_grid->setContentsMargins(m_full ? QMargins() : m_cinema ? QMargins(16, 14, 16, 12) : QMargins(24, 20, 20, 12));
     fitPlayer();
 }
 
@@ -781,12 +939,16 @@ void VideoPage::fitPlayer()
 {
     // Full screen and cinema: the page's whole height. Otherwise 16:9 for
     // the width there is, short enough to leave the title in view.
-    const QMargins m = layout()->contentsMargins();
-    if (m_full || m_cinema) {
+    const QMargins m = m_grid->contentsMargins();
+    if (m_full) {
         m_player->setFixedHeight(qMax(180, height() - m.top() - m.bottom()));
         return;
     }
-    const int width = this->width() - kSideWidth - m.left() - m.right() - 20;
-    const int under = m_info->sizeHint().height();
+    // What is under the player counts with the description closed: opening
+    // it scrolls the area under the player rather than shrinking the video.
+    if (!m_expanded)
+        m_under = m_info->sizeHint().height();
+    const int width = this->width() - m.left() - m.right() - (m_cinema ? 0 : kSideWidth + 20);
+    const int under = qMax(m_under, m_cinema ? 170 : 0);
     m_player->setFixedHeight(qMax(180, qMin(width * 9 / 16, height() - under - m.top() - m.bottom())));
 }
