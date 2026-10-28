@@ -2,7 +2,9 @@
 
 #include <QApplication>
 #include <QEvent>
+#include <QComboBox>
 #include <QMenu>
+#include <QStyledItemDelegate>
 #include <QFont>
 #include <QPalette>
 #include <QProxyStyle>
@@ -61,12 +63,22 @@ public:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
-        if (event->type() == QEvent::Polish)
-            if (auto *menu = qobject_cast<QMenu *>(watched)) {
-                menu->setWindowFlag(Qt::FramelessWindowHint);
-                menu->setWindowFlag(Qt::NoDropShadowWindowHint);
-                menu->setAttribute(Qt::WA_TranslucentBackground);
-            }
+        if (event->type() != QEvent::Polish)
+            return false;
+        if (auto *menu = qobject_cast<QMenu *>(watched)) {
+            menu->setWindowFlag(Qt::FramelessWindowHint);
+            menu->setWindowFlag(Qt::NoDropShadowWindowHint);
+            menu->setAttribute(Qt::WA_TranslucentBackground);
+        } else if (auto *combo = qobject_cast<QComboBox *>(watched)) {
+            // Qt's own combo delegate ignores the item rules above.
+            if (!qobject_cast<QStyledItemDelegate *>(combo->itemDelegate()))
+                combo->setItemDelegate(new QStyledItemDelegate(combo));
+        } else if (watched->inherits("QComboBoxPrivateContainer")) {
+            auto *box = static_cast<QWidget *>(watched);
+            box->setWindowFlag(Qt::FramelessWindowHint);
+            box->setWindowFlag(Qt::NoDropShadowWindowHint);
+            box->setAttribute(Qt::WA_TranslucentBackground);
+        }
         return false;
     }
 };
@@ -121,7 +133,11 @@ void apply(QApplication &app)
         QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 26px; border: none; background: transparent; }
         QComboBox::down-arrow { image: url(:/assets/chevron-down.png); width: 12px; height: 12px; }
         QComboBox:hover { border-color: rgb(176,127,224); }
-        QComboBox QAbstractItemView { background: rgb(33,32,41); border: 1px solid rgb(52,50,64); selection-background-color: rgb(60,48,84); outline: none; padding: 4px; }
+        QComboBox QAbstractItemView { background: rgb(33,32,41); border: 1px solid rgb(52,50,64); border-radius: 8px;
+                                      outline: none; padding: 4px; }
+        QComboBox QAbstractItemView::item { padding: 6px 14px; border-radius: 6px; color: rgb(236,236,241); min-height: 20px; }
+        QComboBox QAbstractItemView::item:selected, QComboBox QAbstractItemView::item:hover { background: rgb(60,48,84); }
+        QComboBoxPrivateContainer { background: transparent; border: none; }
         QLabel#toast { background: rgb(236,236,241); color: rgb(24,18,34); border-radius: 16px; font-weight: 600; }
         QPushButton#columnButton, QPushButton#clockHeader {
             background: transparent; border: none; padding: 0; color: rgb(154,152,166); font-size: 9pt; text-align: left;

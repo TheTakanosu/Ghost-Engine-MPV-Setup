@@ -1549,10 +1549,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         QPainter p(w);
         const bool active = m_sortKey == SortKey::Duration;
         const QColor ink = active || w->underMouse() ? QColor(236, 236, 241) : theme::muted();
-        icons::paint(p, icons::Icon::Clock, QRectF(w->width() - 16, 1, 16, 16), ink);
+        // The lengths are right-aligned a little in from this edge; the
+        // clock sits over the middle of a "3:16".
+        icons::paint(p, icons::Icon::Clock, QRectF(w->width() - 25, 1, 16, 16), ink);
         if (active) {
             p.setPen(theme::accent());
-            p.drawText(QRectF(0, 0, w->width() - 22, w->height()), Qt::AlignRight | Qt::AlignVCenter,
+            p.drawText(QRectF(0, 0, w->width() - 31, w->height()), Qt::AlignRight | Qt::AlignVCenter,
                        m_sortDescending ? QStringLiteral("▾") : QStringLiteral("▴"));
         }
         return true;

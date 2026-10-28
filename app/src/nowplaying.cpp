@@ -179,9 +179,12 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     right->addWidget(m_volume);
     m_volumeNumber = new QLabel;
     m_volumeNumber->setObjectName("npVolume");
-    m_volumeNumber->setFixedWidth(38);
+    m_volumeNumber->setFixedWidth(46);
+    m_volumeNumber->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    // Bold digits sit low in their line; two pixels up centres them on the bar.
+    m_volumeNumber->setContentsMargins(8, 0, 0, 2);
     m_volumeNumber->setVisible(false);
-    right->addWidget(m_volumeNumber);
+    right->addWidget(m_volumeNumber, 0, Qt::AlignVCenter);
     connect(m_volume, &QSlider::valueChanged, this, [this](int v) {
         m_volumeNumber->setText(QStringLiteral("%1%").arg(v));
         static_cast<SpeakerIcon *>(m_speaker)->setLevel(v, m_mpv->property("mute").toBool());
