@@ -148,6 +148,12 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     right->addStretch();
     right->addWidget(new SpeakerIcon);
     right->addWidget(m_volume);
+    m_volumeNumber = new QLabel;
+    m_volumeNumber->setObjectName("npTime");
+    m_volumeNumber->setFixedWidth(38);
+    m_volumeNumber->setVisible(false);
+    right->addWidget(m_volumeNumber);
+    connect(m_volume, &QSlider::valueChanged, this, [this](int v) { m_volumeNumber->setText(QStringLiteral("%1%").arg(v)); });
 
     // Equal side columns keep the controls on the window's centre line,
     // whatever the title on the left is.
@@ -236,6 +242,12 @@ void NowPlayingBar::showIdle()
     m_shuffled = false;
     showShuffle();
     showRepeat();
+}
+
+void NowPlayingBar::setVolumeNumber(bool shown)
+{
+    m_volumeNumber->setText(QStringLiteral("%1%").arg(m_volume->value()));
+    m_volumeNumber->setVisible(shown);
 }
 
 void NowPlayingBar::refreshPosition()

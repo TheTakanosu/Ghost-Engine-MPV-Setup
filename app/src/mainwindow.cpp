@@ -1,6 +1,7 @@
 ﻿#include "mainwindow.h"
 
 #include "covercrop.h"
+#include "settings.h"
 #include "icons.h"
 #include "nowplaying.h"
 #include "theme.h"
@@ -241,7 +242,8 @@ protected:
         const QRect c = coverRect();
         for (int i = 1; i <= 6; ++i) {
             QPainterPath shadow;
-            shadow.addRoundedRect(QRectF(c).adjusted(-i, -i + 4, i, i + 4), 10 + i, 10 + i);
+            const qreal round = tiles::playlistRadius(QRectF(c), 10) + i;
+            shadow.addRoundedRect(QRectF(c).adjusted(-i, -i + 4, i, i + 4), round, round);
             p.fillPath(shadow, QColor(0, 0, 0, 14));
         }
         tiles::paintCollage(p, c, covers, m_name, 10);
@@ -273,6 +275,8 @@ MainWindow::MainWindow()
     m_pages = new QStackedWidget;
     m_pages->addWidget(buildHome());
     m_pages->addWidget(buildPlaylistPage());
+    m_settings = new SettingsPage;
+    m_pages->addWidget(m_settings);
 
     auto *mainPanel = new QWidget;
     mainPanel->setObjectName("panel");
@@ -294,6 +298,18 @@ MainWindow::MainWindow()
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
+    m_settings->onLookChanged = [this] { applyLook(); };
+    m_settings->onVideoFormatChanged = [this](const QString &format) {
+        // From the next video; a song list sets its own format as it opens.
+        if (m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool())
+            m_mpv.setProperty("ytdl-format", format);
+    };
+    m_settings->onPlayerWindowChanged = [this](bool shown) {
+        sendWindowChoice();
+        // A song list playing now shows or hides its window at once.
+        if (m_mpv.connected() && m_mpv.property("user-data/ghost/audio").toBool())
+            m_mpv.setProperty("force-window", shown ? "yes" : "no");
+    };
     m_nowPlaying->numberFor = [this] {
         // The number the song has where it is shown: its row in the open
         // list when that is the one playing, else its place in the file.
@@ -396,6 +412,11 @@ MainWindow::MainWindow()
     if (!qFuzzyCompare(savedZoom, 1.0))
         QTimer::singleShot(0, this, [this, savedZoom] { changeZoom(savedZoom - theme::zoom()); });
 
+    applyLook();
+    connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
+        if (on)
+            sendWindowChoice();
+    });
     for (const QString &folder : QSettings().value("library/openFolders").toStringList())
         m_openFolders.insert(folder);
     if (QSettings().value("library/dense").toBool())
@@ -407,6 +428,11 @@ MainWindow::MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (!QSettings().value("player/window", true).toBool() && m_mpv.connected() &&
+        m_mpv.property("user-data/ghost/audio").toBool()) {
+        m_mpv.command({"quit"});
+        m_mpv.flush();
+    }
     QSettings settings;
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/split", m_split->saveState());
@@ -484,6 +510,8 @@ QWidget *MainWindow::buildTopBar()
     auto *minimize = glyphButton(kIconMin, "Minimize", "chrome");
     m_maxButton = glyphButton(kIconMax, "Maximize", "chrome");
     auto *close = glyphButton(kIconClose, "Close", "chromeClose");
+    auto *gear = glyphButton(QChar(0xE713), "Settings", "pill");
+    connect(gear, &QPushButton::clicked, this, &MainWindow::showSettings);
     connect(minimize, &QPushButton::clicked, this, &MainWindow::showMinimized);
     // Through Windows itself rather than Qt's showMaximized(): Qt resizes a
     // frameless window to the screen, so Windows took the full size for the
@@ -493,7 +521,7 @@ QWidget *MainWindow::buildTopBar()
         ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     });
     connect(close, &QPushButton::clicked, this, &MainWindow::close);
-    m_chromeButtons = {home, m_search, minimize, m_maxButton, close};
+    m_chromeButtons = {home, m_search, gear, minimize, m_maxButton, close};
 
     m_topBar = new QWidget;
     m_topBar->setObjectName("topBar");
@@ -505,6 +533,8 @@ QWidget *MainWindow::buildTopBar()
     row->addWidget(home);
     row->addWidget(m_search);
     row->addStretch();
+    row->addWidget(gear);
+    row->addSpacing(10);
     row->addWidget(minimize);
     row->addWidget(m_maxButton);
     row->addWidget(close);
@@ -669,7 +699,7 @@ QWidget *MainWindow::buildLibrary()
                     static_cast<PlaylistHeader *>(m_playlistCover)->setTint(QColor());
             });
         if (QFileInfo::exists(customCoverPath(path)))
-            menu.addAction("Use the songs' covers again", this, [this, index] { removeCover(index); });
+            menu.addAction("Remove custom image", this, [this, index] { removeCover(index); });
         menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
         menu.addAction("Show in folder", this, [path] {
             QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
@@ -1674,6 +1704,33 @@ void MainWindow::markPlaying()
         m_nowPlaying->refreshPosition();   // its number may be this row now
 }
 
+void MainWindow::showSettings()
+{
+    m_open = -1;
+    m_libraryList->clearSelection();
+    m_settings->load();
+    m_pages->setCurrentWidget(m_settings);
+}
+
+void MainWindow::applyLook()
+{
+    QSettings settings;
+    tiles::setCircleCovers(settings.value("look/circleCovers").toBool());
+    m_nowPlaying->setVolumeNumber(settings.value("look/volumeNumber", false).toBool());
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed})
+        v->viewport()->update();
+    m_playlistCover->update();
+}
+
+void MainWindow::sendWindowChoice()
+{
+    // Only to an mpv the app talks to: an mpv opened from Explorer keeps
+    // its window, so a song list there can always be stopped.
+    if (m_mpv.connected())
+        m_mpv.command({"change-list", "script-opts", "append",
+                       QSettings().value("player/window", true).toBool() ? "ghost-window=yes" : "ghost-window=no"});
+}
+
 void MainWindow::showHome()
 {
     m_open = -1;
@@ -2277,6 +2334,8 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         return;
     }
     QStringList args{QStringLiteral("--input-ipc-server=%1").arg(MpvClient::kPipe)};
+    if (!QSettings().value("player/window", true).toBool())
+        args << QStringLiteral("--script-opts-append=ghost-window=no");
     if (shuffle)
         args << "--shuffle";
     if (startAt > 0)

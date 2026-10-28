@@ -26,6 +26,7 @@ public:
     // or its place in the file); 0 when it cannot tell.
     std::function<int()> numberFor;
     void refreshPosition();
+    void setVolumeNumber(bool shown);
 
 signals:
     // The cover was clicked: show the list mpv is playing.
@@ -54,5 +55,6 @@ private:
     void showRepeat();
     QSlider *m_position;
     QSlider *m_volume;
+    QLabel *m_volumeNumber;
     bool m_dragging = false;
 };

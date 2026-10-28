@@ -9,6 +9,7 @@
 #include <QPainterPath>
 #include <QPushButton>
 #include <QSlider>
+#include <QTransform>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <functional>
@@ -26,13 +27,33 @@ constexpr qreal kMaxZoom = 4;   // times the smallest zoom that still fills the 
 // never has an empty edge.
 class CoverCropDialog::Canvas : public QWidget {
 public:
-    explicit Canvas(const QImage &image) : m_image(image)
+    explicit Canvas(const QImage &image) : m_original(image), m_image(image)
     {
         setFixedSize(kCanvas, kCanvas);
         setCursor(Qt::OpenHandCursor);
-        m_fit = qreal(kFrame) / qMin(image.width(), image.height());
+        reset();
+    }
+
+    // As it was opened: unturned, unzoomed, centred.
+    void reset()
+    {
+        m_image = m_original;
+        m_fit = qreal(kFrame) / qMin(m_image.width(), m_image.height());
         m_zoom = m_fit;
-        m_center = QPointF(image.width() / 2.0, image.height() / 2.0);
+        m_center = QPointF(m_image.width() / 2.0, m_image.height() / 2.0);
+        update();
+    }
+
+    // A quarter turn clockwise; the same spot stays in the square.
+    void rotate()
+    {
+        const qreal level = this->level();
+        const QPointF c = m_center;
+        const int oldHeight = m_image.height();
+        m_image = m_image.transformed(QTransform().rotate(90));
+        m_fit = qreal(kFrame) / qMin(m_image.width(), m_image.height());
+        m_center = QPointF(oldHeight - c.y(), c.x());
+        setLevel(level);
     }
 
     // 0..1 along the slider: the smallest zoom up to kMaxZoom times it.
@@ -114,7 +135,7 @@ private:
         m_center.setY(qBound(half, m_center.y(), m_image.height() - half));
     }
 
-    QImage m_image;
+    QImage m_original, m_image;
     qreal m_fit = 1, m_zoom = 1;
     QPointF m_center, m_start, m_grab;
 };
@@ -137,11 +158,18 @@ CoverCropDialog::CoverCropDialog(const QImage &image, QWidget *parent) : QDialog
     auto *large = new QLabel(QString(QChar(0xEB9F)));
     small->setStyleSheet("font-family: 'Segoe Fluent Icons'; font-size: 9pt; color: rgb(170,168,182);");
     large->setStyleSheet("font-family: 'Segoe Fluent Icons'; font-size: 15pt; color: rgb(170,168,182);");
+    auto *turn = new QPushButton(QString(QChar(0xE7AD)));
+    turn->setObjectName("glyph");
+    turn->setToolTip("Rotate");
+    turn->setCursor(Qt::PointingHandCursor);
+    connect(turn, &QPushButton::clicked, this, [this] { m_canvas->rotate(); });
     auto *zoomRow = new QHBoxLayout;
     zoomRow->addStretch();
     zoomRow->addWidget(small);
     zoomRow->addWidget(zoom);
     zoomRow->addWidget(large);
+    zoomRow->addSpacing(16);
+    zoomRow->addWidget(turn);
     zoomRow->addStretch();
 
     auto *hint = new QLabel("Drag the picture to move it; zoom with the slider or the mouse wheel.");
@@ -151,9 +179,20 @@ CoverCropDialog::CoverCropDialog(const QImage &image, QWidget *parent) : QDialog
     ok->setObjectName("primary");
     ok->setDefault(true);
     auto *cancel = new QPushButton("Cancel");
+    // Back to how the picture opened; removing a cover is on the playlist's
+    // own menu, this only undoes the moving here.
+    auto *reset = new QPushButton("Reset");
+    reset->setObjectName("link");
+    reset->setCursor(Qt::PointingHandCursor);
+    connect(reset, &QPushButton::clicked, this, [this, zoom] {
+        m_canvas->reset();
+        const QSignalBlocker quiet(zoom);
+        zoom->setValue(0);
+    });
     connect(ok, &QPushButton::clicked, this, &QDialog::accept);
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
     auto *buttons = new QHBoxLayout;
+    buttons->addWidget(reset);
     buttons->addStretch();
     buttons->addWidget(cancel);
     buttons->addWidget(ok);

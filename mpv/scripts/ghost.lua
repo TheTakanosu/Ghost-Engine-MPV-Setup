@@ -1,3 +1,16 @@
+-- What the Ghost Engine app's settings page chose, read on every list so a
+-- change applies from the next one. mpv.conf (script-opts-append=...) or the
+-- app, for the window, sets them; unset means the old behaviour.
+--   ghost-audio=standard|saver   a smaller audio stream for song lists
+--   ghost-window=no              song lists play with no mpv window: the app
+--                                is the player (only the app passes this, so
+--                                a list double-clicked in Explorer still
+--                                gets a window to stop it from)
+local AUDIO_FORMATS = {
+    standard = "bestaudio[abr<=130]/bestaudio",
+    saver = "bestaudio[abr<=70]/worstaudio/bestaudio",
+}
+
 mp.add_hook("on_load", 50, function()
     local path = mp.get_property("path", "")
     
@@ -13,13 +26,13 @@ mp.add_hook("on_load", 50, function()
 
             if audio then
                 mp.set_property("vid", "no")
-                mp.set_property("ytdl-format", "bestaudio")
+                mp.set_property("ytdl-format", AUDIO_FORMATS[mp.get_opt("ghost-audio") or ""] or "bestaudio")
                 -- Without a video track mpv opens no window at all, which
                 -- leaves an audio list playing with no way to seek, pause or
                 -- change the volume except from a terminal nobody has open.
                 -- force-window gives it the usual window and on-screen
                 -- controls with the cover art in place of the video.
-                mp.set_property("force-window", "yes")
+                mp.set_property("force-window", mp.get_opt("ghost-window") == "no" and "no" or "yes")
                 mp.msg.info("Ghost-Audio is online! Thanks for using our system.")
             end
         end

@@ -22,6 +22,9 @@ public:
 
     void command(const QVariantList &args);
     void setProperty(const QString &name, const QVariant &value);
+    // Waits (briefly) until what was sent has left, for a command sent
+    // just before the app quits.
+    void flush() { m_socket.waitForBytesWritten(300); }
 
 signals:
     void connectionChanged(bool connected);

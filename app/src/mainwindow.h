@@ -71,6 +71,10 @@ private:
     void undoSongEdit();
     void applyPendingOrder();
     void showHome();
+    void showSettings();
+    void applyLook();
+    // Song lists play with no mpv window when the user chose so (Settings).
+    void sendWindowChoice();
     void markPlaying();
     void layoutHeader();
     void fitTitle();
@@ -155,6 +159,7 @@ private:
 
     // pages
     QStackedWidget *m_pages = nullptr;
+    class SettingsPage *m_settings = nullptr;
     QLabel *m_greeting = nullptr;
     QLabel *m_toast = nullptr;
     QTimer m_toastTimer;

@@ -34,7 +34,9 @@ void paintCover(QPainter &painter, const QRectF &rect, const QPixmap &pixmap,
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     QPainterPath clip;
     clip.addRoundedRect(rect, radius, radius);
-    painter.setClipPath(clip);
+    // Within any clip already set: a collage's cells stay inside its
+    // rounded (or round) outline instead of replacing it with square ones.
+    painter.setClipPath(clip, Qt::IntersectClip);
 
     if (!pixmap.isNull()) {
         const QSizeF scaled = QSizeF(pixmap.size()).scaled(rect.size(), Qt::KeepAspectRatioByExpanding);
@@ -52,9 +54,24 @@ void paintCover(QPainter &painter, const QRectF &rect, const QPixmap &pixmap,
     painter.restore();
 }
 
+namespace {
+bool g_circle = false;
+} // namespace
+
+void setCircleCovers(bool circle)
+{
+    g_circle = circle;
+}
+
+qreal playlistRadius(const QRectF &rect, qreal normal)
+{
+    return g_circle ? qMin(rect.width(), rect.height()) / 2 : normal;
+}
+
 void paintCollage(QPainter &painter, const QRectF &rect, const QVector<QPixmap> &covers,
                   const QString &name, qreal radius)
 {
+    radius = playlistRadius(rect, radius);
     QVector<QPixmap> ready;
     for (const QPixmap &p : covers)
         if (!p.isNull())
@@ -134,12 +151,13 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const bool selected = option.state & QStyle::State_Selected;
     const bool hover = option.state & QStyle::State_MouseOver;
     const QRectF row = QRectF(option.rect).adjusted(2, 2, -2, -2);
+    const bool lined = m_dense && !m_compact && index.data(kInFolderRole).toBool();
 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);
     if (selected || hover) {
         QPainterPath bg;
-        bg.addRoundedRect(row, 8, 8);
+        bg.addRoundedRect(lined ? row.adjusted(26, 0, 0, 0) : row, 8, 8);
         painter->fillPath(bg, selected ? theme::cardSelected() : theme::cardHover());
     }
     const QString name = index.data(Qt::DisplayRole).toString();
@@ -183,7 +201,7 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const QRectF cover(m_compact ? row.center().x() - side / 2 : row.left() + 6 + indent, row.top() + 6, side, side);
     if (folder) {
         QPainterPath tile;
-        tile.addRoundedRect(cover, 6, 6);
+        tile.addRoundedRect(cover, playlistRadius(cover, 6), playlistRadius(cover, 6));
         painter->fillPath(tile, QColor(40, 39, 50));
         const qreal mark = side * 0.42;
         icons::paint(*painter, icons::Icon::Folder,

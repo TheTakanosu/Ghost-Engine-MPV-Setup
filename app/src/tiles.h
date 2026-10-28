@@ -18,6 +18,12 @@ constexpr int kSubtitleRole = Qt::UserRole + 1;
 void paintCover(QPainter &painter, const QRectF &rect, const QPixmap &pixmap,
                 const QString &name, qreal radius);
 
+// Playlist covers drawn as circles instead of rounded squares (Settings).
+void setCircleCovers(bool circle);
+// The corner radius a playlist cover of this size gets: `normal`, or half
+// its side when covers are circles.
+qreal playlistRadius(const QRectF &rect, qreal normal);
+
 // Up to four covers as a 2x2 square, the way music apps show a playlist. One
 // cover fills the square; none falls back to the letter.
 void paintCollage(QPainter &painter, const QRectF &rect, const QVector<QPixmap> &covers,

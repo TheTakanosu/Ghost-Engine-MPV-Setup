@@ -111,6 +111,12 @@ void apply(QApplication &app)
         QPushButton#bigGlyph:hover { color: white; }
         QWidget#columns { border-bottom: 1px solid rgb(44,42,54); }
         QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
+        QPushButton#link { background: transparent; border: none; color: rgb(176,127,224); padding: 0 4px; }
+        QPushButton#link:hover { color: rgb(206,170,244); text-decoration: underline; }
+        QLabel#settingName { font-size: 10.5pt; font-weight: 600; color: rgb(236,236,241); }
+        QComboBox { background: rgb(40,39,50); border: 1px solid rgb(58,56,70); border-radius: 8px; padding: 6px 12px; color: rgb(236,236,241); }
+        QComboBox:hover { border-color: rgb(176,127,224); }
+        QComboBox QAbstractItemView { background: rgb(33,32,41); border: 1px solid rgb(52,50,64); selection-background-color: rgb(60,48,84); outline: none; padding: 4px; }
         QLabel#toast { background: rgb(236,236,241); color: rgb(24,18,34); border-radius: 16px; font-weight: 600; }
         QPushButton#columnButton, QPushButton#clockHeader {
             background: transparent; border: none; padding: 0; color: rgb(154,152,166); font-size: 9pt; text-align: left;

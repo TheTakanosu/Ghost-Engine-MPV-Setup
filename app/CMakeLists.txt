@@ -23,6 +23,7 @@ qt_add_executable(GhostEngine WIN32
     src/nowplaying.h src/nowplaying.cpp
     src/icons.h src/icons.cpp
     src/covercrop.h src/covercrop.cpp
+    src/settings.h src/settings.cpp
 )
 target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network dwmapi)
 target_compile_definitions(GhostEngine PRIVATE GHOST_VERSION="${PROJECT_VERSION}")

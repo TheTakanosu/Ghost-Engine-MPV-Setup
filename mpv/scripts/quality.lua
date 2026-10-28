@@ -40,6 +40,9 @@ local function next_step(cap)
 end
 
 local function step_down()
+    -- Switched off on the app's settings page (script-opts-append=
+    -- ghost-auto-quality=no in mpv.conf); read here, so it applies at once.
+    if mp.get_opt("ghost-auto-quality") == "no" then return end
     local cap = current_cap()
     local lower = cap and next_step(cap)
     if not lower then return end
