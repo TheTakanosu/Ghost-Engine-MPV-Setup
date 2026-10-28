@@ -88,6 +88,11 @@ void apply(QApplication &app)
         QPushButton#bigGlyph:hover { color: white; }
         QWidget#columns { border-bottom: 1px solid rgb(44,42,54); }
         QLabel#columnLabel { color: rgb(154,152,166); font-size: 9pt; }
+        QPushButton#columnButton, QPushButton#clockHeader {
+            background: transparent; border: none; padding: 0; color: rgb(154,152,166); font-size: 9pt; text-align: left;
+        }
+        QPushButton#columnButton:hover { color: rgb(236,236,241); }
+        QPushButton#columnButton[active="true"] { color: rgb(236,236,241); font-weight: 600; }
         QLineEdit#nameEdit { background: rgba(0,0,0,90); border: 1px solid rgb(176,127,224); border-radius: 8px;
                              padding: 0 6px; font-weight: 800; color: white; }
         QLineEdit#songSearch { border-radius: 16px; padding: 0 14px; min-height: 32px; max-height: 32px; }

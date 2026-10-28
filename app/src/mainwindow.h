@@ -41,6 +41,9 @@ protected:
 
 private:
     enum Filter { AllLists, Songs, Videos };
+    // How the open list's songs are shown. Custom is the file's own order,
+    // the only one a drag can change.
+    enum class SortKey { Custom, Title, Artist, Added, Duration };
 
     QWidget *buildTopBar();
     QWidget *buildLibrary();
@@ -51,7 +54,15 @@ private:
     void rescan();
     void refill();
     void fillShelf(QListWidget *shelf, const QVector<int> &indices);
-    void openPlaylist(int index);
+    void openPlaylist(int index, bool keepView = false);
+    void sortBy(SortKey key);
+    void applySort();
+    void filterSongs();
+    QVector<int> shownOrder() const;
+    void saveSongOrder();
+    void removeSelectedSongs();
+    void undoSongEdit();
+    void applyPendingOrder();
     void showHome();
     void markPlaying();
     void layoutHeader();
@@ -70,7 +81,10 @@ private:
     void reopenAfter(const QString &path);
     void syncSearchWidth();
     void setLibraryCompact(bool compact);
-    void play(const QString &path, bool shuffle = false, int startAt = 0);
+    // `order`: the entries in the order to play them, when the list is shown
+    // sorted; empty plays the file's order.
+    void play(const QString &path, bool shuffle = false, int startAt = 0, const QVector<int> &order = {});
+    void playOpen(int startAt, bool shuffle = false);
     void addFolder();
     void showLibraryMenu(const QPoint &pos);
 
@@ -125,7 +139,17 @@ private:
     QLineEdit *m_songSearch = nullptr;
     bool m_renameCancelled = false;
     int m_playingRow = -1;
-    QLabel *m_addedHeader = nullptr;
+    QPushButton *m_addedHeader = nullptr;
+    QList<std::pair<SortKey, QPushButton *>> m_sortButtons;
+    SortKey m_sortKey = SortKey::Custom;
+    bool m_sortDescending = false;
+    // The file as it was before the last drag or removal, for Ctrl+Z.
+    QString m_undoPath;
+    QByteArray m_undoBytes;
+    // Applied to mpv's playlist once it has loaded the list (see play()).
+    QString m_pendingPath;
+    QVector<int> m_pendingOrder;
+    int m_pendingSerial = 0;
     QWidget *m_homeScroll = nullptr;
     QFileSystemWatcher m_watcher;
     QTimer m_rescanSoon;

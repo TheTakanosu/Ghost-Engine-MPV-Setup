@@ -110,3 +110,46 @@ bool Playlist::writeName(const QString &path, const QString &name)
     file.write(lines.join(crlf ? "\r\n" : "\n").toUtf8());
     return true;
 }
+
+bool Playlist::writeOrder(const QString &path, const QVector<int> &order)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray raw = file.readAll();
+    const QDateTime modified = file.fileTime(QFileDevice::FileModificationTime);
+    file.close();
+    const bool crlf = raw.contains("\r\n");
+    QStringList lines = QString::fromUtf8(raw).split(QRegularExpression(QStringLiteral("\r?\n")));
+
+    // List-wide tags at the top; then blocks that each end on an entry line
+    // and carry its #EXTINF (and anything else written above it); whatever
+    // follows the last entry stays at the end.
+    QStringList head;
+    int at = 0;
+    while (at < lines.size() && (lines[at].trimmed().isEmpty() || lines[at] == "#EXTM3U" ||
+                                 lines[at] == "#GHOST_AUDIO" || lines[at].startsWith("#PLAYLIST:")))
+        head << lines[at++];
+    QVector<QStringList> blocks;
+    QStringList pending;
+    for (; at < lines.size(); ++at) {
+        pending << lines[at];
+        if (isEntryLine(lines[at].trimmed())) {
+            blocks << pending;
+            pending.clear();
+        }
+    }
+    QStringList out = head;
+    for (int i : order) {
+        if (i < 0 || i >= blocks.size())
+            return false;   // the file changed under us; leave it alone
+        out << blocks[i];
+    }
+    out << pending;
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    file.write(out.join(crlf ? "\r\n" : "\n").toUtf8());
+    file.setFileTime(modified, QFileDevice::FileModificationTime);
+    return true;
+}

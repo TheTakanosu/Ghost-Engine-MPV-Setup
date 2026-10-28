@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCloseEvent>
+#include <QCollator>
 #include <QCoreApplication>
 #include <QCursor>
 #include <QDateTime>
@@ -35,12 +36,16 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSet>
 #include <QSettings>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <functional>
+#include <numeric>
 
 #include <windows.h>
 #include <dwmapi.h>
@@ -287,6 +292,8 @@ MainWindow::MainWindow()
             QTimer::singleShot(500, repaint);
         if (name == "playlist-pos" || name == "playlist-path" || name == "path")
             markPlaying();
+        if (name == "playlist-count" || name == "playlist-path" || name == "path")
+            applyPendingOrder();
         // mpv knows the length of what it plays; keep it for the list.
         if (name == "duration") {
             const QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString().isEmpty()
@@ -662,9 +669,7 @@ QWidget *MainWindow::buildPlaylistPage()
     playButton->setRound(theme::accent(), theme::accentText(), QColor(24, 18, 34));
     auto *shuffleButton = new icons::IconButton(icons::Icon::Shuffle, 40, "Shuffle");
     auto *folderButton = new icons::IconButton(icons::Icon::Folder, 40, "Show in folder");
-    connect(playButton, &QAbstractButton::clicked, this, [this] {
-        if (m_open >= 0) play(m_library.playlists()[m_open].path);
-    });
+    connect(playButton, &QAbstractButton::clicked, this, [this] { playOpen(0); });
     connect(shuffleButton, &QAbstractButton::clicked, this, [this] {
         if (m_open >= 0) play(m_library.playlists()[m_open].path, true);
     });
@@ -685,37 +690,46 @@ QWidget *MainWindow::buildPlaylistPage()
     m_songSearch->setPlaceholderText("Search in playlist");
     m_songSearch->setClearButtonEnabled(true);
     m_songSearch->setFixedWidth(240);
-    connect(m_songSearch, &QLineEdit::textChanged, this, [this](const QString &text) {
-        const QString needle = text.trimmed();
-        for (int row = 0; row < m_songs->count(); ++row) {
-            QListWidgetItem *item = m_songs->item(row);
-            item->setHidden(!needle.isEmpty() &&
-                !item->text().contains(needle, Qt::CaseInsensitive) &&
-                !item->data(tiles::kArtistRole).toString().contains(needle, Qt::CaseInsensitive));
-        }
-    });
+    connect(m_songSearch, &QLineEdit::textChanged, this, &MainWindow::filterSongs);
     actions->addWidget(m_songSearch);
 
-    // "#  Title" over the songs, with a hairline under it.
+    // "#  Title · Artist" over the songs, with a hairline under it. Each name
+    // sorts by itself, as in Spotify: once up, once down, a third time back
+    // to the list's own order ("#" goes straight back).
     auto *columns = new QWidget;
     columns->setObjectName("columns");
     columns->setAttribute(Qt::WA_StyledBackground);
     auto *colRow = new QHBoxLayout(columns);
     colRow->setContentsMargins(0, 6, 0, 8);
-    auto *hash = new QLabel("#");
-    hash->setObjectName("columnLabel");
+    colRow->setSpacing(0);
+    auto sortButton = [this](const QString &text, SortKey key, const QString &tip) {
+        auto *b = new QPushButton(text);
+        b->setObjectName("columnButton");
+        b->setCursor(Qt::PointingHandCursor);
+        b->setToolTip(tip);
+        b->setProperty("label", text);
+        connect(b, &QPushButton::clicked, this, [this, key] { sortBy(key); });
+        m_sortButtons.append({key, b});
+        return b;
+    };
+    auto *hash = sortButton("#", SortKey::Custom, "The list's own order");
     hash->setFixedWidth(44);
-    hash->setAlignment(Qt::AlignCenter);
-    auto *titleLabel = new QLabel("Title");
-    titleLabel->setObjectName("columnLabel");
+    auto *titleButton = sortButton("Title", SortKey::Title, "Sort by title");
+    auto *dot = new QLabel(QStringLiteral("·"));
+    dot->setObjectName("columnLabel");
+    auto *artistButton = sortButton("Artist", SortKey::Artist, "Sort by artist");
     colRow->addWidget(hash);
     colRow->addSpacing(4);
-    colRow->addWidget(titleLabel, 1);
-    m_addedHeader = new QLabel("Date added");
-    m_addedHeader->setObjectName("columnLabel");
+    colRow->addWidget(titleButton);
+    colRow->addSpacing(6);
+    colRow->addWidget(dot);
+    colRow->addSpacing(6);
+    colRow->addWidget(artistButton);
+    colRow->addStretch(1);
+    m_addedHeader = sortButton("Date added", SortKey::Added, "Sort by when songs were added to the list");
     m_addedHeader->setFixedWidth(tiles::kAddedColumn);
     colRow->addWidget(m_addedHeader);
-    auto *clock = new QWidget;
+    auto *clock = sortButton(QString(), SortKey::Duration, "Sort by length");
     clock->setFixedSize(tiles::kDurationColumn, 18);
     clock->setObjectName("clockHeader");
     clock->installEventFilter(this);
@@ -738,9 +752,43 @@ QWidget *MainWindow::buildPlaylistPage()
         layoutHeader();
     });
     connect(m_songs, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
-        if (m_open >= 0)
-            play(m_library.playlists()[m_open].path, false, m_songs->row(item));
+        playOpen(m_songs->row(item));
     });
+    // Songs are dragged to a new place in the list (in its own order only)
+    // and removed with Delete or the menu; Ctrl+Z puts the file back.
+    m_songs->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_songs->setDefaultDropAction(Qt::MoveAction);
+    m_songs->setDragDropMode(QAbstractItemView::InternalMove);
+    connect(m_songs->model(), &QAbstractItemModel::rowsMoved, this, [this] {
+        // After the drop has finished, not in the middle of it.
+        QTimer::singleShot(0, this, &MainWindow::saveSongOrder);
+    });
+    m_songs->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_songs, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QListWidgetItem *item = m_songs->itemAt(pos);
+        if (!item)
+            return;
+        if (!item->isSelected()) {
+            m_songs->clearSelection();
+            item->setSelected(true);
+        }
+        const int count = m_songs->selectedItems().size();
+        QMenu menu(this);
+        menu.addAction("Play", this, [this, item] { playOpen(m_songs->row(item)); });
+        menu.addSeparator();
+        menu.addAction(count > 1 ? QStringLiteral("Remove %1 songs from this playlist").arg(count)
+                                 : QStringLiteral("Remove from this playlist"),
+                       this, &MainWindow::removeSelectedSongs);
+        if (m_undoPath == m_library.playlists().value(m_open).path)
+            menu.addAction("Undo last change\tCtrl+Z", this, &MainWindow::undoSongEdit);
+        menu.exec(m_songs->viewport()->mapToGlobal(pos));
+    });
+    auto *remove = new QShortcut(QKeySequence::Delete, m_songs);
+    remove->setContext(Qt::WidgetShortcut);
+    connect(remove, &QShortcut::activated, this, &MainWindow::removeSelectedSongs);
+    auto *undo = new QShortcut(QKeySequence::Undo, m_songs);
+    undo->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(undo, &QShortcut::activated, this, &MainWindow::undoSongEdit);
 
     auto *list = new QVBoxLayout;
     list->setContentsMargins(20, 0, 16, 0);
@@ -972,18 +1020,33 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     // The play mark in a song's number column starts the list from there.
     // (Filters are installed while the page is still being built, so the
     // song list may not exist yet when the first events arrive.)
+    // "Date added" shows over the rows exactly when they have room for it
+    // (the same sum SongDelegate makes).
+    if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::Resize && m_addedHeader) {
+        const qreal rowHeight = 56 * theme::zoom() - 2;
+        const qreal coverRight = 44 + 4 + (rowHeight - 12) * 16 / 9;
+        const qreal addedLeft = m_songs->viewport()->width() - 4 - 8 - tiles::kDurationColumn - tiles::kAddedColumn;
+        m_addedHeader->setVisible(addedLeft - coverRight > 260);
+    }
     if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease) {
         auto *mouse = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_songs->itemAt(mouse->position().toPoint());
         if (item && mouse->button() == Qt::LeftButton && mouse->position().x() < 48 && m_open >= 0) {
-            play(m_library.playlists()[m_open].path, false, m_songs->row(item));
+            playOpen(m_songs->row(item));
             return true;
         }
     }
     if (watched->objectName() == "clockHeader" && event->type() == QEvent::Paint) {
-        auto *w = static_cast<QWidget *>(watched);
+        auto *w = static_cast<QPushButton *>(watched);
         QPainter p(w);
-        icons::paint(p, icons::Icon::Clock, QRectF(w->width() - 16, 1, 16, 16), theme::muted());
+        const bool active = m_sortKey == SortKey::Duration;
+        const QColor ink = active || w->underMouse() ? QColor(236, 236, 241) : theme::muted();
+        icons::paint(p, icons::Icon::Clock, QRectF(w->width() - 16, 1, 16, 16), ink);
+        if (active) {
+            p.setPen(theme::accent());
+            p.drawText(QRectF(0, 0, w->width() - 22, w->height()), Qt::AlignRight | Qt::AlignVCenter,
+                       m_sortDescending ? QStringLiteral("▾") : QStringLiteral("▴"));
+        }
         return true;
     }
     if (watched == m_playlistName && event->type() == QEvent::MouseButtonDblClick) {
@@ -998,8 +1061,6 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     QMainWindow::resizeEvent(event);
     layoutHeader();
     syncSearchWidth();
-    if (m_addedHeader)
-        m_addedHeader->setVisible(m_songs->viewport()->width() > 700);
 }
 
 void MainWindow::syncSearchWidth()
@@ -1088,11 +1149,15 @@ void MainWindow::showHome()
     m_pages->setCurrentIndex(0);
 }
 
-void MainWindow::openPlaylist(int index)
+void MainWindow::openPlaylist(int index, bool keepView)
 {
     const auto &all = m_library.playlists();
     if (index < 0 || index >= all.size())
         return;
+    // Reopened after its file changed (a drag, a removal, a rescan): stay
+    // where the list was scrolled and keep the search.
+    const int scrolled = keepView ? m_songs->verticalScrollBar()->value() : 0;
+    const QString searched = keepView ? m_songSearch->text() : QString();
     m_open = index;
     const Playlist &p = all[index];
     m_playlistKind->setText(p.audio ? "PLAYLIST  ·  SONGS" : "PLAYLIST  ·  VIDEOS");
@@ -1100,29 +1165,242 @@ void MainWindow::openPlaylist(int index)
                             QLocale().toString(p.modified.date(), QLocale::ShortFormat));
     static_cast<PlaylistHeader *>(m_playlistCover)->setName(p.name);
 
-    m_songSearch->clear();
+    m_songSearch->blockSignals(true);
+    m_songSearch->setText(searched);
+    m_songSearch->blockSignals(false);
     m_songs->clear();
     const QString added = relativeTime(p.modified);
-    int number = 1;
+    int entryIndex = 0;
     for (const PlaylistEntry &entry : p.readEntries()) {
         const auto [track, artist] = splitTitle(entry.title);
         auto *row = new QListWidgetItem(track);
         row->setData(Qt::UserRole, entry.target);
-        row->setData(tiles::kNumberRole, number++);
+        row->setData(tiles::kEntryRole, entryIndex++);
         row->setData(tiles::kArtistRole, artist);
         row->setData(tiles::kAddedRole, added);
         m_songs->addItem(row);
     }
-    markPlaying();
+    // Each list keeps the sort it was last shown with, as in Spotify.
+    const QStringList sort = QSettings().value("sort/" + QFileInfo(p.path).fileName()).toStringList();
+    m_sortKey = static_cast<SortKey>(sort.value(0).toInt());
+    m_sortDescending = sort.value(1) == "desc";
     fillDurations();
+    applySort();
     m_pages->setCurrentIndex(1);
-    m_songs->scrollToTop();
-    m_playlistCover->setFixedHeight(kHeaderTall);
+    if (keepView) {
+        m_songs->verticalScrollBar()->setValue(scrolled);
+    } else {
+        m_songs->scrollToTop();
+        m_playlistCover->setFixedHeight(kHeaderTall);
+    }
     layoutHeader();
     // Ask for every song's cover now rather than as each row scrolls into
     // view, so the list fills in while it is being looked at.
     for (int row = 0; row < m_songs->count(); ++row)
         m_covers.get(idForTarget(m_songs->item(row)->data(Qt::UserRole).toString()), ThumbnailCache::Size::Card);
+}
+
+// -- songs: sort, search, reorder ---------------------------------------------
+
+void MainWindow::sortBy(SortKey key)
+{
+    // Up, down, then back to the list's own order.
+    if (key == SortKey::Custom || key != m_sortKey) {
+        m_sortKey = key;
+        m_sortDescending = false;
+    } else if (!m_sortDescending) {
+        m_sortDescending = true;
+    } else {
+        m_sortKey = SortKey::Custom;
+        m_sortDescending = false;
+    }
+    if (m_open >= 0) {
+        const QString file = QFileInfo(m_library.playlists()[m_open].path).fileName();
+        QSettings settings;
+        if (m_sortKey == SortKey::Custom)
+            settings.remove("sort/" + file);
+        else
+            settings.setValue("sort/" + file, QStringList{QString::number(int(m_sortKey)),
+                                                          m_sortDescending ? "desc" : "asc"});
+    }
+    applySort();
+}
+
+void MainWindow::applySort()
+{
+    QVector<QListWidgetItem *> items;
+    while (m_songs->count() > 0)
+        items << m_songs->takeItem(0);
+    const QCollator collator = [] { QCollator c; c.setNumericMode(true); c.setCaseSensitivity(Qt::CaseInsensitive); return c; }();
+    auto seconds = [this](const QListWidgetItem *item) {
+        return m_resolver.durationFor(idForTarget(item->data(Qt::UserRole).toString()));
+    };
+    auto entry = [](const QListWidgetItem *item) { return item->data(tiles::kEntryRole).toInt(); };
+    const SortKey key = m_sortKey;
+    const bool down = m_sortDescending;
+    std::stable_sort(items.begin(), items.end(), [&](const QListWidgetItem *a, const QListWidgetItem *b) {
+        int c = 0;
+        switch (key) {
+        case SortKey::Title:
+            c = collator.compare(a->text(), b->text());
+            break;
+        case SortKey::Artist:
+            c = collator.compare(a->data(tiles::kArtistRole).toString(), b->data(tiles::kArtistRole).toString());
+            if (c == 0)
+                c = collator.compare(a->text(), b->text());
+            break;
+        case SortKey::Duration: {
+            // Lengths still unknown go last either way.
+            const int x = seconds(a), y = seconds(b);
+            if ((x > 0) != (y > 0))
+                return x > 0;
+            c = x - y;
+            break;
+        }
+        case SortKey::Added:      // songs join the end of the file, so its order is when they came
+        case SortKey::Custom:
+            break;
+        }
+        if (c == 0)
+            c = entry(a) - entry(b);   // ties keep the file's order
+        return down ? c > 0 : c < 0;
+    });
+    for (int row = 0; row < items.size(); ++row) {
+        items[row]->setData(tiles::kNumberRole, row + 1);
+        m_songs->addItem(items[row]);
+    }
+
+    for (const auto &[k, button] : m_sortButtons) {
+        const bool active = k == m_sortKey && k != SortKey::Custom;
+        if (!button->property("label").toString().isEmpty())
+            button->setText(button->property("label").toString() +
+                            (active ? (m_sortDescending ? QStringLiteral("  ▾") : QStringLiteral("  ▴")) : QString()));
+        button->setProperty("active", active);
+        button->style()->unpolish(button);
+        button->style()->polish(button);
+        button->update();
+    }
+    filterSongs();
+    markPlaying();
+}
+
+void MainWindow::filterSongs()
+{
+    const QString needle = m_songSearch->text().trimmed();
+    for (int row = 0; row < m_songs->count(); ++row) {
+        QListWidgetItem *item = m_songs->item(row);
+        item->setHidden(!needle.isEmpty() &&
+            !item->text().contains(needle, Qt::CaseInsensitive) &&
+            !item->data(tiles::kArtistRole).toString().contains(needle, Qt::CaseInsensitive));
+    }
+    // A drag moves songs in the file, so only where the rows are the file's
+    // own order, all of them shown.
+    const bool canDrag = m_sortKey == SortKey::Custom && needle.isEmpty();
+    m_songs->setDragDropMode(canDrag ? QAbstractItemView::InternalMove : QAbstractItemView::NoDragDrop);
+}
+
+QVector<int> MainWindow::shownOrder() const
+{
+    QVector<int> order;
+    for (int row = 0; row < m_songs->count(); ++row)
+        order << m_songs->item(row)->data(tiles::kEntryRole).toInt();
+    return order;
+}
+
+void MainWindow::saveSongOrder()
+{
+    if (m_open < 0 || m_sortKey != SortKey::Custom)
+        return;
+    const QVector<int> order = shownOrder();
+    bool moved = false;
+    for (int i = 0; i < order.size(); ++i)
+        moved |= order[i] != i;
+    if (!moved)
+        return;
+    const QString path = m_library.playlists()[m_open].path;
+    QFile before(path);
+    if (before.open(QIODevice::ReadOnly)) {
+        m_undoPath = path;
+        m_undoBytes = before.readAll();
+    }
+    if (!Playlist::writeOrder(path, order))
+        QMessageBox::warning(this, "Ghost Engine", "The playlist file couldn't be written.");
+    rescan();
+}
+
+void MainWindow::removeSelectedSongs()
+{
+    if (m_open < 0 || m_songs->selectedItems().isEmpty())
+        return;
+    QSet<int> gone;
+    for (QListWidgetItem *item : m_songs->selectedItems())
+        gone << item->data(tiles::kEntryRole).toInt();
+    const Playlist &p = m_library.playlists()[m_open];
+    QVector<int> keep;
+    for (int i = 0; i < p.count; ++i)
+        if (!gone.contains(i))
+            keep << i;
+    QFile before(p.path);
+    if (before.open(QIODevice::ReadOnly)) {
+        m_undoPath = p.path;
+        m_undoBytes = before.readAll();
+    }
+    if (!Playlist::writeOrder(p.path, keep))
+        QMessageBox::warning(this, "Ghost Engine", "The playlist file couldn't be written.");
+    rescan();
+}
+
+void MainWindow::undoSongEdit()
+{
+    if (m_undoPath.isEmpty() || m_open < 0 || m_library.playlists()[m_open].path != m_undoPath)
+        return;
+    QFile file(m_undoPath);
+    const QDateTime modified = QFileInfo(m_undoPath).lastModified();
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return;
+    file.write(m_undoBytes);
+    file.setFileTime(modified, QFileDevice::FileModificationTime);
+    file.close();
+    m_undoPath.clear();
+    m_undoBytes.clear();
+    rescan();
+}
+
+void MainWindow::playOpen(int row, bool shuffle)
+{
+    // The row as shown; mpv plays the file, so it is told the entry, and the
+    // order the rows are shown in when that is not the file's.
+    if (m_open < 0)
+        return;
+    const QVector<int> order = shownOrder();
+    const int entry = order.value(row, 0);
+    const bool sorted = m_sortKey != SortKey::Custom;
+    play(m_library.playlists()[m_open].path, shuffle, entry, sorted && !shuffle ? order : QVector<int>{});
+}
+
+void MainWindow::applyPendingOrder()
+{
+    // Once mpv has expanded the .m3u, move its entries into the shown order.
+    // Moving never restarts the song that is playing.
+    if (m_pendingOrder.isEmpty() || !m_mpv.connected())
+        return;
+    // While mpv opens the .m3u itself, "path" is the list; once it is a song
+    // the list has been expanded and the count is the new one, not the last.
+    const QString list = QFileInfo(m_pendingPath).absoluteFilePath();
+    if (QFileInfo(m_mpv.property("playlist-path").toString()).absoluteFilePath().compare(list, Qt::CaseInsensitive) != 0 ||
+        QFileInfo(m_mpv.property("path").toString()).absoluteFilePath().compare(list, Qt::CaseInsensitive) == 0 ||
+        m_mpv.property("playlist-count").toInt() != m_pendingOrder.size())
+        return;
+    QVector<int> at(m_pendingOrder.size());
+    std::iota(at.begin(), at.end(), 0);   // which entry sits at each place now
+    for (int place = 0; place < m_pendingOrder.size(); ++place) {
+        const int from = at.indexOf(m_pendingOrder[place]);
+        if (from != place) {
+            m_mpv.command({"playlist-move", from, place});
+            at.move(from, place);
+        }
+    }
+    m_pendingOrder.clear();
 }
 
 // -- content -------------------------------------------------------------------
@@ -1139,7 +1417,7 @@ void MainWindow::rescan()
     const auto &all = m_library.playlists();
     for (int i = 0; i < all.size(); ++i)
         if (all[i].path == openPath)
-            openPlaylist(i);
+            openPlaylist(i, true);
 }
 
 void MainWindow::refill()
@@ -1261,9 +1539,15 @@ QString MainWindow::findMpv() const
     return {};
 }
 
-void MainWindow::play(const QString &path, bool shuffle, int startAt)
+void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVector<int> &order)
 {
     rememberPlayed(path);
+    m_pendingPath = path;
+    m_pendingOrder = order;
+    // A list that never loads should not reorder a later one.
+    const int serial = ++m_pendingSerial;
+    if (!order.isEmpty())
+        QTimer::singleShot(15000, this, [this, serial] { if (m_pendingSerial == serial) m_pendingOrder.clear(); });
     // An mpv already open takes the list over IPC, so a second window does
     // not start on top of the first.
     if (m_mpv.connected()) {

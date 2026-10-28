@@ -31,4 +31,9 @@ public:
     // The name lives inside the file as "#PLAYLIST:<name>" (the extended M3U
     // tag for it), so it can hold any character; the file name is only a key.
     static bool writeName(const QString &path, const QString &name);
+
+    // Rewrites the entries in `order` (indices into readEntries()), each with
+    // the lines above it; an index left out removes that entry. The header,
+    // line endings and the file's date stay, so "Date added" does not jump.
+    static bool writeOrder(const QString &path, const QVector<int> &order);
 };

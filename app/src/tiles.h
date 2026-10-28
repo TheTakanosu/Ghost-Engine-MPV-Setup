@@ -63,6 +63,7 @@ constexpr int kArtistRole = Qt::UserRole + 3;
 constexpr int kPlayingRole = Qt::UserRole + 4;   // the song mpv is on
 constexpr int kAddedRole = Qt::UserRole + 5;     // "3 weeks ago"
 constexpr int kDurationRole = Qt::UserRole + 6;  // "3:16", or empty
+constexpr int kEntryRole = Qt::UserRole + 7;     // its place in the file, whatever the sort
 
 // Widths of the right-hand columns, shared by the rows and their header.
 constexpr int kAddedColumn = 150;
