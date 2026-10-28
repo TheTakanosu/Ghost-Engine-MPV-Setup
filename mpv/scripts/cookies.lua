@@ -98,6 +98,18 @@ local function resolve_raw_options()
         options[#options + 1] = "js-runtimes=node"
     end
 
+    -- Videos get their subtitles. Most YouTube videos only have automatic
+    -- captions, which yt-dlp leaves out unless asked, so the subtitle menu
+    -- said there were none. Only the spoken language's own track and
+    -- Turkish and English: every caption is offered in some 150 languages,
+    -- and each one asked for is downloaded when the video opens. Songs
+    -- need none. The brackets keep the commas inside one value.
+    if not mp.get_property_native("user-data/ghost/audio", false) then
+        options[#options + 1] = "write-subs="
+        options[#options + 1] = "write-auto-subs="
+        options[#options + 1] = "sub-langs=[.*-orig,tr,en]"
+    end
+
     mp.set_property("ytdl-raw-options", table.concat(options, ","))
 end
 
