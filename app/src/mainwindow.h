@@ -171,7 +171,30 @@ private:
 
     // pages
     QStackedWidget *m_pages = nullptr;
+    struct QueuedPlay { QString path; bool shuffle = false; int startAt = 0; QVector<int> order; };
     class SettingsPage *m_settings = nullptr;
+    class VideoPage *m_videoPage = nullptr;
+    // Video lists play inside the app: mpv draws into the video page (it is
+    // started with --wid). One mpv still; it is started again, at the same
+    // song and second, when it has to move in or out of the app.
+    bool m_mpvEmbedded = false;     // the mpv talked to draws into the page
+    bool m_launchEmbedded = false;  // the one being started will
+    bool m_videoPoppedOut = false;  // moved to mpv's own window by the user
+    bool m_videoFull = false;
+    bool m_wasMaximized = false;
+    int m_libraryWidthBeforeFull = 300;
+    bool m_compactBeforeFull = false;
+    QElapsedTimer m_restoreLibraryUntil;
+    void restoreLibraryWidth();
+    double m_startSeconds = 0;      // where the next started mpv begins
+    std::optional<QueuedPlay> m_restartPlay;
+    QString m_videoListPath;
+    bool listIsAudio(const QString &path) const;
+    int embedFor(bool audio) const;   // 1 inside the app, 0 outside, -1 either
+    void restartPlayer(const QueuedPlay &q, double seconds);
+    void showVideoPage();
+    void updateVideoPage();
+    void setVideoFullScreen(bool full);
     LyricsSource m_lyricsSource;
     OfflineStore m_offline;
     class QPushButton *m_downloadButton = nullptr;
@@ -215,7 +238,6 @@ private:
     // a second Play waits for it instead of starting another (which, with
     // no window, would play unseen and outlive the app).
     QElapsedTimer m_launching;
-    struct QueuedPlay { QString path; bool shuffle = false; int startAt = 0; QVector<int> order; };
     std::optional<QueuedPlay> m_queuedPlay;
     QList<qint64> m_launchedPids;
     void closeExtraPlayers(bool all);

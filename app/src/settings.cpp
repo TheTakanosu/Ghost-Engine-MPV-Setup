@@ -272,7 +272,15 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_window = new ToggleSwitch;
     addRow(window, "Show the mpv window for song lists",
            "Off: songs play inside Ghost Engine with no extra window, and closing Ghost Engine stops them. "
-           "Video lists still open in mpv's window.", m_window);
+           "Video lists follow the setting below.", m_window);
+    m_embedVideo = new ToggleSwitch;
+    addRow(window, "Play videos inside Ghost Engine",
+           "Video lists play on a page of the app, with the list beside the video. "
+           "Off: they open in mpv's own window. Either way it is mpv playing.", m_embedVideo);
+    connect(m_embedVideo, &QAbstractButton::toggled, this, [this](bool on) {
+        if (!m_loading)
+            QSettings().setValue("player/embedVideo", on);
+    });
 
     QVBoxLayout *downloads;
     auto *downloadsCard = card("Downloads", downloads);
@@ -433,6 +441,7 @@ void SettingsPage::load()
     m_volumeValue->setText(QString::number(m_volume->value()));
     QSettings settings;
     m_window->setChecked(settings.value("player/window", true).toBool());
+    m_embedVideo->setChecked(settings.value("player/embedVideo", true).toBool());
     m_covers->setCurrentIndex(settings.value("look/circleCovers").toBool() ? 1 : 0);
     m_volumeNumber->setChecked(settings.value("look/volumeNumber", false).toBool());
     m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));

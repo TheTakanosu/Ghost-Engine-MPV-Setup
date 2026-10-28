@@ -2,6 +2,7 @@
 
 #include "covercrop.h"
 #include "settings.h"
+#include "videopage.h"
 #include "icons.h"
 #include "nowplaying.h"
 #include "theme.h"
@@ -280,6 +281,57 @@ MainWindow::MainWindow()
     m_pages->addWidget(m_settings);
     m_lyricsView = new LyricsView;
     m_pages->addWidget(m_lyricsView);
+    m_videoPage = new VideoPage;
+    m_pages->addWidget(m_videoPage);
+    m_videoPage->coverFor = [this](const QString &target) {
+        return m_covers.get(idForTarget(target), ThumbnailCache::Size::Card);
+    };
+    m_videoPage->lengthFor = [this](const QString &target) {
+        const QString id = idForTarget(target);
+        const int seconds = m_resolver.durationFor(id);
+        if (seconds <= 0) {
+            m_resolver.requestDuration(id);
+            return QString();
+        }
+        return seconds >= 3600 ? QStringLiteral("%1:%2:%3").arg(seconds / 3600).arg(seconds / 60 % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'))
+                               : QStringLiteral("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
+    };
+    m_videoPage->onPick = [this](const QString &target) {
+        // The entry's place in mpv's list, which a shuffle may have moved.
+        const QVariantList list = m_mpv.property("playlist").toList();
+        for (int i = 0; i < list.size(); ++i)
+            if (list[i].toMap().value("filename").toString() == target) {
+                m_mpv.command({"playlist-play-index", i});
+                m_mpv.setProperty("pause", false);
+                return;
+            }
+    };
+    m_videoPage->onPopOut = [this] {
+        m_videoPoppedOut = true;
+        m_videoPage->setPoppedOut(true);
+        setVideoFullScreen(false);
+        restartPlayer(QueuedPlay{playingListPath(), false, m_mpv.property("playlist-pos").toInt(), {}},
+                      m_mpv.property("time-pos").toDouble());
+    };
+    m_videoPage->onBringBack = [this] {
+        m_videoPoppedOut = false;
+        m_videoPage->setPoppedOut(false);
+        restartPlayer(QueuedPlay{playingListPath(), false, m_mpv.property("playlist-pos").toInt(), {}},
+                      m_mpv.property("time-pos").toDouble());
+    };
+    m_videoPage->onFullScreen = [this] { setVideoFullScreen(!m_videoFull); };
+    // On the video page the keys mpv would take in its own window.
+    auto key = [this](const QKeySequence &seq, std::function<void()> act) {
+        auto *s = new QShortcut(seq, m_videoPage);
+        s->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(s, &QShortcut::activated, this, act);
+    };
+    key(QKeySequence(Qt::Key_Space), [this] { m_mpv.command({"cycle", "pause"}); });
+    key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -5}); });
+    key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 5}); });
+    key(QKeySequence(Qt::Key_F), [this] { setVideoFullScreen(!m_videoFull); });
+    auto *escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(escape, &QShortcut::activated, this, [this] { if (m_videoFull) setVideoFullScreen(false); });
     m_lyricsView->onSeek = [this](double seconds) { m_mpv.command({"seek", seconds, "absolute"}); };
     connect(&m_lyricsSource, &LyricsSource::ready, this, [this](const QString &key, const Lyrics &lyrics) {
         if (key == m_lyricsKey)
@@ -437,6 +489,7 @@ MainWindow::MainWindow()
         m_playlistCover->update();
         m_nowPlaying->refreshCover();
         tintLyrics();
+        m_videoPage->refreshCovers();
     };
     connect(&m_resolver, &CoverResolver::resolved, this, [this, repaint] {
         fillDurations();
@@ -459,6 +512,9 @@ MainWindow::MainWindow()
             m_lyricsView->setPosition(m_mpv.property("time-pos").toDouble());
         if (name == "user-data/ghost/source" || name == "path")
             tintLyrics();
+        if (name == "path" || name == "media-title" || name == "metadata/by-key/uploader" ||
+            name == "playlist-path" || name == "user-data/ghost/source")
+            updateVideoPage();
         // mpv knows the length of what it plays; keep it for the list.
         if (name == "duration") {
             const QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString().isEmpty()
@@ -502,8 +558,16 @@ MainWindow::MainWindow()
 
     applyLook();
     connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
-        if (!on)
+        if (!on) {
+            m_mpvEmbedded = false;
+            if (m_restartPlay) {
+                const QueuedPlay q = *m_restartPlay;
+                m_restartPlay.reset();
+                QTimer::singleShot(200, this, [this, q] { play(q.path, q.shuffle, q.startAt, q.order); });
+            }
             return;
+        }
+        m_mpvEmbedded = m_launching.isValid() && m_launchEmbedded;
         sendWindowChoice();
         m_launching.invalidate();
         // A Play pressed while mpv was starting goes to it now.
@@ -528,6 +592,10 @@ MainWindow::MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (m_mpvEmbedded && m_mpv.connected()) {
+        m_mpv.command({"quit"});
+        m_mpv.flush();
+    }
     if (!QSettings().value("player/window", true).toBool() && m_mpv.connected() &&
         m_mpv.property("user-data/ghost/audio").toBool()) {
         m_mpv.command({"quit"});
@@ -1624,7 +1692,7 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_libraryPanel && event->type() == QEvent::Resize && m_rowDelegate) {
+    if (watched == m_libraryPanel && event->type() == QEvent::Resize && m_rowDelegate && !m_videoFull) {
         const bool compact = m_libraryPanel->width() < kCompactBelow;
         if (compact != m_compact)
             setLibraryCompact(compact);
@@ -1700,9 +1768,21 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     return QMainWindow::eventFilter(watched, event);
 }
 
+void MainWindow::restoreLibraryWidth()
+{
+    if (m_videoFull || !m_restoreLibraryUntil.isValid() || m_restoreLibraryUntil.elapsed() > 1000)
+        return;
+    const QList<int> sizes = m_split->sizes();
+    const int total = sizes.value(0) + sizes.value(1);
+    m_split->setSizes({m_libraryWidthBeforeFull, total - m_libraryWidthBeforeFull});
+    setLibraryCompact(m_compactBeforeFull);
+    syncSearchWidth();
+}
+
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
+    restoreLibraryWidth();
     layoutHeader();
     syncSearchWidth();
 }
@@ -1718,6 +1798,10 @@ void MainWindow::syncSearchWidth()
 
 void MainWindow::openPlayingList()
 {
+    if (m_mpvEmbedded && m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool()) {
+        showVideoPage();
+        return;
+    }
     const QString playing = playingListPath();
     const auto &all = m_library.playlists();
     for (int i = 0; i < all.size(); ++i) {
@@ -2587,11 +2671,21 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         m_queuedPlay = QueuedPlay{path, shuffle, startAt, order};   // the latest click wins
         return;
     }
+    const bool audio = listIsAudio(path);
+    const int embed = embedFor(audio);
     if (m_mpv.connected()) {
+        // An mpv drawing in the wrong place (in the app for a song list that
+        // wants its own window, or outside for a video) is started again.
+        if (embed != -1 && bool(embed) != m_mpvEmbedded) {
+            restartPlayer(QueuedPlay{path, shuffle, startAt, order}, 0);
+            return;
+        }
         m_mpv.command({"loadfile", path, "replace", -1, QStringLiteral("playlist-start=%1").arg(startAt)});
         if (shuffle)
             QTimer::singleShot(400, this, [this] { m_mpv.command({"playlist-shuffle"}); });
         m_mpv.setProperty("pause", false);
+        if (!audio && m_mpvEmbedded)
+            showVideoPage();
         return;
     }
     const QString mpv = findMpv();
@@ -2607,6 +2701,16 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         args << "--shuffle";
     if (startAt > 0)
         args << QStringLiteral("--playlist-start=%1").arg(startAt);
+    if (m_startSeconds > 1)
+        args << QStringLiteral("--start=%1").arg(m_startSeconds, 0, 'f', 1);
+    m_startSeconds = 0;
+    // Inside the app whenever videos may show there, so a video list later
+    // does not need mpv started again. Keys go to the app (it passes them
+    // on), mouse and mpv's own controls stay mpv's.
+    m_launchEmbedded = embed == 1 || (embed == -1 && embedFor(false) == 1);
+    if (m_launchEmbedded)
+        args << QStringLiteral("--wid=%1").arg(qulonglong(m_videoPage->surface()->winId()))
+             << "--input-vo-keyboard=no";
     args << "--" << path;
     // From mpv's own folder, the way a double-click on the .m3u starts it, so
     // its scripts and the presence agent behave the same.
@@ -2615,6 +2719,108 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         m_launchedPids << pid;
         m_launching.start();
         m_mpv.hurry();
+        if (!audio && m_launchEmbedded)
+            showVideoPage();
+    }
+}
+
+bool MainWindow::listIsAudio(const QString &path) const
+{
+    for (const Playlist &p : m_library.playlists())
+        if (p.path.compare(path, Qt::CaseInsensitive) == 0)
+            return p.audio;
+    return Playlist::peek(path).audio;
+}
+
+int MainWindow::embedFor(bool audio) const
+{
+    const bool videosInside = QSettings().value("player/embedVideo", true).toBool() && !m_videoPoppedOut;
+    if (!audio)
+        return videosInside ? 1 : 0;
+    // A song list draws nothing unless it was asked to have a window; that
+    // window must then be mpv's own, not one hidden in the app.
+    return QSettings().value("player/window", true).toBool() ? 0 : -1;
+}
+
+void MainWindow::restartPlayer(const QueuedPlay &q, double seconds)
+{
+    if (q.path.isEmpty())
+        return;
+    m_startSeconds = seconds;
+    if (!m_mpv.connected()) {
+        play(q.path, q.shuffle, q.startAt, q.order);
+        return;
+    }
+    m_restartPlay = q;   // started once the old mpv has gone
+    m_mpv.command({"quit"});
+}
+
+void MainWindow::showVideoPage()
+{
+    updateVideoPage();
+    m_pages->setCurrentWidget(m_videoPage);
+    m_nowPlaying->setLyricsOpen(false);
+}
+
+void MainWindow::updateVideoPage()
+{
+    if (!m_videoPage || m_mpv.property("user-data/ghost/audio").toBool())
+        return;
+    const QString list = playingListPath();
+    if (list.isEmpty())
+        return;
+    if (list != m_videoListPath) {
+        m_videoListPath = list;
+        Playlist p = Playlist::peek(list);
+        QVector<VideoPage::Entry> entries;
+        for (const PlaylistEntry &e : p.readEntries())
+            entries.append({e.title, e.target});
+        m_videoPage->setList(p.name, entries);
+    }
+    const QString path = m_mpv.property("path").toString();
+    QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+    if (id.isEmpty())
+        id = youtube::videoId(path);
+    m_videoPage->setPlaying(path, m_mpv.property("media-title").toString(),
+                            m_mpv.property("metadata/by-key/uploader").toString(),
+                            id.isEmpty() ? QString() : QStringLiteral("https://www.youtube.com/watch?v=") + id);
+}
+
+void MainWindow::setVideoFullScreen(bool full)
+{
+    // Only the picture, the whole screen; Esc or F comes back.
+    if (full == m_videoFull)
+        return;
+    m_videoFull = full;
+    // The library's width is kept: hidden, the panel reads as narrowed and
+    // would come back in its covers-only form.
+    if (full) {
+        m_libraryWidthBeforeFull = m_split->sizes().value(0);
+        m_compactBeforeFull = m_compact;
+    }
+    m_topBar->setVisible(!full);
+    m_split->widget(0)->setVisible(!full);
+    m_nowPlaying->setVisible(!full);
+    // No gap around the picture either.
+    if (auto *body = centralWidget()->layout()->itemAt(1)->layout())
+        body->setContentsMargins(full ? 0 : 8, 0, full ? 0 : 8, 0);
+    m_videoPage->setFullScreen(full);
+    if (!full)
+        // Once the window has settled back into its size: each resize on the
+        // way out of full screen squeezed the panel again. Put back on every
+        // resize for a moment, and once more after it.
+        m_restoreLibraryUntil.start();
+        QTimer::singleShot(150, this, &MainWindow::restoreLibraryWidth);
+        QTimer::singleShot(600, this, &MainWindow::restoreLibraryWidth);
+    if (full) {
+        m_wasMaximized = isMaximized();
+        showFullScreen();
+        m_videoPage->setFocus();
+    } else if (m_wasMaximized) {
+        showNormal();
+        ShowWindow(reinterpret_cast<HWND>(winId()), SW_MAXIMIZE);
+    } else {
+        showNormal();
     }
 }
 

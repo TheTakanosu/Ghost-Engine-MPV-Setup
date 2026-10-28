@@ -128,6 +128,11 @@ void apply(QApplication &app)
         QPushButton#link:hover { color: rgb(206,170,244); text-decoration: underline; }
         QLabel#npVolume { font-weight: 800; font-size: 9.5pt; color: rgb(236,236,241); }
         QWidget#downloadRow { background: rgb(40,39,50); border-radius: 8px; }
+        QLabel#videoTitle { font-size: 15pt; font-weight: 700; color: rgb(240,240,245); }
+        QPushButton#videoAction { background: rgb(40,39,50); border: none; border-radius: 16px; padding: 0 14px;
+                                  min-height: 32px; max-height: 32px; color: rgb(236,236,241); font-family: "Segoe UI", "Segoe Fluent Icons"; }
+        QPushButton#videoAction:hover { background: rgb(56,54,70); }
+        QWidget#videoAway { background: rgb(16,15,20); border-radius: 12px; }
         QLabel#settingName { font-size: 10.5pt; font-weight: 600; color: rgb(236,236,241); }
         QComboBox { background: rgb(40,39,50); border: 1px solid rgb(58,56,70); border-radius: 8px; padding: 6px 12px; color: rgb(236,236,241);
                     combobox-popup: 0; }
