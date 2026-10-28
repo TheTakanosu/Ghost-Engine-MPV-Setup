@@ -28,10 +28,13 @@ public:
     std::function<int()> numberFor;
     void refreshPosition();
     void setVolumeNumber(bool shown);
+    void setLyricsOpen(bool open);
 
 signals:
     // The cover was clicked: show the list mpv is playing.
     void openPlaying();
+    // The microphone was clicked: show or leave the lyrics.
+    void toggleLyrics();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -58,5 +61,6 @@ private:
     QSlider *m_volume;
     QLabel *m_volumeNumber;
     QAbstractButton *m_speaker;
+    class QPushButton *m_lyrics;
     bool m_dragging = false;
 };

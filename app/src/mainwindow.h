@@ -1,6 +1,7 @@
 #pragma once
 
 #include "library.h"
+#include "lyrics.h"
 #include "mpvclient.h"
 #include "resolver.h"
 #include "thumbnails.h"
@@ -72,6 +73,11 @@ private:
     void applyPendingOrder();
     void showHome();
     void showSettings();
+    void toggleLyrics();
+    // The song mpv is on, as artist and track for a lyrics search.
+    std::pair<QString, QString> playingSong() const;
+    void lookUpLyrics();
+    void tintLyrics();
     void applyLook();
     // Song lists play with no mpv window when the user chose so (Settings).
     void sendWindowChoice();
@@ -162,6 +168,10 @@ private:
     // pages
     QStackedWidget *m_pages = nullptr;
     class SettingsPage *m_settings = nullptr;
+    LyricsSource m_lyricsSource;
+    LyricsView *m_lyricsView = nullptr;
+    QString m_lyricsKey;           // the song the lyrics page is for
+    QWidget *m_beforeLyrics = nullptr;
     QLabel *m_greeting = nullptr;
     QLabel *m_toast = nullptr;
     QTimer m_toastTimer;

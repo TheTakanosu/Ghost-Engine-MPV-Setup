@@ -10,6 +10,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QPainter>
 #include <QSlider>
 #include <QVBoxLayout>
@@ -173,6 +174,13 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     auto *right = new QHBoxLayout(rightBox);
     right->setContentsMargins(0, 0, 0, 0);
     right->addStretch();
+    m_lyrics = new QPushButton(QString(QChar(0xE720)));   // a microphone
+    m_lyrics->setObjectName("glyph");
+    m_lyrics->setToolTip("Lyrics");
+    m_lyrics->setCursor(Qt::PointingHandCursor);
+    connect(m_lyrics, &QPushButton::clicked, this, &NowPlayingBar::toggleLyrics);
+    right->addWidget(m_lyrics);
+    right->addSpacing(6);
     m_speaker = new SpeakerIcon;
     connect(m_speaker, &QAbstractButton::clicked, this, [this] { m_mpv->command({"cycle", "mute"}); });
     right->addWidget(m_speaker);
@@ -278,6 +286,11 @@ void NowPlayingBar::showIdle()
     m_shuffled = false;
     showShuffle();
     showRepeat();
+}
+
+void NowPlayingBar::setLyricsOpen(bool open)
+{
+    m_lyrics->setStyleSheet(open ? QStringLiteral("color: rgb(176,127,224);") : QString());
 }
 
 void NowPlayingBar::setVolumeNumber(bool shown)

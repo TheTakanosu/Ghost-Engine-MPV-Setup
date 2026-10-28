@@ -278,6 +278,13 @@ MainWindow::MainWindow()
     m_pages->addWidget(buildPlaylistPage());
     m_settings = new SettingsPage;
     m_pages->addWidget(m_settings);
+    m_lyricsView = new LyricsView;
+    m_pages->addWidget(m_lyricsView);
+    m_lyricsView->onSeek = [this](double seconds) { m_mpv.command({"seek", seconds, "absolute"}); };
+    connect(&m_lyricsSource, &LyricsSource::ready, this, [this](const QString &key, const Lyrics &lyrics) {
+        if (key == m_lyricsKey)
+            m_lyricsView->setLyrics(lyrics, m_mpv.property("media-title").toString());
+    });
 
     auto *mainPanel = new QWidget;
     mainPanel->setObjectName("panel");
@@ -331,6 +338,7 @@ MainWindow::MainWindow()
         return int(m_numberedEntries.indexOf(path)) + 1;
     };
     connect(m_nowPlaying, &NowPlayingBar::openPlaying, this, &MainWindow::openPlayingList);
+    connect(m_nowPlaying, &NowPlayingBar::toggleLyrics, this, &MainWindow::toggleLyrics);
 
     auto *root = new QVBoxLayout;
     root->setContentsMargins(0, 0, 0, 0);
@@ -358,6 +366,7 @@ MainWindow::MainWindow()
             v->viewport()->update();
         m_playlistCover->update();
         m_nowPlaying->refreshCover();
+        tintLyrics();
     };
     connect(&m_resolver, &CoverResolver::resolved, this, [this, repaint] {
         fillDurations();
@@ -372,6 +381,14 @@ MainWindow::MainWindow()
             markPlaying();
         if (name == "playlist-count" || name == "playlist-path" || name == "path")
             applyPendingOrder();
+        // A song's lyrics are looked up once its length is known, which
+        // tells versions of it apart.
+        if (name == "duration")
+            lookUpLyrics();
+        if (name == "time-pos" && m_pages->currentWidget() == m_lyricsView)
+            m_lyricsView->setPosition(m_mpv.property("time-pos").toDouble());
+        if (name == "user-data/ghost/source" || name == "path")
+            tintLyrics();
         // mpv knows the length of what it plays; keep it for the list.
         if (name == "duration") {
             const QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString().isEmpty()
@@ -1721,12 +1738,91 @@ void MainWindow::markPlaying()
         m_nowPlaying->refreshPosition();   // its number may be this row now
 }
 
+void MainWindow::toggleLyrics()
+{
+    // The microphone opens the lyrics and, pressed again, goes back to the
+    // page that was open, as Spotify's does.
+    if (m_pages->currentWidget() == m_lyricsView) {
+        m_pages->setCurrentWidget(m_beforeLyrics ? m_beforeLyrics : m_pages->widget(0));
+        m_nowPlaying->setLyricsOpen(false);
+        return;
+    }
+    m_beforeLyrics = m_pages->currentWidget();
+    if (m_lyricsKey.isEmpty())
+        lookUpLyrics();
+    m_lyricsView->setPosition(m_mpv.property("time-pos").toDouble());
+    m_pages->setCurrentWidget(m_lyricsView);
+    m_nowPlaying->setLyricsOpen(true);
+}
+
+std::pair<QString, QString> MainWindow::playingSong() const
+{
+    // The list's own "Artist - Track" is cleaner than a YouTube title; the
+    // title is the fallback for a song opened on its own.
+    QString title;
+    const QString list = playingListPath();
+    const QString path = m_mpv.property("path").toString();
+    if (!list.isEmpty()) {
+        Playlist p;
+        p.path = list;
+        for (const PlaylistEntry &e : p.readEntries())
+            if (e.target == path) { title = e.title; break; }
+    }
+    if (title.isEmpty())
+        title = m_mpv.property("media-title").toString();
+    auto [track, artist] = splitTitle(title);
+    if (artist.isEmpty())
+        artist = m_mpv.property("metadata/by-key/uploader").toString().remove(QStringLiteral(" - Topic"));
+    // What a lyrics site does not have in its titles: "(Official Video)",
+    // "[Lyrics]", "- Super Slowed", "ft. Someone"; and only the first of
+    // several artists.
+    static const QRegularExpression noise(QStringLiteral(
+        R"(\s*[\(\[][^\)\]]*(official|video|lyric|audio|visuali[sz]er|clip|klip|hd|4k|prod|slowed|sped|speed|reverb|nightcore|remix)[^\)\]]*[\)\]])"
+        R"(|\s+-\s+((super|ultra)\s+)?(slowed|sped up|speed up|reverb|nightcore).*$)"
+        R"(|\s+(ft\.?|feat\.?)\s+.*$)"), QRegularExpression::CaseInsensitiveOption);
+    track.remove(noise);
+    artist = artist.split(QRegularExpression(QStringLiteral(R"(\s*(,|&| x | X |feat\.?|ft\.?)\s*)"))).value(0);
+    return {artist.trimmed(), track.trimmed()};
+}
+
+void MainWindow::lookUpLyrics()
+{
+    if (!m_mpv.connected())
+        return;
+    const auto [artist, track] = playingSong();
+    if (track.isEmpty())
+        return;
+    const QString key = LyricsSource::keyFor(artist, track);
+    if (key == m_lyricsKey)
+        return;
+    m_lyricsKey = key;
+    m_lyricsView->setSearching(artist.isEmpty() ? track : artist + QStringLiteral(" · ") + track);
+    m_lyricsSource.fetch(artist, track, m_mpv.property("duration").toDouble());
+}
+
+void MainWindow::tintLyrics()
+{
+    // The page takes the playing song's cover colour, kept dark enough for
+    // white words.
+    QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+    if (id.isEmpty())
+        id = youtube::videoId(m_mpv.property("path").toString());
+    const QPixmap cover = m_covers.get(id, ThumbnailCache::Size::Card);
+    if (cover.isNull()) {
+        m_lyricsView->setTint(QColor());
+        return;
+    }
+    const QColor avg = cover.toImage().scaled(1, 1, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).pixelColor(0, 0);
+    m_lyricsView->setTint(QColor::fromHsv(avg.hsvHue(), qMin(avg.hsvSaturation(), 170), qBound(60, avg.value(), 110)));
+}
+
 void MainWindow::showSettings()
 {
     m_open = -1;
     m_libraryList->clearSelection();
     m_settings->load();
     m_pages->setCurrentWidget(m_settings);
+    m_nowPlaying->setLyricsOpen(false);
 }
 
 void MainWindow::applyLook()
