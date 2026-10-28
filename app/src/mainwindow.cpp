@@ -336,6 +336,18 @@ MainWindow::MainWindow()
     m_videoPage->onVolume = [this](int v) { m_mpv.setProperty("volume", v); };
     m_videoPage->onToggleMute = [this] { m_mpv.command({"cycle", "mute"}); };
     m_videoPage->onScreenMoved = [this] { schedulePlace(); };
+    // While the page scrolls, mpv's window moves in the same step as the
+    // page, or the old picture is seen for a moment over the top bar.
+    m_videoPage->onScrolled = [this] { placeSurface(); };
+    m_videoPage->onMinimize = [this] {
+        // Back to where the video was opened from, the video in the corner.
+        setVideoFullScreen(false);
+        QWidget *back = m_beforeVideo && m_beforeVideo != m_videoPage ? m_beforeVideo.data() : nullptr;
+        if (back)
+            m_pages->setCurrentWidget(back);
+        else
+            showHome();
+    };
     m_videoPage->onRestore = [this] { showVideoPage(); };
     m_videoPage->onMiniMoved = [this](const QPoint &at) {
         m_miniAt = at;
@@ -381,6 +393,7 @@ MainWindow::MainWindow()
     key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -10}); });
     key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 10}); });
     key(QKeySequence(Qt::Key_F), [this] { setVideoFullScreen(!m_videoFull); });
+    key(QKeySequence(Qt::Key_I), [this] { if (m_videoPage->onMinimize) m_videoPage->onMinimize(); });
     auto *escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     connect(escape, &QShortcut::activated, this, [this] { if (m_videoFull) setVideoFullScreen(false); });
     m_lyricsView->onSeek = [this](double seconds) { m_mpv.command({"seek", seconds, "absolute"}); };
@@ -2909,6 +2922,8 @@ void MainWindow::showVideoPage()
     m_videoPage->setVolume(int(m_mpv.property("volume").toDouble()), m_mpv.property("mute").toBool());
     m_videoPage->setCinema(m_compact);
     m_miniClosed = false;
+    if (m_pages->currentWidget() != m_videoPage)
+        m_beforeVideo = m_pages->currentWidget();
     m_pages->setCurrentWidget(m_videoPage);
     m_nowPlaying->setLyricsOpen(false);
     schedulePlace();
@@ -2981,8 +2996,8 @@ void MainWindow::placeSurface()
         const QRect picture(screen->mapTo(host, QPoint()), screen->size());
         const QRect view(m_videoPage->viewport()->mapTo(host, QPoint()), m_videoPage->viewport()->size());
         visible = picture & view;
-        surface->setGeometry(picture);
         m_videoPage->setSurfaceVisibleArea(visible.isEmpty() ? QRect(0, 0, 1, 1) : visible.translated(-picture.topLeft()));
+        surface->setGeometry(picture);
         miniWindow->hide();
     } else if (mini) {
         // The video's shape, 384 px wide unless it was resized; bottom right

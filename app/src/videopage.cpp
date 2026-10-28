@@ -264,9 +264,8 @@ protected:
         }
         const int round = 2;   // DWMWA_WINDOW_CORNER_PREFERENCE: round
         DwmSetWindowAttribute(hwnd, 33, &round, sizeof(round));
-        follow();
         face->show();
-        face->raise();
+        follow();
     }
     void hideEvent(QHideEvent *) override { face->hide(); }
     void moveEvent(QMoveEvent *) override { follow(); }
@@ -313,8 +312,14 @@ protected:
 private:
     void follow()
     {
-        if (face)
+        // Its face stays on top of it: Windows put the mini window back
+        // over it after its frame was changed, hiding the buttons.
+        if (face) {
             face->setGeometry(geometry());
+            if (face->isVisible())
+                SetWindowPos(reinterpret_cast<HWND>(face->winId()), HWND_TOP, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
     }
 };
 
@@ -402,21 +407,26 @@ protected:
             clicked();
         m_pressed = false;
     }
-    void resizeEvent(QResizeEvent *) override
-    {
-        if (buttons.size() < 3)
-            return;
-        buttons[0]->move((width() - buttons[0]->width()) / 2, (height() - buttons[0]->height()) / 2);
-        buttons[1]->move(8, 8);
-        buttons[2]->move(width() - buttons[2]->width() - 8, 8);
-    }
+    void resizeEvent(QResizeEvent *) override { placeButtons(); }
 
 private:
     QPoint m_press;
     bool m_pressed = false;
+    // Play in the middle; back to the video and pin at the top left, close
+    // at the top right.
+    void placeButtons()
+    {
+        if (buttons.size() < 4)
+            return;
+        buttons[0]->move((width() - buttons[0]->width()) / 2, (height() - buttons[0]->height()) / 2);
+        buttons[1]->move(8, 8);
+        buttons[2]->move(8 + buttons[1]->width() + 4, 8);
+        buttons[3]->move(width() - buttons[3]->width() - 8, 8);
+    }
     void setHot(bool hot)
     {
         m_hot = hot;
+        placeButtons();
         for (QWidget *b : std::as_const(buttons))
             b->setVisible(hot);
         update();
@@ -475,15 +485,19 @@ public:
         p->setPen(now ? theme::accent() : theme::text());
         const QFontMetricsF tm(title);
         const QRectF titleBox(text.left(), text.top(), text.width(), tm.lineSpacing() * 2);
-        p->drawText(titleBox, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-                    tm.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, titleBox.width() * 2 - 20));
+        const QString shown = tm.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, titleBox.width() * 2 - 20);
+        p->drawText(titleBox, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, shown);
+        // The channel goes right under the title, on its second line when
+        // the title takes only one.
+        const qreal used = qMin(titleBox.height(),
+                                tm.boundingRect(titleBox, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, shown).height());
         const QString by = channel ? channel(target) : QString();
         if (!by.isEmpty()) {
             QFont note = option.font;
             note.setPointSizeF(note.pointSizeF() * 0.9);
             p->setFont(note);
             p->setPen(QColor(154, 152, 166));
-            p->drawText(QRectF(text.left(), titleBox.bottom() + 2, text.width(), QFontMetricsF(note).lineSpacing()),
+            p->drawText(QRectF(text.left(), titleBox.top() + used + 1, text.width(), QFontMetricsF(note).lineSpacing()),
                         Qt::AlignLeft | Qt::AlignVCenter, QFontMetricsF(note).elidedText(by, Qt::ElideRight, text.width()));
         }
         p->restore();
@@ -510,6 +524,7 @@ public:
         setFlat(true);
     }
     void setOn(bool on) { m_on = on; update(); }
+    void setPip(bool pip) { m_pip = pip; update(); }   // a small screen in a big one
 
     QSize sizeHint() const override
     {
@@ -540,7 +555,20 @@ protected:
         if (!m_glyph)
             f.setWeight(QFont::DemiBold);
         p.setFont(f);
-        p.setPen(m_on ? theme::accent() : QColor(240, 240, 245));
+        const QColor ink = m_on ? theme::accent() : QColor(240, 240, 245);
+        if (m_pip) {
+            const qreal w = height() * 0.5, h = w * 0.72;
+            const QRectF screen(box.center().x() - w / 2, box.center().y() - h / 2, w, h);
+            p.setPen(QPen(ink, 1.4));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(screen, 2, 2);
+            p.setPen(Qt::NoPen);
+            p.setBrush(ink);
+            p.drawRoundedRect(QRectF(screen.center().x() + 0.5, screen.center().y() + 0.5,
+                                     screen.width() / 2 - 2.5, screen.height() / 2 - 2.5), 1, 1);
+            return;
+        }
+        p.setPen(ink);
         p.drawText(rect(), Qt::AlignCenter, text());
     }
 
@@ -549,6 +577,7 @@ private:
     int m_size;
     qreal m_point;
     bool m_on = false;
+    bool m_pip = false;
 };
 
 QPushButton *glyphButton(const QString &glyph, const QString &tip, qreal pointSize = 10.5)
@@ -569,6 +598,7 @@ QPushButton *miniButton(const QString &glyph, const QString &tip)
 {
     auto *b = new FlatButton(glyph, true, 26, 8.5);
     b->setToolTip(tip);
+    b->setFixedSize(b->sizeHint());   // no layout places these: they keep their size
     return b;
 }
 
@@ -694,7 +724,7 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_page->setFrameShape(QFrame::NoFrame);
     m_page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_page->viewport()->setAutoFillBackground(false);
-    connect(m_page->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { if (onScreenMoved) onScreenMoved(); });
+    connect(m_page->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { if (onScrolled) onScrolled(); });
 
     m_listName = new QLabel;
     m_listName->setObjectName("sectionTitle");
@@ -938,6 +968,10 @@ QWidget *VideoPage::buildControls()
     row->addSpacing(12);
     row->addWidget(m_time);
     row->addStretch();
+    auto *miniplayer = glyphButton(QString(), "Mini player (I)");
+    static_cast<FlatButton *>(miniplayer)->setPip(true);
+    connect(miniplayer, &QPushButton::clicked, this, [this] { if (onMinimize) onMinimize(); });
+    row->addWidget(miniplayer);
     row->addWidget(m_subs);
     row->addWidget(m_quality);
     row->addWidget(m_speed);
@@ -966,10 +1000,22 @@ QWidget *VideoPage::buildMini()
     auto *expand = miniButton(QString(QChar(0xE740)), "Back to the video");
     expand->setParent(face);
     connect(expand, &QPushButton::clicked, this, [this] { if (onRestore) onRestore(); });
+    auto *pin = miniButton(QString(QChar(0xE718)), "Keep on top of other windows");
+    pin->setParent(face);
+    connect(pin, &QPushButton::clicked, this, [this, pin] {
+        // Above every other program's windows too, as a picture in picture.
+        m_pinned = !m_pinned;
+        static_cast<FlatButton *>(pin)->setOn(m_pinned);
+        pin->setToolTip(m_pinned ? "Stop keeping on top" : "Keep on top of other windows");
+        for (QWidget *w : {m_miniWindow, m_mini})
+            SetWindowPos(reinterpret_cast<HWND>(w->winId()), m_pinned ? HWND_TOPMOST : HWND_NOTOPMOST,
+                         0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    });
     auto *close = miniButton(QString(QChar(0xE8BB)), "Close (pauses the video)");
     close->setParent(face);
     connect(close, &QPushButton::clicked, this, [this] { if (onCloseMini) onCloseMini(); });
-    face->buttons = {m_miniPlay, expand, close};
+    face->buttons = {m_miniPlay, expand, pin, close};
+    face->setMouseTracking(true);   // the resize cursor at its edges
     for (QWidget *b : std::as_const(face->buttons))
         b->hide();
     return face;

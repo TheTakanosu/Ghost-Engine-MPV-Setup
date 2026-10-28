@@ -100,6 +100,8 @@ public:
     std::function<void(int volume)> onVolume;
     std::function<void()> onToggleMute;
     std::function<void()> onScreenMoved;   // screen() moved or changed size
+    std::function<void()> onScrolled;      // the page scrolled: mpv's window must follow now
+    std::function<void()> onMinimize;      // to the mini player
     std::function<void()> onRestore;       // the mini player was clicked
     std::function<void()> onCloseMini;
     std::function<void(const QPoint &at)> onMiniMoved;   // dragged there
@@ -162,4 +164,5 @@ private:
     bool m_cinema = false;
     bool m_expanded = false;
     bool m_hasDescription = false;
+    bool m_pinned = false;      // the mini player kept above other programs
 };
