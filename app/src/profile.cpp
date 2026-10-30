@@ -84,6 +84,7 @@ DiscordProfile::DiscordProfile(QObject *parent) : QObject(parent)
     m_id = settings.value("profile/id").toString();
     m_name = settings.value("profile/name").toString();
     m_handle = settings.value("profile/handle").toString();
+    m_avatarUrl = settings.value("profile/avatarUrl").toString();
     m_avatar.load(avatarPath());
     connect(&m_pipe, &QLocalSocket::connected, this, [this] {
         const QByteArray body = QJsonDocument(QJsonObject{{"v", 1}, {"client_id", kClientId}}).toJson(QJsonDocument::Compact);
@@ -165,6 +166,8 @@ void DiscordProfile::fetchAvatar(const QString &hash)
     const QString url = hash.isEmpty()
         ? QStringLiteral("https://cdn.discordapp.com/embed/avatars/%1.png").arg((m_id.toULongLong() >> 22) % 6)
         : QStringLiteral("https://cdn.discordapp.com/avatars/%1/%2.png?size=256").arg(m_id, hash);
+    m_avatarUrl = url;
+    QSettings().setValue("profile/avatarUrl", url);
     QNetworkReply *reply = m_net.get(QNetworkRequest(QUrl(url)));
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();
@@ -175,6 +178,26 @@ void DiscordProfile::fetchAvatar(const QString &hash)
         picture.save(avatarPath(), "PNG");
         emit changed();
     });
+}
+
+QPixmap RemotePictures::get(const QString &url)
+{
+    if (!url.startsWith(QStringLiteral("https://")))
+        return {};
+    auto known = m_pictures.constFind(url);
+    if (known != m_pictures.cend())
+        return *known;
+    m_pictures.insert(url, QPixmap());   // asked; empty until it arrives
+    QNetworkReply *reply = m_net.get(QNetworkRequest(QUrl(url)));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url] {
+        reply->deleteLater();
+        QPixmap picture;
+        if (reply->error() == QNetworkReply::NoError && picture.loadFromData(reply->readAll())) {
+            m_pictures.insert(url, picture);
+            emit ready(url);
+        }
+    });
+    return {};
 }
 
 // -- listening -----------------------------------------------------------------

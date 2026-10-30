@@ -214,6 +214,15 @@ private:
     // The profile page: who is listening (from Discord), what plays now, and
     // what has been played most.
     DiscordProfile m_profile;
+    RemotePictures m_pictures;
+    // Sharing: a copy of the list with the profile card in it, put on the
+    // clipboard as a file to paste into a Discord chat.
+    void shareList(int index);
+    QWidget *m_sharedBy = nullptr;   // "Shared by" under a received list's name
+    QLabel *m_sharedAvatar = nullptr;
+    QLabel *m_sharedText = nullptr;
+    QString m_sharedAvatarUrl;
+    void showSharedBy(const QString &tag);
     ListeningStats m_stats;
     ProfilePage *m_profilePage = nullptr;
     QWidget *m_profileScroll = nullptr;

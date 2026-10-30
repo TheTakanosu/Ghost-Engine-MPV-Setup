@@ -27,6 +27,7 @@ public:
     QStringList preview;  // the first few entries, where a cover is looked for
     QDateTime modified;
     QString folder;       // the library folder it sits in (Music\Ghost Engine\<folder>), or empty
+    QString shared;       // "#GHOST_SHARED:<json>": who shared it with this library, as JSON
 
     QVector<PlaylistEntry> readEntries() const;
 

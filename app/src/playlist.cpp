@@ -39,6 +39,10 @@ Playlist Playlist::peek(const QString &path)
     in.setEncoding(QStringConverter::Utf8);
     while (!in.atEnd()) {
         const QString line = in.readLine().trimmed();
+        if (line.startsWith(QStringLiteral("#GHOST_SHARED:"))) {
+            p.shared = line.mid(14).trimmed();
+            continue;
+        }
         if (line.startsWith(QStringLiteral("#PLAYLIST:"))) {
             const QString named = line.mid(10).trimmed();
             if (!named.isEmpty())

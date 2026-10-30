@@ -42,6 +42,11 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
+#include <QClipboard>
+#include <QMimeData>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QPushButton>
 #include <QRandomGenerator>
@@ -1150,6 +1155,7 @@ void MainWindow::showPlaylistMenu(int index, const QPoint &at)
     if (QFileInfo::exists(customCoverPath(path)))
         menu.addAction("Remove custom image", this, [this, index] { removeCover(index); });
     menu.addAction(m_offline.isMarked(path) ? "Remove download" : "Download", this, [this, index] { toggleDownload(index); });
+    menu.addAction("Share", this, [this, index] { shareList(index); });
     menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
     menu.addAction("Show in folder", this, [path] {
         QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(path)});
@@ -1566,6 +1572,22 @@ QWidget *MainWindow::buildPlaylistPage()
     text->addWidget(m_playlistKind);
     text->addWidget(m_playlistName);
     text->addWidget(m_playlistInfo);
+    m_sharedBy = new QWidget;
+    m_sharedAvatar = new QLabel;
+    m_sharedAvatar->setFixedSize(22, 22);
+    m_sharedText = new QLabel;
+    m_sharedText->setObjectName("heroInfo");
+    auto *sharedRow = new QHBoxLayout(m_sharedBy);
+    sharedRow->setContentsMargins(0, 2, 0, 0);
+    sharedRow->setSpacing(8);
+    sharedRow->addWidget(m_sharedAvatar);
+    sharedRow->addWidget(m_sharedText, 1);
+    m_sharedBy->hide();
+    text->addWidget(m_sharedBy);
+    connect(&m_pictures, &RemotePictures::ready, this, [this](const QString &url) {
+        if (url == m_sharedAvatarUrl && m_open >= 0)
+            showSharedBy(m_library.playlists()[m_open].shared);
+    });
     m_headRow = new QHBoxLayout(header);
     m_headRow->addLayout(text, 1);
 
@@ -1604,6 +1626,12 @@ QWidget *MainWindow::buildPlaylistPage()
     m_downloadButton->setCursor(Qt::PointingHandCursor);
     connect(m_downloadButton, &QPushButton::clicked, this, [this] { toggleDownload(m_open); });
     actions->addWidget(m_downloadButton);
+    auto *shareButton = new QPushButton(QString(QChar(0xE72D)));
+    shareButton->setObjectName("bigGlyph");
+    shareButton->setCursor(Qt::PointingHandCursor);
+    shareButton->setToolTip("Share: copies the list to paste into a Discord chat");
+    connect(shareButton, &QPushButton::clicked, this, [this] { shareList(m_open); });
+    actions->addWidget(shareButton);
     actions->addStretch();
     m_songSearch = new QLineEdit;
     m_songSearch->setObjectName("songSearch");
@@ -1770,6 +1798,8 @@ void MainWindow::layoutHeader()
     m_headRow->setContentsMargins(cover.right() + (tall ? 26 : 16), cover.top(), 28, cover.top());
     m_playlistKind->setVisible(tall);
     m_playlistInfo->setVisible(header->height() > 120);
+    if (m_open >= 0)
+        m_sharedBy->setVisible(header->height() > 150 && !m_library.playlists()[m_open].shared.isEmpty());
     fitTitle();
     header->update();
 }
@@ -1886,6 +1916,10 @@ void MainWindow::importStray(bool ask)
     for (const Playlist &p : m_library.playlists()) {
         if (QDir::cleanPath(QFileInfo(p.path).absolutePath()).compare(downloads, Qt::CaseInsensitive) != 0)
             continue;
+        if (!p.shared.isEmpty()) {   // a friend's, through Discord
+            stray << p.path;
+            continue;
+        }
         for (const QString &target : p.preview)
             if (target.startsWith("ytdl://")) { stray << p.path; break; }
     }
@@ -2293,6 +2327,116 @@ void MainWindow::removeCover(int index)
     m_playlistCover->update();
 }
 
+void MainWindow::showSharedBy(const QString &tag)
+{
+    // "Shared by srew  ·  listens to BEGE, Jako, Lil Zey", with their avatar.
+    const QJsonObject who = QJsonDocument::fromJson(tag.toUtf8()).object();
+    const QString name = who.value("name").toString();
+    if (name.isEmpty()) {
+        m_sharedBy->hide();
+        return;
+    }
+    QString text = QStringLiteral("Shared by <b>%1</b>").arg(name.toHtmlEscaped());
+    QStringList top;
+    for (const QJsonValue &v : who.value("top").toArray())
+        top << v.toString().toHtmlEscaped();
+    if (!top.isEmpty())
+        text += QStringLiteral("  ·  listens to ") + top.join(QStringLiteral(", "));
+    m_sharedText->setText(text);
+    m_sharedText->setToolTip(who.value("handle").toString().isEmpty() ? QString()
+                                 : QStringLiteral("@") + who.value("handle").toString());
+    m_sharedAvatarUrl = who.value("avatar").toString();
+    const QPixmap avatar = m_pictures.get(m_sharedAvatarUrl);
+    const qreal dpr = devicePixelRatioF();
+    QPixmap round(QSize(22, 22) * dpr);
+    round.setDevicePixelRatio(dpr);
+    round.fill(Qt::transparent);
+    QPainter p(&round);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    QPainterPath circle;
+    circle.addEllipse(QRectF(0, 0, 22, 22));
+    p.setClipPath(circle);
+    if (avatar.isNull())
+        p.fillRect(QRectF(0, 0, 22, 22), QColor(46, 44, 58));
+    else
+        p.drawPixmap(QRectF(0, 0, 22, 22), avatar, QRectF(avatar.rect()));
+    p.end();
+    m_sharedAvatar->setPixmap(round);
+    m_sharedBy->setVisible(m_playlistCover->height() > 150);
+}
+
+void MainWindow::shareList(int index)
+{
+    // A copy of the list with who shares it written in (name, avatar, the
+    // artists they play most), put on the clipboard as a file, the way
+    // Explorer copies one: Ctrl+V in a Discord chat sends it. Whoever opens
+    // it gets it in their library with the card under its name.
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    QFile source(all[index].path);
+    if (!source.open(QIODevice::ReadOnly)) {
+        toast(QStringLiteral("The playlist couldn't be read"));
+        return;
+    }
+    const QString content = QString::fromUtf8(source.readAll());
+    source.close();
+    const QString eol = content.contains(QStringLiteral("\r\n")) ? QStringLiteral("\r\n") : QStringLiteral("\n");
+    QStringList lines = content.split(QRegularExpression(QStringLiteral("\r?\n")));
+    lines.erase(std::remove_if(lines.begin(), lines.end(), [](const QString &l) {
+        return l.trimmed().startsWith(QStringLiteral("#GHOST_SHARED:"));   // a friend's card goes, ours comes
+    }), lines.end());
+
+    QJsonObject who;
+    who["name"] = m_profile.known() ? m_profile.name() : qEnvironmentVariable("USERNAME");
+    if (m_profile.known()) {
+        who["handle"] = m_profile.handle();
+        who["id"] = m_profile.id();
+        who["avatar"] = m_profile.avatarUrl();
+    }
+    QJsonArray top;
+    for (const auto &a : m_stats.topArtists(3))
+        top.append(a.name);
+    if (!top.isEmpty())
+        who["top"] = top;
+    who["at"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    const QString tag = QStringLiteral("#GHOST_SHARED:") + QString::fromUtf8(QJsonDocument(who).toJson(QJsonDocument::Compact));
+
+    // After the header (#EXTM3U, #PLAYLIST:, #GHOST_AUDIO): #GHOST_AUDIO is
+    // looked for in the first bytes only.
+    int at = 0;
+    while (at < lines.size() && lines[at].trimmed().startsWith('#') &&
+           !lines[at].trimmed().startsWith(QStringLiteral("#EXTINF")) &&
+           !lines[at].trimmed().startsWith(QStringLiteral("#GHOST_ADDED")))
+        ++at;
+    lines.insert(at, tag);
+
+    static const QRegularExpression forbidden(QStringLiteral(R"([\\/:*?"<>|]+)"));
+    QString clean = all[index].name;
+    clean.replace(forbidden, QStringLiteral(" ")).replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral(" "));
+    clean = clean.trimmed();
+    if (clean.isEmpty())
+        clean = QStringLiteral("playlist");
+    const QString folder = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/Ghost Engine share");
+    QDir().mkpath(folder);
+    const QString target = folder + '/' + clean + QStringLiteral(".m3u");
+    QFile out(target);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) || out.write(lines.join(eol).toUtf8()) < 0) {
+        toast(QStringLiteral("The copy to share couldn't be written"));
+        return;
+    }
+    out.close();
+
+    auto *mime = new QMimeData;
+    mime->setUrls({QUrl::fromLocalFile(target)});
+    // Explorer's own hint that this is a copy, not a move.
+    mime->setData(QStringLiteral("application/x-qt-windows-mime;value=\"Preferred DropEffect\""),
+                  QByteArray("\x01\x00\x00\x00", 4));
+    QGuiApplication::clipboard()->setMimeData(mime);
+    toast(QStringLiteral("Copied %1. Paste it into a Discord chat with Ctrl+V").arg(all[index].name));
+}
+
 void MainWindow::exportPlaylist(int index)
 {
     // A copy to share, under the list's name with what Windows refuses in
@@ -2603,6 +2747,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     m_playlistKind->setText(p.audio ? "PLAYLIST  ·  SONGS" : "PLAYLIST  ·  VIDEOS");
     m_playlistInfo->setText(subtitleFor(p) + QStringLiteral("  ·  added ") +
                             QLocale().toString(p.modified.date(), QLocale::ShortFormat));
+    showSharedBy(p.shared);
     static_cast<PlaylistHeader *>(m_playlistCover)->setName(p.name);
     static_cast<PlaylistHeader *>(m_playlistCover)->setTint(
         QSettings().value("headerColor/" + QFileInfo(p.path).fileName()).value<QColor>());

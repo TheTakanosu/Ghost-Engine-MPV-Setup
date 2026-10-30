@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QLocalSocket>
@@ -30,6 +31,8 @@ public:
     QString name() const { return m_name; }       // the display name
     QString handle() const { return m_handle; }   // the @username
     QPixmap avatar() const { return m_avatar; }
+    QString id() const { return m_id; }
+    QString avatarUrl() const { return m_avatarUrl; }   // Discord's address for it
 
 signals:
     void changed();
@@ -44,8 +47,25 @@ private:
     QNetworkAccessManager m_net;
     QByteArray m_buffer;
     int m_pipeNumber = 0;
-    QString m_id, m_name, m_handle;
+    QString m_id, m_name, m_handle, m_avatarUrl;
     QPixmap m_avatar;
+};
+
+// Pictures by their web address, each fetched once per session: the avatar
+// of whoever shared a list.
+class RemotePictures : public QObject {
+    Q_OBJECT
+
+public:
+    explicit RemotePictures(QObject *parent = nullptr) : QObject(parent) {}
+    QPixmap get(const QString &url);
+
+signals:
+    void ready(const QString &url);
+
+private:
+    QNetworkAccessManager m_net;
+    QHash<QString, QPixmap> m_pictures;
 };
 
 // What has been listened to: a song counts as played after 30 seconds of it,
