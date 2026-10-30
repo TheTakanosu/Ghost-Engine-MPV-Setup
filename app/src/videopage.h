@@ -4,6 +4,7 @@
 #include <QString>
 #include <QVariant>
 #include <QVector>
+#include <QPointer>
 #include <QWidget>
 #include <functional>
 
@@ -79,6 +80,9 @@ public:
     // into, with its buttons on top. All owned by the main window.
     QWidget *controls() const { return m_controls; }
     QWidget *corners() const { return m_corners; }
+    // Where the wheel goes over the picture: the page, or (the picture in the
+    // now playing view) that view.
+    void setWheelTarget(QWidget *viewport) { m_wheelTarget = viewport; }
     QWidget *miniWindow() const { return m_miniWindow; }
     QWidget *mini() const { return m_mini; }
     void setOwner(QWidget *window);
@@ -157,6 +161,7 @@ private:
     QWidget *m_controls;
     QWidget *m_mini;
     QWidget *m_miniWindow;
+    QPointer<QWidget> m_wheelTarget;
     QWidget *m_corners;
     QGridLayout *m_grid;
     QScrollArea *m_page;

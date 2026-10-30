@@ -34,6 +34,7 @@ mp.add_hook("on_load", 50, function()
             -- songmatch.lua asks YouTube Music for songs in audio lists.
             mp.set_property_native("user-data/ghost/audio", audio or false)
             mp.set_property_native("user-data/ghost/video-mode", false)
+            mp.set_property_native("user-data/ghost/video-once", "")
 
             if audio then
                 if not in_audio_mode then
@@ -65,9 +66,17 @@ end)
 -- until "Switch to audio" or another list. songmatch.lua looks the songs up
 -- on YouTube instead of YouTube Music meanwhile. 9: after songmatch.lua (8)
 -- has picked the video, before ytdl_hook (10) opens it.
+--
+-- "Mini video" is the same for one song only: the app names the entry in
+-- user-data/ghost/video-once, and the next one plays as sound again.
 mp.add_hook("on_load", 9, function()
-    local on = mp.get_property_native("user-data/ghost/audio") == true
-        and mp.get_property_native("user-data/ghost/video-mode") == true
+    local once = mp.get_property_native("user-data/ghost/video-once")
+    local single = type(once) == "string" and once ~= "" and once == mp.get_property("path", "")
+    if not single and type(once) == "string" and once ~= "" then
+        mp.set_property_native("user-data/ghost/video-once", "")
+    end
+    local mode = mp.get_property_native("user-data/ghost/video-mode") == true
+    local on = mp.get_property_native("user-data/ghost/audio") == true and (mode or single)
     if on then
         mp.set_property("file-local-options/vid", "auto")
         local format = mp.get_property_native("user-data/ghost/video-format") or ""
@@ -75,6 +84,8 @@ mp.add_hook("on_load", 9, function()
             mp.set_property("file-local-options/ytdl-format", format)
         end
     end
+    -- Before video-on: the app reads both when video-on changes.
+    mp.set_property_native("user-data/ghost/video-panel", on and single and not mode)
     mp.set_property_native("user-data/ghost/video-on", on)
 end)
 

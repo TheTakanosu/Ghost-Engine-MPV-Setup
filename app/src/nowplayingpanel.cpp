@@ -175,9 +175,10 @@ QColor softTint(const QPixmap &cover)
 class SquareCover : public QWidget {
 public:
     QPixmap picture;
+    double aspect = 1;   // the video's while it plays here
     SquareCover() { setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred); }
     bool hasHeightForWidth() const override { return true; }
-    int heightForWidth(int w) const override { return w; }
+    int heightForWidth(int w) const override { return int(w / aspect); }
     QSize sizeHint() const override { return {300, 300}; }
 
 protected:
@@ -186,12 +187,13 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
-        const QRectF box(0, 0, width(), width());
+        const QRectF box(0, 0, width(), height());
         QPainterPath shape;
         shape.addRoundedRect(box, 8, 8);
         p.setClipPath(shape);
-        if (picture.isNull()) {
-            p.fillRect(box, QColor(40, 38, 48));
+        if (picture.isNull() || aspect != 1) {
+            // Under the video, while it loads: dark, not the cover cut wide.
+            p.fillRect(box, aspect != 1 ? QColor(0, 0, 0) : QColor(40, 38, 48));
             return;
         }
         const int side = qMin(picture.width(), picture.height());
@@ -296,6 +298,11 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_switch->setObjectName("npSwitch");
     m_switch->setCursor(Qt::PointingHandCursor);
     connect(m_switch, &QPushButton::clicked, this, [this] { if (onSwitchVideo) onSwitchVideo(); });
+    // This one song's video, right here in the cover's place.
+    m_mini = new QPushButton;
+    m_mini->setObjectName("npSwitch");
+    m_mini->setCursor(Qt::PointingHandCursor);
+    connect(m_mini, &QPushButton::clicked, this, [this] { if (onMiniVideo) onMiniVideo(); });
 
     m_title = new QLabel;
     m_title->setWordWrap(true);
@@ -410,7 +417,12 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     column->setContentsMargins(16, 4, 16, 16);
     column->setSpacing(12);
     column->addWidget(m_cover);
-    column->addWidget(m_switch, 0, Qt::AlignLeft);
+    auto *switches = new QHBoxLayout;
+    switches->setSpacing(8);
+    switches->addWidget(m_switch);
+    switches->addWidget(m_mini);
+    switches->addStretch();
+    column->addLayout(switches);
     column->addLayout(nameRow);
     column->addWidget(m_lyricsCard);
     column->addWidget(m_artistCard);
@@ -431,7 +443,7 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     box->addLayout(top);
     box->addWidget(scroll, 1);
 
-    setVideoState(false, false, false);
+    setVideoState(false, false, false, false, false);
     setLyrics(Lyrics(), false);
     setArtist(nullptr);
     setCredits({}, false);
@@ -470,30 +482,52 @@ void NowPlayingPanel::setCover(const QPixmap &cover)
     m_lyricsCard->setStyleSheet(QStringLiteral("QFrame#npCard { background: %1; }").arg(tint.name()));
 }
 
-void NowPlayingPanel::setVideoState(bool available, bool video, bool busy)
+void NowPlayingPanel::setVideoState(bool available, bool video, bool busy, bool mini, bool miniBusy)
 {
-    m_switch->setVisible(available);
-    m_switch->setEnabled(!busy);
-    // A screen for the video, a note for the song.
-    m_switch->setText(busy ? QStringLiteral("Loading the video...")
-                      : video ? QStringLiteral("Switch to audio") : QStringLiteral("Switch to video"));
     // The glyph as an icon: inside the text it sat lower than the words and
-    // pushed them off the middle. A note for the song, a screen for the video.
-    const qreal dpr = devicePixelRatioF();
-    QPixmap glyph(QSize(16, 16) * dpr);
-    glyph.setDevicePixelRatio(dpr);
-    glyph.fill(Qt::transparent);
-    if (!busy) {
-        QPainter p(&glyph);
-        p.setRenderHint(QPainter::TextAntialiasing);
-        QFont icons(QStringLiteral("Segoe Fluent Icons"));
-        icons.setPixelSize(14);
-        p.setFont(icons);
-        p.setPen(QColor(240, 240, 245));
-        p.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, QString(QChar(video ? 0xEC4F : 0xE714)));
-    }
-    m_switch->setIcon(QIcon(glyph));
-    m_switch->setIconSize(QSize(busy ? 0 : 16, 16));
+    // pushed them off the middle.
+    const auto label = [this](QPushButton *button, const QString &text, QChar glyph, bool loading) {
+        button->setEnabled(!loading);
+        button->setText(loading ? QStringLiteral("Loading the video...") : text);
+        const qreal dpr = devicePixelRatioF();
+        QPixmap icon(QSize(16, 16) * dpr);
+        icon.setDevicePixelRatio(dpr);
+        icon.fill(Qt::transparent);
+        if (!loading) {
+            QPainter p(&icon);
+            p.setRenderHint(QPainter::TextAntialiasing);
+            QFont icons(QStringLiteral("Segoe Fluent Icons"));
+            icons.setPixelSize(14);
+            p.setFont(icons);
+            p.setPen(QColor(240, 240, 245));
+            p.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, QString(glyph));
+        }
+        button->setIcon(QIcon(icon));
+        button->setIconSize(QSize(loading ? 0 : 16, 16));
+    };
+    m_switch->setVisible(available && !miniBusy);
+    // A screen for the video, a note for the song.
+    label(m_switch, video ? QStringLiteral("Switch to audio") : QStringLiteral("Switch to video"),
+          QChar(video ? 0xEC4F : 0xE714), busy);
+    // Not while the whole list is videos: its page has them.
+    m_mini->setVisible(available && !video && !busy);
+    label(m_mini, mini ? QStringLiteral("Back to cover") : QStringLiteral("Mini video"),
+          QChar(mini ? 0xE91B : 0xE7F4), miniBusy);
+}
+
+void NowPlayingPanel::setCoverAspect(double aspect)
+{
+    auto *cover = static_cast<SquareCover *>(m_cover);
+    if (qFuzzyCompare(cover->aspect, aspect))
+        return;
+    cover->aspect = aspect;
+    cover->updateGeometry();
+    cover->update();
+}
+
+QWidget *NowPlayingPanel::coverArea() const
+{
+    return m_cover;
 }
 
 void NowPlayingPanel::setLyrics(const Lyrics &lyrics, bool searching)

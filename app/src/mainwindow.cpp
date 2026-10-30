@@ -335,7 +335,15 @@ MainWindow::MainWindow()
         restartPlayer(QueuedPlay{playingListPath(), false, m_mpv.property("playlist-pos").toInt(), {}},
                       m_mpv.property("time-pos").toDouble());
     };
-    m_videoPage->onFullScreen = [this] { setVideoFullScreen(!m_videoFull); };
+    m_videoPage->onFullScreen = [this] {
+        // Asked for from the picture in the now playing view: by way of the
+        // video page, and back where it was afterwards.
+        if (!m_videoFull && m_pages->currentWidget() != m_videoPage) {
+            m_fullFromPanel = true;
+            showVideoPage();
+        }
+        setVideoFullScreen(!m_videoFull);
+    };
     m_videoPage->onTogglePause = [this] { m_mpv.command({"cycle", "pause"}); };
     m_videoPage->onPrevious = [this] { m_mpv.command({"playlist-prev"}); };
     m_videoPage->onNext = [this] { m_mpv.command({"playlist-next"}); };
@@ -447,7 +455,11 @@ MainWindow::MainWindow()
         QSettings().setValue("panel/open", false);
         updatePanelVisibility();
     };
-    m_panel->onSwitchVideo = [this] { setSongVideo(!songVideo()); };
+    m_panel->onSwitchVideo = [this] { setSongVideo(!(songVideo() && !panelVideo())); };
+    m_panel->onMiniVideo = [this] { setPanelVideo(!panelVideo()); };
+    m_panel->coverArea()->installEventFilter(this);
+    if (auto *scroll = qobject_cast<QScrollArea *>(m_panel->scrollArea()))
+        connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::schedulePlace);
     m_panel->onOpenLyrics = [this] {
         if (m_pages->currentWidget() != m_lyricsView)
             toggleLyrics();
@@ -696,7 +708,8 @@ MainWindow::MainWindow()
             schedulePlace();
         if (name == "path" || name == "user-data/ghost/source" || name == "media-title" || name == "playlist-pos" ||
             name == "playlist" || name == "playlist-path" || name == "user-data/ghost/audio" ||
-            name == "user-data/ghost/video-on" || name == "metadata/by-key/uploader")
+            name == "user-data/ghost/video-on" || name == "metadata/by-key/uploader" ||
+            name == "user-data/ghost/video-panel" || name == "video-params/aspect")
             m_panelSoon.start();
         if (name == "time-pos" && m_panel->isVisible())
             m_panel->setPosition(m_mpv.property("time-pos").toDouble());
@@ -2003,6 +2016,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (compact != m_compact)
             setLibraryCompact(compact);
     }
+    if (m_panel && watched == m_panel->coverArea() && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
+        schedulePlace();
     // The title moves after fitTitle has run, once the layout gets to it.
     if (watched == m_playlistName && (event->type() == QEvent::Move || event->type() == QEvent::Resize) &&
         m_nameEdit->isVisible())
@@ -3365,10 +3380,24 @@ void MainWindow::placeSurface()
     const bool minimized = isMinimized();
     const bool video = videoShowing() && (!minimized || m_videoPage->miniPinned());
     const bool onPage = video && !minimized && m_pages->currentWidget() == m_videoPage;
-    const bool mini = video && !onPage && !m_miniClosed;
+    // "Mini video" plays where the now playing view's cover is, while the
+    // view is open; else in the corner, as any video.
+    const bool inPanel = video && !onPage && !minimized && panelVideo() && m_panel->isVisible();
+    const bool mini = video && !onPage && !inPanel && !m_miniClosed;
     QWidget *miniWindow = m_videoPage->miniWindow();
     QRect visible;   // of the picture, in the host's coordinates
-    if (onPage) {
+    m_videoPage->setWheelTarget(inPanel ? m_panel->scrollArea()->findChild<QWidget *>("qt_scrollarea_viewport") : nullptr);
+    if (inPanel) {
+        QWidget *cover = m_panel->coverArea();
+        QWidget *scroll = m_panel->scrollArea();
+        const QRect picture(host->mapFromGlobal(cover->mapToGlobal(QPoint())), cover->size());
+        const QRect view(host->mapFromGlobal(scroll->mapToGlobal(QPoint())), scroll->size());
+        visible = picture & view;
+        m_videoPage->setSurfaceCorner(8);
+        m_videoPage->setSurfaceVisibleArea(visible.isEmpty() ? QRect(0, 0, 1, 1) : visible.translated(-picture.topLeft()));
+        surface->place(this, picture);
+        miniWindow->hide();
+    } else if (onPage) {
         // The page scrolls the picture up and out of view: only what is
         // inside the page's scrolling area shows.
         QWidget *screen = m_videoPage->screen();
@@ -3399,13 +3428,13 @@ void MainWindow::placeSurface()
     } else {
         miniWindow->hide();
     }
-    surface->setVisible(onPage || mini);
+    surface->setVisible(onPage || mini || (inPanel && !visible.isEmpty()));
     m_surfaceOnPage = onPage;
 
     // mpv fills its window when the window already has the video's shape,
     // so no hairline of black is left at its edges; in full screen it keeps
     // the shape and draws its black around it.
-    if (m_mpv.connected() && m_mpvEmbedded && (onPage || mini)) {
+    if (m_mpv.connected() && m_mpvEmbedded && (onPage || mini || inPanel)) {
         const int keep = onPage && m_videoFull ? 1 : 0;
         if (keep != m_keepAspect) {
             m_keepAspect = keep;
@@ -3417,6 +3446,8 @@ void MainWindow::placeSurface()
     m_videoArea = onPage ? QRect(host->mapToGlobal(visible.topLeft()), visible.size()) : QRect();
     if (onPage)
         m_videoPage->placeOverPicture(global, m_videoArea);
+    else if (inPanel)   // click to pause, double-click for full screen there too
+        m_videoPage->placeOverPicture(global, QRect(host->mapToGlobal(visible.topLeft()), visible.size()));
     else
         m_videoPage->corners()->hide();
     // The controls sit on the picture's bottom edge, so only while that is
@@ -3643,7 +3674,12 @@ void MainWindow::refreshPanel()
     if (id.isEmpty())
         id = idForTarget(path);
     m_panel->setCover(m_covers.get(id, ThumbnailCache::Size::Hero));
-    m_panel->setVideoState(m_mpv.property("user-data/ghost/audio").toBool(), songVideo(), m_findingVideo);
+    const bool mini = panelVideo();
+    m_panel->setVideoState(m_mpv.property("user-data/ghost/audio").toBool(), songVideo() && !mini, m_findingVideo,
+                           mini, m_findingMini);
+    // The picture's shape while the video plays in the cover's place.
+    const double aspect = m_mpv.property("video-params/aspect").toDouble();
+    m_panel->setCoverAspect(mini || m_findingMini ? (aspect > 0.5 && aspect < 2.6 ? aspect : 16.0 / 9.0) : 1.0);
     m_panel->setPosition(m_mpv.property("time-pos").toDouble());
 
     // Credits and the artist, once per video.
@@ -3685,14 +3721,50 @@ bool MainWindow::songVideo() const
     return m_mpv.connected() && m_mpv.property("user-data/ghost/video-on").toBool();
 }
 
+bool MainWindow::panelVideo() const
+{
+    return songVideo() && m_mpv.property("user-data/ghost/video-panel").toBool();
+}
+
+void MainWindow::setPanelVideo(bool on)
+{
+    // ghost.lua plays the entry named in video-once as its video and forgets
+    // it at the next song. Starts again at the same second, as the switch.
+    if (!m_mpv.connected() || on == panelVideo())
+        return;
+    if (on) {
+        QString format = mpvconf::value("ytdl-format");
+        if (format.isEmpty())
+            format = QStringLiteral("bestvideo[height<=?1080]+bestaudio/best");
+        m_mpv.setProperty("user-data/ghost/video-format", format);
+        m_findingMini = true;
+    }
+    m_mpv.setProperty("user-data/ghost/video-once", on ? m_mpv.property("path").toString() : QString());
+    m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
+    m_resetStart = true;
+    m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+    refreshPanel();
+    schedulePlace();
+}
+
 void MainWindow::setSongVideo(bool on)
 {
     // The whole list turns to videos from this song on, until "Switch to
     // audio" or another list: ghost.lua plays each song as its video,
     // songmatch.lua finds it on YouTube. This song starts again at the same
     // second.
-    if (!m_mpv.connected() || on == songVideo())
+    if (!m_mpv.connected() || on == (songVideo() && !panelVideo()))
         return;
+    if (on && panelVideo()) {
+        // Already a video in the view: the list goes on as videos from here,
+        // on the video page, with nothing to load again.
+        m_mpv.setProperty("user-data/ghost/video-mode", true);
+        m_mpv.setProperty("user-data/ghost/video-panel", false);
+        m_mpv.setProperty("user-data/ghost/video-once", QString());   // or "Switch to audio" would keep it
+        showVideoPage();
+        refreshPanel();
+        return;
+    }
     if (on) {
         QString format = mpvconf::value("ytdl-format");
         if (format.isEmpty())
@@ -3702,6 +3774,7 @@ void MainWindow::setSongVideo(bool on)
         m_wantVideoPage = true;
     }
     m_mpv.setProperty("user-data/ghost/video-mode", on);
+    m_mpv.setProperty("user-data/ghost/video-once", QString());
     m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
     m_resetStart = true;
     m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
@@ -3712,7 +3785,8 @@ void MainWindow::songVideoChanged()
 {
     schedulePlace();
     m_findingVideo = false;
-    m_videoPage->setSongVideo(songVideo());
+    m_findingMini = false;
+    m_videoPage->setSongVideo(songVideo() && !panelVideo());
     if (songVideo()) {
         // Inside the app the video opens on its page; in mpv's own window,
         // there.
@@ -3752,6 +3826,14 @@ void MainWindow::setVideoFullScreen(bool full)
     if (auto *body = centralWidget()->layout()->itemAt(1)->layout())
         body->setContentsMargins(full ? 0 : 8, 0, full ? 0 : 8, 0);
     m_videoPage->setFullScreen(full);
+    if (!full && m_fullFromPanel) {
+        m_fullFromPanel = false;
+        QWidget *back = m_beforeVideo && m_beforeVideo != m_videoPage ? m_beforeVideo.data() : nullptr;
+        if (back)
+            m_pages->setCurrentWidget(back);
+        else
+            showHome();
+    }
     if (!full)
         // Once the window has settled back into its size: each resize on the
         // way out of full screen squeezed the panel again. Put back on every

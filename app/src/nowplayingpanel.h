@@ -64,8 +64,12 @@ public:
     void setList(const QString &name);
     void setSong(const QString &title, const QString &artist);
     void setCover(const QPixmap &cover);
-    // `available`: a song list, where a song can turn into its video.
-    void setVideoState(bool available, bool video, bool busy);
+    // `available`: a song list, where a song can turn into its video. `video`:
+    // the whole list plays as videos; `mini`: this one song, in the cover's place.
+    void setVideoState(bool available, bool video, bool busy, bool mini, bool miniBusy);
+    // The cover's shape: 1 for a square, the video's while it plays there.
+    void setCoverAspect(double aspect);
+    QWidget *coverArea() const;
     void setLyrics(const Lyrics &lyrics, bool searching);
     void setPosition(double seconds);
     void setArtist(const ArtistInfo *artist);
@@ -73,6 +77,7 @@ public:
     void setNext(const QString &title, const QString &artist, const QPixmap &cover);
 
     std::function<void()> onSwitchVideo;
+    std::function<void()> onMiniVideo;
     std::function<void()> onOpenLyrics;
     std::function<void()> onAbout;
     std::function<void()> onPlayNext;
@@ -88,6 +93,7 @@ private:
     QLabel *m_list;
     class SquareCover *m_cover;
     QPushButton *m_switch;
+    QPushButton *m_mini;
     QLabel *m_title;
     QLabel *m_artist;
     class ClickCard *m_lyricsCard;

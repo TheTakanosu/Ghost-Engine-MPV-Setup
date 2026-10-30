@@ -938,10 +938,11 @@ void VideoPage::setOwner(QWidget *window)
         if (onFullScreen) onFullScreen();
     };
     catcher->wheeled = [this](QWheelEvent *event) {
-        QWheelEvent copy(m_page->viewport()->mapFromGlobal(event->globalPosition()), event->globalPosition(),
+        QWidget *target = m_wheelTarget ? m_wheelTarget.data() : m_page->viewport();
+        QWheelEvent copy(target->mapFromGlobal(event->globalPosition()), event->globalPosition(),
                          event->pixelDelta(), event->angleDelta(), event->buttons(), event->modifiers(),
                          event->phase(), event->inverted());
-        QApplication::sendEvent(m_page->viewport(), &copy);
+        QApplication::sendEvent(target, &copy);
     };
     static_cast<MiniWindow *>(m_miniWindow)->resized = [this](const QSize &size) {
         if (onMiniResized) onMiniResized(size);

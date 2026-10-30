@@ -238,6 +238,12 @@ private:
     // A song of a song list played as its music video, and back.
     bool songVideo() const;
     void setSongVideo(bool on);
+    // "Mini video": this one song's video in the now playing view, where its
+    // cover was; the next song is sound again.
+    bool panelVideo() const;
+    void setPanelVideo(bool on);
+    bool m_findingMini = false;
+    bool m_fullFromPanel = false;    // full screen asked for from the view
     void songVideoChanged();
     bool m_findingVideo = false;     // asked for, not playing yet
     bool m_wantVideoPage = false;

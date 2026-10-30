@@ -131,12 +131,7 @@ end
 -- YouTube Music results are songs, so an exact title is the strongest sign.
 -- Plain search results are uploads: an exact title there is as often someone's
 -- re-upload, and the artist's name in the title or channel matters more.
-local function video_wanted()
-    return mp.get_property_native("user-data/ghost/audio") == true
-        and mp.get_property_native("user-data/ghost/video-mode") == true
-end
-
-local function score(entry, index, query, track, artist, songs)
+local function score(entry, index, query, track, artist, songs, video)
     local title = norm(entry.title)
     local wanted = norm(query)
     local channel = entry.channel or entry.uploader or ""
@@ -155,7 +150,7 @@ local function score(entry, index, query, track, artist, songs)
         points = points + 40
     end
     channel = norm(channel)
-    if video_wanted() then
+    if video then
         -- A song list switched to videos (ghost.lua): the music video, not
         -- the "Topic" upload with a still picture or an "official audio".
         if has(channel, " topic ") or has(title, " audio ") then points = points - 40 end
@@ -169,11 +164,11 @@ local function score(entry, index, query, track, artist, songs)
     return points - 2 * index
 end
 
-local function pick(entries, query, title, songs)
+local function pick(entries, query, title, songs, video)
     local track, artist = split_title(query, title)
     local best, best_points
     for index, entry in ipairs(entries or {}) do
-        local points = entry.id and score(entry, index, query, track, artist, songs)
+        local points = entry.id and score(entry, index, query, track, artist, songs, video)
         if points and (not best_points or points > best_points) then
             best, best_points = entry.id, points
         end
@@ -273,7 +268,10 @@ end
 local function resolve(query, title, audio, done)
     -- A song list switched to videos keeps its answers apart.
     local key = query
-    if not audio and mp.get_property_native("user-data/ghost/audio") == true then key = "video:" .. query end
+    -- A song of a song list looked up as its video ("Switch to video",
+    -- "Mini video"): the music video is preferred.
+    local video = not audio and mp.get_property_native("user-data/ghost/audio") == true
+    if video then key = "video:" .. query end
     if resolved[key] ~= nil then
         done(resolved[key] or nil)
         return
@@ -306,7 +304,7 @@ local function resolve(query, title, audio, done)
 
     local function plain_search()
         search("ytsearch5:" .. query, function(entries)
-            local id = pick(entries, query, title, false)
+            local id = pick(entries, query, title, false, video)
             mp.msg.verbose("youtube search for '" .. query .. "': " .. tostring(id))
             local short = artist and known_as[compact(artist)]
             if id or not short then
@@ -315,7 +313,7 @@ local function resolve(query, title, audio, done)
             end
             local terms = track .. " " .. short
             search("ytsearch5:" .. terms, function(again)
-                local found = pick(again, query, title, false)
+                local found = pick(again, query, title, false, video)
                 mp.msg.verbose("youtube search for '" .. terms .. "': " .. tostring(found))
                 finish(key, found or fallback(entries), query)
             end)
@@ -327,7 +325,7 @@ local function resolve(query, title, audio, done)
         return
     end
     search("https://music.youtube.com/search?q=" .. urlencode(query) .. "#songs", function(entries)
-        local id = pick(entries, query, title, true)
+        local id = pick(entries, query, title, true, video)
         mp.msg.verbose("youtube music for '" .. query .. "': " .. tostring(id))
         if not id then plain_search() return end
         candidate[key] = id
@@ -404,7 +402,10 @@ mp.add_hook("on_load", 8, function(hook)
     -- YouTube Music pick is then a better bet than YouTube's own first
     -- result, which costs one more yt-dlp call and played another upload.
     mp.add_timeout(GIVE_UP_AFTER, function() use(candidate[query] or candidate["video:" .. query]) end)
-    resolve(query, title, is_audio_list(), use)
+    -- "Mini video" asks for this one song's video.
+    local once = mp.get_property_native("user-data/ghost/video-once")
+    local single = type(once) == "string" and once ~= "" and once == mp.get_property("path", "")
+    resolve(query, title, is_audio_list() and not single, use)
 end)
 
 -- Resolve the next entry while this one plays.
