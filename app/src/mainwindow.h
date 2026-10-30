@@ -218,10 +218,7 @@ private:
     bool songVideo() const;
     void setSongVideo(bool on);
     void songVideoChanged();
-    void findMusicVideo(const QString &artist, const QString &track, const QString &fallback,
-                        std::function<void(const QString &id)> done);
-    QHash<QString, QString> m_musicVideos;   // "artist track" -> its music video
-    bool m_findingVideo = false;
+    bool m_findingVideo = false;     // asked for, not playing yet
     bool m_wantVideoPage = false;
     bool listIsAudio(const QString &path) const;
     int embedFor(bool audio) const;   // 1 inside the app, 0 outside, -1 either

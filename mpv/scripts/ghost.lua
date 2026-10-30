@@ -33,6 +33,7 @@ mp.add_hook("on_load", 50, function()
             local audio = content and string.match(content, "#GHOST_AUDIO") ~= nil
             -- songmatch.lua asks YouTube Music for songs in audio lists.
             mp.set_property_native("user-data/ghost/audio", audio or false)
+            mp.set_property_native("user-data/ghost/video-mode", false)
 
             if audio then
                 if not in_audio_mode then
@@ -59,21 +60,15 @@ mp.add_hook("on_load", 50, function()
     end
 end)
 
--- The app's now playing view can turn the song playing into its video
--- ("Switch to video"): it names the list entry and the video to play for it,
--- and only that entry plays as the video, picture included. The next song is
--- sound again. 9: after songmatch.lua (8) has picked the song, before
--- ytdl_hook (10) opens it.
+-- The app's now playing view can switch a song list to videos ("Switch to
+-- video"): from then on each song plays as its video, picture included,
+-- until "Switch to audio" or another list. songmatch.lua looks the songs up
+-- on YouTube instead of YouTube Music meanwhile. 9: after songmatch.lua (8)
+-- has picked the video, before ytdl_hook (10) opens it.
 mp.add_hook("on_load", 9, function()
-    local entry = mp.get_property_native("user-data/ghost/video-path") or ""
-    local on = entry ~= "" and entry == mp.get_property("path", "")
-    if entry ~= "" and not on then
-        mp.set_property_native("user-data/ghost/video-path", "")
-    end
+    local on = mp.get_property_native("user-data/ghost/audio") == true
+        and mp.get_property_native("user-data/ghost/video-mode") == true
     if on then
-        local url = mp.get_property_native("user-data/ghost/video-url") or ""
-        mp.set_property("stream-open-filename", url)
-        mp.set_property_native("user-data/ghost/source", url)
         mp.set_property("file-local-options/vid", "auto")
         local format = mp.get_property_native("user-data/ghost/video-format") or ""
         if format ~= "" then

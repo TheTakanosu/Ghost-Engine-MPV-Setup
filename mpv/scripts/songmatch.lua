@@ -232,30 +232,37 @@ local function remember_match(query, id)
     end
 end
 
-local function finish(query, id)
-    if type(id) == "string" and resolved[query] == nil then remember_match(query, id) end
-    resolved[query] = id or false
-    local waiting = pending[query] or {}
-    pending[query] = nil
+-- `key` is the query, or the query marked as wanting its video (see
+-- resolve): a song list switched to videos asks YouTube, not YouTube Music,
+-- and keeps that answer apart. Only the plain query's answer is written down
+-- for the app.
+local function finish(key, id, query)
+    if type(id) == "string" and resolved[key] == nil and key == query then remember_match(query, id) end
+    resolved[key] = id or false
+    local waiting = pending[key] or {}
+    pending[key] = nil
     for _, callback in ipairs(waiting) do callback(id) end
 end
 
 local function resolve(query, title, audio, done)
-    if resolved[query] ~= nil then
-        done(resolved[query] or nil)
+    -- A song list switched to videos keeps its answers apart.
+    local key = query
+    if not audio and mp.get_property_native("user-data/ghost/audio") == true then key = "video:" .. query end
+    if resolved[key] ~= nil then
+        done(resolved[key] or nil)
         return
     end
-    if pending[query] then
-        table.insert(pending[query], done)
+    if pending[key] then
+        table.insert(pending[key], done)
         return
     end
-    pending[query] = {done}
+    pending[key] = {done}
 
     local track, artist = split_title(query, title)
     -- Without the bot's "<artist> - <track>" title there is nothing to check a
     -- candidate against, and an unchecked pick is worse than YouTube's own.
     if not track then
-        finish(query, nil)
+        finish(key, nil, query)
         return
     end
     -- Nothing qualified: YouTube's first result still plays when it is the same
@@ -277,14 +284,14 @@ local function resolve(query, title, audio, done)
             mp.msg.verbose("youtube search for '" .. query .. "': " .. tostring(id))
             local short = artist and known_as[compact(artist)]
             if id or not short then
-                finish(query, id or fallback(entries))
+                finish(key, id or fallback(entries), query)
                 return
             end
             local terms = track .. " " .. short
             search("ytsearch5:" .. terms, function(again)
                 local found = pick(again, query, title, false)
                 mp.msg.verbose("youtube search for '" .. terms .. "': " .. tostring(found))
-                finish(query, found or fallback(entries))
+                finish(key, found or fallback(entries), query)
             end)
         end)
     end
@@ -297,9 +304,9 @@ local function resolve(query, title, audio, done)
         local id = pick(entries, query, title, true)
         mp.msg.verbose("youtube music for '" .. query .. "': " .. tostring(id))
         if not id then plain_search() return end
-        candidate[query] = id
+        candidate[key] = id
         credited(id, artist, function(yes)
-            if yes then finish(query, id) return end
+            if yes then finish(key, id, query) return end
             mp.msg.verbose(id .. " is not by " .. artist .. ", searching youtube")
             plain_search()
         end)
@@ -314,8 +321,12 @@ local function entry_title(pos)
     return mp.get_property("playlist/" .. pos .. "/title")
 end
 
+-- A song list asks YouTube Music for its songs, unless the app switched it
+-- to videos ("Switch to video" in its now playing view): then YouTube, for
+-- each song's video.
 local function is_audio_list()
     return mp.get_property_native("user-data/ghost/audio") == true
+        and mp.get_property_native("user-data/ghost/video-mode") ~= true
 end
 
 local function watch_url(id)
@@ -366,7 +377,7 @@ mp.add_hook("on_load", 8, function(hook)
     -- (measured: 8.6 s per yt-dlp call on a laptop at 9% battery). The
     -- YouTube Music pick is then a better bet than YouTube's own first
     -- result, which costs one more yt-dlp call and played another upload.
-    mp.add_timeout(GIVE_UP_AFTER, function() use(candidate[query]) end)
+    mp.add_timeout(GIVE_UP_AFTER, function() use(candidate[query] or candidate["video:" .. query]) end)
     resolve(query, title, is_audio_list(), use)
 end)
 

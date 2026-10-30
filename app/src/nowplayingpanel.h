@@ -24,6 +24,7 @@ struct ArtistInfo {
     QString name;
     QString audience;   // "130K monthly audience"
     QString about;
+    QString source;     // where the biography is from: "Wikipedia"
     QPixmap photo;
     bool found = false;
 };
@@ -97,6 +98,7 @@ private:
     QLabel *m_artistName;
     QLabel *m_artistAudience;
     QLabel *m_artistAbout;
+    QLabel *m_artistSource;
     QWidget *m_creditsCard;
     QVBoxLayout *m_creditRows;
     class ClickCard *m_nextCard;

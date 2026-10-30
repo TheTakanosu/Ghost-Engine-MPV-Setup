@@ -12,6 +12,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QVBoxLayout>
 
@@ -119,6 +120,15 @@ void ArtistLookup::fetchPage(const QString &key, const QString &browseId)
             info.audience = subscribers;
         }
         info.about = runsText(h.value("description")).trimmed();
+        // YouTube Music ends a Wikipedia biography with "From Wikipedia
+        // (link) under Creative Commons ... (link)": said once, without
+        // the links, under the text instead.
+        static const QRegularExpression credit(QStringLiteral(R"(\s*From Wikipedia\b.*$)"),
+                                               QRegularExpression::DotMatchesEverythingOption);
+        if (info.about.contains(credit)) {
+            info.about.remove(credit);
+            info.source = QStringLiteral("Wikipedia");
+        }
         info.found = !info.name.isEmpty();
         // The photo: the first size at least 800 px wide.
         QString photo;
@@ -263,9 +273,10 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     setStyleSheet(
         "QFrame#npCard { background: rgb(36,34,44); border-radius: 10px; }"
         "QLabel { background: transparent; }"
-        "QPushButton#npSwitch { background: rgba(255,255,255,0.08); border: none; border-radius: 15px;"
-        "  padding: 6px 14px; color: rgb(240,240,245); font-weight: 600; }"
-        "QPushButton#npSwitch:hover { background: rgba(255,255,255,0.16); }"
+        "QPushButton#npSwitch { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);"
+        "  border-radius: 16px; min-height: 30px; max-height: 30px; padding: 0 16px; color: rgb(240,240,245);"
+        "  font-family: 'Segoe UI', 'Segoe Fluent Icons'; font-weight: 600; }"
+        "QPushButton#npSwitch:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.3); }"
         "QPushButton#npSwitch:disabled { color: rgb(154,152,166); }");
 
     m_list = new QLabel;
@@ -333,12 +344,15 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_artistAbout = new QLabel;
     m_artistAbout->setWordWrap(true);
     m_artistAbout->setStyleSheet("color: rgb(200,198,210);");
+    m_artistSource = new QLabel;
+    m_artistSource->setStyleSheet("color: rgb(120,118,132); font-size: 8.5pt;");
     auto *artistText = new QVBoxLayout;
     artistText->setContentsMargins(14, 10, 14, 14);
     artistText->setSpacing(4);
     artistText->addWidget(m_artistName);
     artistText->addWidget(m_artistAudience);
     artistText->addWidget(m_artistAbout);
+    artistText->addWidget(m_artistSource);
     auto *artistBox = new QVBoxLayout(m_artistCard);
     artistBox->setContentsMargins(0, 0, 0, 0);
     artistBox->setSpacing(0);
@@ -455,10 +469,9 @@ void NowPlayingPanel::setVideoState(bool available, bool video, bool busy)
     m_switch->setVisible(available);
     m_switch->setEnabled(!busy);
     // A screen for the video, a note for the song.
-    m_switch->setText(busy ? QStringLiteral("Finding the video...")
+    m_switch->setText(busy ? QStringLiteral("Loading the video...")
                       : video ? QString(QChar(0xEC4F)) + QStringLiteral("   Switch to audio")
                               : QString(QChar(0xE714)) + QStringLiteral("   Switch to video"));
-    m_switch->setStyleSheet(QStringLiteral("font-family: 'Segoe UI', 'Segoe Fluent Icons';"));
 }
 
 void NowPlayingPanel::setLyrics(const Lyrics &lyrics, bool searching)
@@ -537,6 +550,8 @@ void NowPlayingPanel::setArtist(const ArtistInfo *artist)
     }
     m_artistAbout->setText(about);
     m_artistAbout->setVisible(!about.isEmpty());
+    m_artistSource->setText(QStringLiteral("Source: ") + artist->source);
+    m_artistSource->setVisible(!about.isEmpty() && !artist->source.isEmpty());
 }
 
 void NowPlayingPanel::setCredits(const QList<QPair<QString, QString>> &credits, bool asked)

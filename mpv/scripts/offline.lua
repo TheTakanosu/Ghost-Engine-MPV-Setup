@@ -45,6 +45,9 @@ local function load_index()
 end
 
 mp.add_hook("on_load", 4, function()
+    -- A downloaded copy is only the sound: a song list switched to videos
+    -- (ghost.lua) plays each song's video from YouTube instead.
+    if mp.get_property_native("user-data/ghost/video-mode") == true then return end
     load_index()
     local entry = mp.get_property("path", "")
     local name = files[entry]

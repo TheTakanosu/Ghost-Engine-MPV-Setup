@@ -800,7 +800,7 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
     if (msg->message == WM_NCCALCSIZE && msg->wParam == TRUE) {
         // The whole window is client area. Maximised, Windows still puts the
         // invisible resize border outside the screen; take it back in.
-        if (IsZoomed(msg->hwnd)) {
+        if (IsZoomed(msg->hwnd) && !m_videoFull) {
             auto *params = reinterpret_cast<NCCALCSIZE_PARAMS *>(msg->lParam);
             const int frame = GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
             params->rgrc[0].left += frame;
@@ -3476,47 +3476,31 @@ bool MainWindow::songVideo() const
 
 void MainWindow::setSongVideo(bool on)
 {
-    // ghost.lua plays the entry named here as the video given, at the same
-    // second; named nothing, it is the song again.
-    if (!m_mpv.connected() || m_findingVideo)
+    // The whole list turns to videos from this song on, until "Switch to
+    // audio" or another list: ghost.lua plays each song as its video,
+    // songmatch.lua finds it on YouTube. This song starts again at the same
+    // second.
+    if (!m_mpv.connected() || on == songVideo())
         return;
-    const QString path = m_mpv.property("path").toString();
-    auto reload = [this] {
-        m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
-        m_resetStart = true;
-        m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
-    };
-    if (!on) {
-        m_mpv.setProperty("user-data/ghost/video-path", "");
-        reload();
-        return;
-    }
-    const auto [artist, track] = playingSong();
-    QString fallback = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
-    if (fallback.isEmpty())
-        fallback = idForTarget(path);
-    m_findingVideo = true;
-    refreshPanel();
-    findMusicVideo(artist, track, fallback, [this, path, reload](const QString &id) {
-        m_findingVideo = false;
-        if (id.isEmpty() || m_mpv.property("path").toString() != path) {
-            refreshPanel();
-            return;
-        }
+    if (on) {
         QString format = mpvconf::value("ytdl-format");
         if (format.isEmpty())
             format = QStringLiteral("bestvideo[height<=?1080]+bestaudio/best");
-        m_mpv.setProperty("user-data/ghost/video-url", QStringLiteral("https://www.youtube.com/watch?v=") + id);
         m_mpv.setProperty("user-data/ghost/video-format", format);
-        m_mpv.setProperty("user-data/ghost/video-path", path);
+        m_findingVideo = true;
         m_wantVideoPage = true;
-        reload();
-    });
+    }
+    m_mpv.setProperty("user-data/ghost/video-mode", on);
+    m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
+    m_resetStart = true;
+    m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+    refreshPanel();
 }
 
 void MainWindow::songVideoChanged()
 {
     schedulePlace();
+    m_findingVideo = false;
     m_videoPage->setSongVideo(songVideo());
     if (songVideo()) {
         // Inside the app the video opens on its page; in mpv's own window,
@@ -3526,7 +3510,7 @@ void MainWindow::songVideoChanged()
         m_wantVideoPage = false;
         return;
     }
-    // Back to the song, or on to the next one: off the video page.
+    // Back to songs: off the video page.
     if (m_pages->currentWidget() == m_videoPage && m_mpv.property("user-data/ghost/audio").toBool()) {
         setVideoFullScreen(false);
         QWidget *back = m_beforeVideo && m_beforeVideo != m_videoPage ? m_beforeVideo.data() : nullptr;
@@ -3535,59 +3519,6 @@ void MainWindow::songVideoChanged()
         else
             showHome();
     }
-}
-
-void MainWindow::findMusicVideo(const QString &artist, const QString &track, const QString &fallback,
-                                std::function<void(const QString &)> done)
-{
-    // Song lists play YouTube Music's recording, often a still picture; its
-    // video is the first YouTube result that is the same song and no live,
-    // slowed or cover version of it.
-    const QString query = (artist + ' ' + track).trimmed();
-    if (m_musicVideos.contains(query)) {
-        done(m_musicVideos.value(query));
-        return;
-    }
-    auto fold = [](QString s) {
-        s = s.toLower().replace(QChar(0x131), 'i').normalized(QString::NormalizationForm_KD);
-        s.remove(QRegularExpression(QStringLiteral("[\\p{M}]"), QRegularExpression::UseUnicodePropertiesOption));
-        return s.simplified();
-    };
-    auto *proc = new QProcess(this);
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("PYTHONIOENCODING", "utf-8");
-    env.insert("PYTHONUTF8", "1");
-    proc->setProcessEnvironment(env);
-    connect(proc, &QProcess::finished, this, [this, proc, query, track, fallback, fold, done] {
-        proc->deleteLater();
-        static const QStringList variants{"live", "canli", "konser", "concert", "slowed", "sped up", "speed up",
-                                          "reverb", "nightcore", "cover", "remix", "karaoke", "instrumental",
-                                          "lyrics", "lyric", "sozleri", "1 hour", "1 saat", "8d", "akustik", "acoustic"};
-        const QString name = fold(track);
-        QString pick;
-        for (const QString &line : QString::fromUtf8(proc->readAllStandardOutput()).split('\n')) {
-            const QStringList parts = line.trimmed().split('\t');
-            if (parts.size() < 3 || parts[2].endsWith(QLatin1String(" - Topic")))
-                continue;
-            const QString title = fold(parts[1]);
-            if (!title.contains(name))
-                continue;
-            bool variant = false;
-            for (const QString &v : variants)
-                variant = variant || (title.contains(v) && !name.contains(v));
-            if (!variant) {
-                pick = parts[0];
-                break;
-            }
-        }
-        if (pick.isEmpty())
-            pick = fallback;
-        m_musicVideos.insert(query, pick);
-        done(pick);
-    });
-    proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
-                {"--flat-playlist", "--no-warnings", "--encoding", "utf-8", "--print", "%(id)s\t%(title)s\t%(channel)s",
-                 QStringLiteral("ytsearch6:") + query});
 }
 
 void MainWindow::setVideoFullScreen(bool full)
@@ -3617,6 +3548,13 @@ void MainWindow::setVideoFullScreen(bool full)
         m_restoreLibraryUntil.start();
         QTimer::singleShot(150, this, &MainWindow::restoreLibraryWidth);
         QTimer::singleShot(600, this, &MainWindow::restoreLibraryWidth);
+    // Full screen, Windows 11's round corners and 1 px border would show the
+    // desktop at the screen's edges.
+    const HWND hwnd = reinterpret_cast<HWND>(winId());
+    const int corners = full ? 1 : 2;   // DWMWA_WINDOW_CORNER_PREFERENCE: none, round
+    DwmSetWindowAttribute(hwnd, 33, &corners, sizeof(corners));
+    const COLORREF border = full ? 0xFFFFFFFE : 0xFFFFFFFF;   // DWMWA_BORDER_COLOR: none, the default
+    DwmSetWindowAttribute(hwnd, 34, &border, sizeof(border));
     if (full) {
         m_wasMaximized = isMaximized();
         showFullScreen();
