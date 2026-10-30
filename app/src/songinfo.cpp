@@ -17,9 +17,9 @@ namespace songinfo {
 
 QStringList ytDlpArguments(const QString &url)
 {
-    // The first line: id, album and dates, tab-separated; the rest is the
-    // description.
-    const QString facts = QStringLiteral("%(id)s\t%(album)s\t%(release_date)s\t%(release_year)s\t%(upload_date)s");
+    // The first line: id, album, dates and channel, tab-separated; the rest
+    // is the description.
+    const QString facts = QStringLiteral("%(id)s\t%(album)s\t%(release_date)s\t%(release_year)s\t%(upload_date)s\t%(channel_id)s");
     return {"--skip-download", "--no-warnings", "--encoding", "utf-8", "--playlist-items", "1",
             "--print", facts, "--print", "description", url};
 }
@@ -68,6 +68,7 @@ Facts parse(const QString &printed)
     const QString description = newline < 0 ? QString() : printed.mid(newline + 1);
     facts.id = given(head.value(0));
     facts.album = given(head.value(1));
+    facts.channelId = given(head.value(5));
     facts.released = dateText(given(head.value(2)));
     if (facts.released.isEmpty())
         facts.released = given(head.value(3));

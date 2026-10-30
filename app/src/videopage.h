@@ -115,6 +115,9 @@ public:
     std::function<QString(const QString &target)> channelFor;
     std::function<void(const QString &target)> onPick;
     std::function<void()> onPopOut;
+    std::function<void()> onSwitchToAudio;
+    // A song list's song shown as its video: "Switch to audio" instead of the pop out.
+    void setSongVideo(bool song);
     std::function<void()> onBringBack;
     std::function<void()> onFullScreen;
     std::function<void()> onTogglePause;
@@ -165,6 +168,8 @@ private:
     QLabel *m_channel;
     QLabel *m_listName;
     QPushButton *m_youtube;
+    QPushButton *m_popOut = nullptr;
+    QPushButton *m_toAudio = nullptr;
     QWidget *m_card;            // the description's box
     QLabel *m_meta;
     QTextBrowser *m_description;

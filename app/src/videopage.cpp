@@ -743,6 +743,11 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_channel->setObjectName("videoChannel");
     auto *popOut = action(QString(QChar(0xE8A7)), "Open in mpv's window");
     m_youtube = action(QString(QChar(0xE774)), "Watch on YouTube");
+    m_popOut = popOut;
+    // A song from a song list shown as its video goes back to being a song.
+    m_toAudio = action(QString(QChar(0xEC4F)), "Switch to audio");
+    m_toAudio->hide();
+    connect(m_toAudio, &QPushButton::clicked, this, [this] { if (onSwitchToAudio) onSwitchToAudio(); });
     connect(popOut, &QPushButton::clicked, this, [this] { if (onPopOut) onPopOut(); });
     connect(m_youtube, &QPushButton::clicked, this, [this] {
         if (!m_link.isEmpty())
@@ -751,6 +756,7 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(8);
     buttons->addWidget(m_channel, 1);
+    buttons->addWidget(m_toAudio);
     buttons->addWidget(popOut);
     buttons->addWidget(m_youtube);
 
@@ -1138,6 +1144,12 @@ void VideoPage::setPlaying(const QString &target, const QString &title, const QS
         item->setData(kNowRole, now);
 
     }
+}
+
+void VideoPage::setSongVideo(bool song)
+{
+    m_toAudio->setVisible(song);
+    m_popOut->setVisible(!song);
 }
 
 void VideoPage::setDescription(const QString &text, const QString &meta)

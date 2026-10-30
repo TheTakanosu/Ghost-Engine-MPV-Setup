@@ -405,8 +405,12 @@ MainWindow::MainWindow()
     connect(escape, &QShortcut::activated, this, [this] { if (m_videoFull) setVideoFullScreen(false); });
     m_lyricsView->onSeek = [this](double seconds) { m_mpv.command({"seek", seconds, "absolute"}); };
     connect(&m_lyricsSource, &LyricsSource::ready, this, [this](const QString &key, const Lyrics &lyrics) {
-        if (key == m_lyricsKey)
+        if (key == m_lyricsKey) {
             m_lyricsView->setLyrics(lyrics, m_mpv.property("media-title").toString());
+            m_lyrics = lyrics;
+            m_panel->setLyrics(lyrics, false);
+            m_panel->setPosition(m_mpv.property("time-pos").toDouble());
+        }
     });
 
     auto *mainPanel = new QWidget;
@@ -416,9 +420,47 @@ MainWindow::MainWindow()
     mainBox->setContentsMargins(0, 0, 0, 0);
     mainBox->addWidget(m_pages);
 
+    // The now playing view, Spotify's, at the right of the page: a panel of
+    // its own, its width the user's.
+    m_panel = new NowPlayingPanel;
+    m_rightSplit = new QSplitter(Qt::Horizontal);
+    m_rightSplit->addWidget(mainPanel);
+    m_rightSplit->addWidget(m_panel);
+    m_rightSplit->setStretchFactor(0, 1);
+    m_rightSplit->setStretchFactor(1, 0);
+    m_rightSplit->setHandleWidth(8);
+    m_rightSplit->setChildrenCollapsible(false);
+    m_rightSplit->setSizes({940, 340});
+    m_panelOpen = QSettings().value("panel/open", true).toBool();
+    m_panel->onClose = [this] {
+        m_panelOpen = false;
+        QSettings().setValue("panel/open", false);
+        updatePanelVisibility();
+    };
+    m_panel->onSwitchVideo = [this] { setSongVideo(!songVideo()); };
+    m_panel->onOpenLyrics = [this] {
+        if (m_pages->currentWidget() != m_lyricsView)
+            toggleLyrics();
+    };
+    m_panel->onAbout = [this] {
+        const QString source = m_mpv.property("user-data/ghost/source").toString();
+        const auto [artist, track] = playingSong();
+        showSongInfo(source.isEmpty() ? m_mpv.property("path").toString() : source,
+                     track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist);
+    };
+    m_panel->onPlayNext = [this] { m_mpv.command({"playlist-next"}); };
+    connect(&m_artists, &ArtistLookup::ready, this, [this](const QString &channel) {
+        if (channel == m_panelChannel)
+            m_panel->setArtist(m_artists.known(channel));
+    });
+    m_panelSoon.setSingleShot(true);
+    m_panelSoon.setInterval(150);
+    connect(&m_panelSoon, &QTimer::timeout, this, &MainWindow::refreshPanel);
+    m_videoPage->onSwitchToAudio = [this] { setSongVideo(false); };
+
     m_split = new QSplitter(Qt::Horizontal);
     m_split->addWidget(buildLibrary());
-    m_split->addWidget(mainPanel);
+    m_split->addWidget(m_rightSplit);
     m_split->setStretchFactor(1, 1);
     m_split->setHandleWidth(8);
     m_split->setChildrenCollapsible(false);
@@ -505,6 +547,13 @@ MainWindow::MainWindow()
     };
     connect(m_nowPlaying, &NowPlayingBar::openPlaying, this, &MainWindow::openPlayingList);
     connect(m_nowPlaying, &NowPlayingBar::toggleLyrics, this, &MainWindow::toggleLyrics);
+    connect(m_nowPlaying, &NowPlayingBar::togglePanel, this, [this] {
+        m_panelOpen = !m_panelOpen;
+        QSettings().setValue("panel/open", m_panelOpen);
+        updatePanelVisibility();
+        if (m_panelOpen)
+            refreshPanel();
+    });
 
     auto *root = new QVBoxLayout;
     root->setContentsMargins(0, 0, 0, 0);
@@ -534,10 +583,13 @@ MainWindow::MainWindow()
     connect(m_videoMouse, &QTimer::timeout, this, &MainWindow::watchVideoMouse);
     m_videoMouse->start();
     connect(m_pages, &QStackedWidget::currentChanged, this, &MainWindow::schedulePlace);
+    connect(m_pages, &QStackedWidget::currentChanged, this, &MainWindow::updatePanelVisibility);
+    connect(&m_mpv, &MpvClient::connectionChanged, this, [this] { m_panelSoon.start(); });
 
     QSettings settings;
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
+    m_rightSplit->restoreState(settings.value("window/panelSplit").toByteArray());
     setLibraryCompact(m_split->sizes().value(0) < kCompactBelow);
 
     m_resolver.setYtDlp(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"));
@@ -581,6 +633,7 @@ MainWindow::MainWindow()
         repaint();
     });
     connect(&m_covers, &ThumbnailCache::ready, this, repaint);
+    connect(&m_covers, &ThumbnailCache::ready, this, [this] { if (m_panel->isVisible()) m_panelSoon.start(); });
     connect(&m_mpv, &MpvClient::propertyChanged, this, [this, repaint](const QString &name) {
         // A song played since the last look may have given a list its cover.
         if (name == "user-data/ghost/source")
@@ -602,6 +655,14 @@ MainWindow::MainWindow()
             updateVideoPage();
         if (name == "user-data/ghost/audio")
             schedulePlace();
+        if (name == "path" || name == "user-data/ghost/source" || name == "media-title" || name == "playlist-pos" ||
+            name == "playlist" || name == "playlist-path" || name == "user-data/ghost/audio" ||
+            name == "user-data/ghost/video-on" || name == "metadata/by-key/uploader")
+            m_panelSoon.start();
+        if (name == "time-pos" && m_panel->isVisible())
+            m_panel->setPosition(m_mpv.property("time-pos").toDouble());
+        if (name == "user-data/ghost/video-on")
+            songVideoChanged();
         if (name == "metadata/by-key/uploader" && !m_mpv.property("user-data/ghost/audio").toBool()) {
             const QString source = m_mpv.property("user-data/ghost/source").toString();
             m_resolver.rememberChannel(youtube::videoId(source.isEmpty() ? m_mpv.property("path").toString() : source),
@@ -647,6 +708,7 @@ MainWindow::MainWindow()
                                       static_cast<QAbstractScrollArea *>(m_homeScroll)})
         new SmoothScroll(area);
     new SmoothScroll(m_videoPage->scrollArea());
+    new SmoothScroll(qobject_cast<QAbstractScrollArea *>(m_panel->scrollArea()));
     m_songs->viewport()->installEventFilter(this);
 
     // Lists added, changed or deleted on disk show up without Refresh.
@@ -726,6 +788,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     QSettings settings;
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/split", m_split->saveState());
+    settings.setValue("window/panelSplit", m_rightSplit->saveState());
     QMainWindow::closeEvent(event);
 }
 
@@ -2059,7 +2122,8 @@ void MainWindow::openPlayingList()
 {
     // A video list goes to its watch page, also while mpv plays it in its own
     // window: that page is where it is brought back from.
-    if ((m_mpvEmbedded || m_videoPoppedOut) && m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool()) {
+    if ((m_mpvEmbedded || m_videoPoppedOut) && m_mpv.connected() &&
+        (!m_mpv.property("user-data/ghost/audio").toBool() || songVideo())) {
         showVideoPage();
         return;
     }
@@ -2240,6 +2304,8 @@ void MainWindow::lookUpLyrics()
     if (key == m_lyricsKey)
         return;
     m_lyricsKey = key;
+    m_lyrics = Lyrics();
+    m_panel->setLyrics(m_lyrics, true);
     m_lyricsView->setSearching(artist.isEmpty() ? track : artist + QStringLiteral(" · ") + track);
     m_lyricsView->setSearchText((artist + ' ' + track).trimmed());
     m_lyricsSource.fetch(artist, track, m_mpv.property("duration").toDouble());
@@ -3069,7 +3135,7 @@ void MainWindow::fitVideoGrid()
 bool MainWindow::videoShowing() const
 {
     return m_mpvEmbedded && m_mpv.connected() && !m_videoPoppedOut &&
-           !m_mpv.property("user-data/ghost/audio").toBool();
+           (!m_mpv.property("user-data/ghost/audio").toBool() || songVideo());
 }
 
 void MainWindow::schedulePlace()
@@ -3199,7 +3265,7 @@ void MainWindow::watchVideoMouse()
 
 void MainWindow::updateVideoPage()
 {
-    if (!m_videoPage || m_mpv.property("user-data/ghost/audio").toBool())
+    if (!m_videoPage || (m_mpv.property("user-data/ghost/audio").toBool() && !songVideo()))
         return;
     const QString list = playingListPath();
     if (list.isEmpty())
@@ -3303,31 +3369,225 @@ void MainWindow::showSongInfo(const QString &target, const QString &title, const
         if (known.isEmpty())
             cover(facts.id);
     };
-    if (m_songInfo.contains(target)) {
-        fill(m_songInfo.value(target));
-        return;
-    }
     const QString query = youtube::searchQuery(target);
     const QString url = !known.isEmpty() ? QStringLiteral("https://www.youtube.com/watch?v=") + known
                         : !query.isEmpty() ? QStringLiteral("ytsearch1:") + query
                                            : target;
-    auto *proc = new QProcess(this);
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("PYTHONIOENCODING", "utf-8");
-    env.insert("PYTHONUTF8", "1");
-    proc->setProcessEnvironment(env);
-    connect(proc, &QProcess::finished, this, [this, proc, target, fill, alive] {
-        proc->deleteLater();
-        const QString printed = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+    fetchSongInfo(known.isEmpty() ? target : known, url, [fill, alive](const QString &printed) {
         if (printed.isEmpty()) {
             if (alive)
                 alive->setFailed();
             return;
         }
-        m_songInfo.insert(target, printed);
         fill(printed);
     });
+}
+
+void MainWindow::fetchSongInfo(const QString &key, const QString &url, std::function<void(const QString &)> done)
+{
+    // One yt-dlp call per song and session; what it printed is kept, empty
+    // when it failed (and then asked again next time).
+    if (m_songInfo.contains(key)) {
+        done(m_songInfo.value(key));
+        return;
+    }
+    auto *proc = new QProcess(this);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("PYTHONIOENCODING", "utf-8");
+    env.insert("PYTHONUTF8", "1");
+    proc->setProcessEnvironment(env);
+    connect(proc, &QProcess::finished, this, [this, proc, key, done] {
+        proc->deleteLater();
+        const QString printed = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+        if (!printed.isEmpty())
+            m_songInfo.insert(key, printed);
+        done(printed);
+    });
     proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"), songinfo::ytDlpArguments(url));
+}
+
+// -- the now playing view ----------------------------------------------------------
+
+void MainWindow::updatePanelVisibility()
+{
+    if (!m_panel)
+        return;
+    const bool playing = m_mpv.connected() && !m_mpv.property("path").toString().isEmpty();
+    // Not over a video: its page has the list at its side already.
+    m_panel->setVisible(m_panelOpen && playing && m_pages->currentWidget() != m_videoPage && !m_videoFull);
+    m_nowPlaying->setPanelOpen(m_panelOpen);
+}
+
+void MainWindow::refreshPanel()
+{
+    updatePanelVisibility();
+    if (!m_panel->isVisible())
+        return;
+    const QString path = m_mpv.property("path").toString();
+    const QString list = playingListPath();
+    m_panel->setList(list.isEmpty() ? QString() : Playlist::peek(list).name);
+    const auto [artist, track] = playingSong();
+    m_panel->setSong(track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist);
+    QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+    if (id.isEmpty())
+        id = idForTarget(path);
+    m_panel->setCover(m_covers.get(id, ThumbnailCache::Size::Hero));
+    m_panel->setVideoState(m_mpv.property("user-data/ghost/audio").toBool(), songVideo(), m_findingVideo);
+    m_panel->setPosition(m_mpv.property("time-pos").toDouble());
+
+    // Credits and the artist, once per video.
+    if (!id.isEmpty() && id != m_panelFacts) {
+        m_panelFacts = id;
+        m_panelChannel.clear();
+        m_panel->setCredits({}, false);
+        m_panel->setArtist(nullptr);
+        fetchSongInfo(id, QStringLiteral("https://www.youtube.com/watch?v=") + id, [this, id](const QString &printed) {
+            if (id != m_panelFacts)
+                return;
+            const songinfo::Facts facts = songinfo::parse(printed);
+            m_panel->setCredits(facts.credits, true);
+            const QString artist = playingSong().first;
+            m_panelChannel = ArtistLookup::keyFor(artist.isEmpty() ? facts.channelId : artist);
+            m_panel->setArtist(m_artists.known(m_panelChannel));
+            m_artists.fetch(artist, facts.channelId);
+        });
+    }
+
+    // What plays next: the next entry of mpv's list, with the name the list
+    // gives it.
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    const int pos = m_mpv.property("playlist-pos").toInt();
+    if (pos >= 0 && pos + 1 < entries.size()) {
+        const QVariantMap next = entries[pos + 1].toMap();
+        const QString target = next.value("filename").toString();
+        auto [nextTrack, nextArtist] = splitTitle(next.value("title").toString());
+        if (nextTrack.isEmpty())
+            nextTrack = target;
+        m_panel->setNext(nextTrack, nextArtist, m_covers.get(idForTarget(target), ThumbnailCache::Size::Card));
+    } else {
+        m_panel->setNext(QString(), QString(), QPixmap());
+    }
+}
+
+bool MainWindow::songVideo() const
+{
+    return m_mpv.connected() && m_mpv.property("user-data/ghost/video-on").toBool();
+}
+
+void MainWindow::setSongVideo(bool on)
+{
+    // ghost.lua plays the entry named here as the video given, at the same
+    // second; named nothing, it is the song again.
+    if (!m_mpv.connected() || m_findingVideo)
+        return;
+    const QString path = m_mpv.property("path").toString();
+    auto reload = [this] {
+        m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
+        m_resetStart = true;
+        m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+    };
+    if (!on) {
+        m_mpv.setProperty("user-data/ghost/video-path", "");
+        reload();
+        return;
+    }
+    const auto [artist, track] = playingSong();
+    QString fallback = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+    if (fallback.isEmpty())
+        fallback = idForTarget(path);
+    m_findingVideo = true;
+    refreshPanel();
+    findMusicVideo(artist, track, fallback, [this, path, reload](const QString &id) {
+        m_findingVideo = false;
+        if (id.isEmpty() || m_mpv.property("path").toString() != path) {
+            refreshPanel();
+            return;
+        }
+        QString format = mpvconf::value("ytdl-format");
+        if (format.isEmpty())
+            format = QStringLiteral("bestvideo[height<=?1080]+bestaudio/best");
+        m_mpv.setProperty("user-data/ghost/video-url", QStringLiteral("https://www.youtube.com/watch?v=") + id);
+        m_mpv.setProperty("user-data/ghost/video-format", format);
+        m_mpv.setProperty("user-data/ghost/video-path", path);
+        m_wantVideoPage = true;
+        reload();
+    });
+}
+
+void MainWindow::songVideoChanged()
+{
+    schedulePlace();
+    m_videoPage->setSongVideo(songVideo());
+    if (songVideo()) {
+        // Inside the app the video opens on its page; in mpv's own window,
+        // there.
+        if (m_wantVideoPage && m_mpvEmbedded)
+            showVideoPage();
+        m_wantVideoPage = false;
+        return;
+    }
+    // Back to the song, or on to the next one: off the video page.
+    if (m_pages->currentWidget() == m_videoPage && m_mpv.property("user-data/ghost/audio").toBool()) {
+        setVideoFullScreen(false);
+        QWidget *back = m_beforeVideo && m_beforeVideo != m_videoPage ? m_beforeVideo.data() : nullptr;
+        if (back)
+            m_pages->setCurrentWidget(back);
+        else
+            showHome();
+    }
+}
+
+void MainWindow::findMusicVideo(const QString &artist, const QString &track, const QString &fallback,
+                                std::function<void(const QString &)> done)
+{
+    // Song lists play YouTube Music's recording, often a still picture; its
+    // video is the first YouTube result that is the same song and no live,
+    // slowed or cover version of it.
+    const QString query = (artist + ' ' + track).trimmed();
+    if (m_musicVideos.contains(query)) {
+        done(m_musicVideos.value(query));
+        return;
+    }
+    auto fold = [](QString s) {
+        s = s.toLower().replace(QChar(0x131), 'i').normalized(QString::NormalizationForm_KD);
+        s.remove(QRegularExpression(QStringLiteral("[\\p{M}]"), QRegularExpression::UseUnicodePropertiesOption));
+        return s.simplified();
+    };
+    auto *proc = new QProcess(this);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("PYTHONIOENCODING", "utf-8");
+    env.insert("PYTHONUTF8", "1");
+    proc->setProcessEnvironment(env);
+    connect(proc, &QProcess::finished, this, [this, proc, query, track, fallback, fold, done] {
+        proc->deleteLater();
+        static const QStringList variants{"live", "canli", "konser", "concert", "slowed", "sped up", "speed up",
+                                          "reverb", "nightcore", "cover", "remix", "karaoke", "instrumental",
+                                          "lyrics", "lyric", "sozleri", "1 hour", "1 saat", "8d", "akustik", "acoustic"};
+        const QString name = fold(track);
+        QString pick;
+        for (const QString &line : QString::fromUtf8(proc->readAllStandardOutput()).split('\n')) {
+            const QStringList parts = line.trimmed().split('\t');
+            if (parts.size() < 3 || parts[2].endsWith(QLatin1String(" - Topic")))
+                continue;
+            const QString title = fold(parts[1]);
+            if (!title.contains(name))
+                continue;
+            bool variant = false;
+            for (const QString &v : variants)
+                variant = variant || (title.contains(v) && !name.contains(v));
+            if (!variant) {
+                pick = parts[0];
+                break;
+            }
+        }
+        if (pick.isEmpty())
+            pick = fallback;
+        m_musicVideos.insert(query, pick);
+        done(pick);
+    });
+    proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
+                {"--flat-playlist", "--no-warnings", "--encoding", "utf-8", "--print", "%(id)s\t%(title)s\t%(channel)s",
+                 QStringLiteral("ytsearch6:") + query});
 }
 
 void MainWindow::setVideoFullScreen(bool full)
@@ -3343,6 +3603,7 @@ void MainWindow::setVideoFullScreen(bool full)
         m_compactBeforeFull = m_compact;
     }
     m_topBar->setVisible(!full);
+    updatePanelVisibility();
     m_split->widget(0)->setVisible(!full);
     schedulePlace();
     // No gap around the picture either.

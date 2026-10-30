@@ -59,6 +59,30 @@ mp.add_hook("on_load", 50, function()
     end
 end)
 
+-- The app's now playing view can turn the song playing into its video
+-- ("Switch to video"): it names the list entry and the video to play for it,
+-- and only that entry plays as the video, picture included. The next song is
+-- sound again. 9: after songmatch.lua (8) has picked the song, before
+-- ytdl_hook (10) opens it.
+mp.add_hook("on_load", 9, function()
+    local entry = mp.get_property_native("user-data/ghost/video-path") or ""
+    local on = entry ~= "" and entry == mp.get_property("path", "")
+    if entry ~= "" and not on then
+        mp.set_property_native("user-data/ghost/video-path", "")
+    end
+    if on then
+        local url = mp.get_property_native("user-data/ghost/video-url") or ""
+        mp.set_property("stream-open-filename", url)
+        mp.set_property_native("user-data/ghost/source", url)
+        mp.set_property("file-local-options/vid", "auto")
+        local format = mp.get_property_native("user-data/ghost/video-format") or ""
+        if format ~= "" then
+            mp.set_property("file-local-options/ytdl-format", format)
+        end
+    end
+    mp.set_property_native("user-data/ghost/video-on", on)
+end)
+
 -- Opening a song means a YouTube search and an extraction, 3-4 s on a good
 -- connection and over 20 s on a slow laptop, and mpv shows nothing meanwhile.
 -- An unchanged window reads as a frozen player, so say what is happening.

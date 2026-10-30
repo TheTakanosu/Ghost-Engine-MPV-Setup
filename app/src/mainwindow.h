@@ -4,6 +4,7 @@
 #include "lyrics.h"
 #include "offline.h"
 #include "mpvclient.h"
+#include "nowplayingpanel.h"
 #include "resolver.h"
 #include "thumbnails.h"
 #include "youtube.h"
@@ -200,6 +201,28 @@ private:
     void describeVideo(const QString &id);
     QHash<QString, QString> m_songInfo;   // a song's entry -> what yt-dlp printed about it
     void showSongInfo(const QString &target, const QString &title, const QString &artist);
+    void fetchSongInfo(const QString &key, const QString &url, std::function<void(const QString &printed)> done);
+
+    // The now playing view at the right, beside the page.
+    class NowPlayingPanel *m_panel = nullptr;
+    class QSplitter *m_rightSplit = nullptr;
+    ArtistLookup m_artists;
+    Lyrics m_lyrics;                 // the playing song's, once found
+    bool m_panelOpen = true;
+    QString m_panelFacts;            // the video whose credits the panel shows
+    QString m_panelChannel;          // and its channel, the artist's
+    QTimer m_panelSoon;
+    void refreshPanel();
+    void updatePanelVisibility();
+    // A song of a song list played as its music video, and back.
+    bool songVideo() const;
+    void setSongVideo(bool on);
+    void songVideoChanged();
+    void findMusicVideo(const QString &artist, const QString &track, const QString &fallback,
+                        std::function<void(const QString &id)> done);
+    QHash<QString, QString> m_musicVideos;   // "artist track" -> its music video
+    bool m_findingVideo = false;
+    bool m_wantVideoPage = false;
     bool listIsAudio(const QString &path) const;
     int embedFor(bool audio) const;   // 1 inside the app, 0 outside, -1 either
     void restartPlayer(const QueuedPlay &q, double seconds);

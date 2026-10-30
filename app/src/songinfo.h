@@ -16,6 +16,7 @@ namespace songinfo {
 // "subscribe", lyrics, hashtags) left out.
 struct Facts {
     QString id;
+    QString channelId;  // the channel the video is on: the artist's, for YouTube Music
     QString album;
     QString released;   // "Mar 4, 2021", or a year
     QString label;      // "Provided to YouTube by ..." or the ℗ line

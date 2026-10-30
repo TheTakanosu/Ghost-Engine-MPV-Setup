@@ -174,6 +174,12 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     auto *right = new QHBoxLayout(rightBox);
     right->setContentsMargins(0, 0, 0, 0);
     right->addStretch();
+    m_panel = new QPushButton(QString(QChar(0xE8A0)));   // a pane opening at the right
+    m_panel->setObjectName("glyph");
+    m_panel->setToolTip("Now playing view");
+    m_panel->setCursor(Qt::PointingHandCursor);
+    connect(m_panel, &QPushButton::clicked, this, &NowPlayingBar::togglePanel);
+    right->addWidget(m_panel);
     m_lyrics = new QPushButton(QString(QChar(0xE720)));   // a microphone
     m_lyrics->setObjectName("glyph");
     m_lyrics->setToolTip("Lyrics");
@@ -294,6 +300,11 @@ void NowPlayingBar::showIdle()
 void NowPlayingBar::setLyricsOpen(bool open)
 {
     m_lyrics->setStyleSheet(open ? QStringLiteral("color: rgb(176,127,224);") : QString());
+}
+
+void NowPlayingBar::setPanelOpen(bool open)
+{
+    m_panel->setStyleSheet(open ? QStringLiteral("color: rgb(176,127,224);") : QString());
 }
 
 void NowPlayingBar::setVolumeNumber(bool shown)
