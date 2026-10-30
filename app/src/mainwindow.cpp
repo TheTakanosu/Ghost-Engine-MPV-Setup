@@ -348,7 +348,13 @@ MainWindow::MainWindow()
         else
             showHome();
     };
-    m_videoPage->onRestore = [this] { showVideoPage(); };
+    m_videoPage->onRestore = [this] {
+        // From a mini player pinned over a minimised app: the app comes back.
+        if (isMinimized())
+            ShowWindow(reinterpret_cast<HWND>(winId()), SW_RESTORE);
+        activateWindow();
+        showVideoPage();
+    };
     m_videoPage->onMiniMoved = [this](const QPoint &at) {
         m_miniAt = at;
         QSettings().setValue("video/miniAt", at);

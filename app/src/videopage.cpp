@@ -398,6 +398,18 @@ protected:
         if (zoomed && event->angleDelta().y() != 0)
             zoomed(std::pow(1.1, event->angleDelta().y() / 120.0));
     }
+    bool nativeEvent(const QByteArray &, void *message, qintptr *result) override
+    {
+        // The main window is being minimised: Windows hides every window in
+        // its chain, this one too. Pinned, the buttons stay with the picture.
+        const MSG *msg = static_cast<MSG *>(message);
+        if (msg->message == WM_SHOWWINDOW && !msg->wParam && msg->lParam == SW_PARENTCLOSING && carry
+            && static_cast<MiniWindow *>(carry)->pinned) {
+            *result = 0;
+            return true;
+        }
+        return false;
+    }
 
 public:
     std::function<void(double)> zoomed;
