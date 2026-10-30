@@ -18,11 +18,16 @@ QString searchQuery(const QString &target);
 class Matches {
 public:
     QString idFor(const QString &query);
+    // What the entry played as this session (a downloaded copy's video, or
+    // songmatch.lua's pick), ahead of the file: the row then shows the same
+    // cover as the now playing view.
+    void remember(const QString &query, const QString &id) { m_played.insert(query, id); }
 
 private:
     void reloadIfChanged();
 
     QHash<QString, QString> m_ids;
+    QHash<QString, QString> m_played;
     qint64 m_size = -1;
 };
 

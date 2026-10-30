@@ -101,6 +101,10 @@ private:
     QLabel *m_artistSource;
     QWidget *m_creditsCard;
     QVBoxLayout *m_creditRows;
+    QPushButton *m_showAll;
+    QList<QPair<QString, QString>> m_credits;
+    bool m_creditsOpen = false;   // all of them, not the first three
+    void showCredits();
     class ClickCard *m_nextCard;
     QLabel *m_nextCover;
     QLabel *m_nextTitle;

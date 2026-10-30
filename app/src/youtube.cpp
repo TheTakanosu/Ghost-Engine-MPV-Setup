@@ -34,6 +34,8 @@ QString searchQuery(const QString &target)
 
 QString Matches::idFor(const QString &query)
 {
+    if (const auto it = m_played.constFind(query); it != m_played.constEnd())
+        return it.value();
     reloadIfChanged();
     return m_ids.value(query);
 }

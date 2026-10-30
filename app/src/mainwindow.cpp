@@ -468,6 +468,16 @@ MainWindow::MainWindow()
     connect(m_split, &QSplitter::splitterMoved, this, [this] {
         setLibraryCompact(m_split->sizes().value(0) < kCompactBelow);
         syncSearchWidth();
+        m_splitMoved.start();
+        // The controls over the picture follow the edge at once, from the
+        // page as it is laid out now.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        placeSurface();
+    });
+    connect(m_rightSplit, &QSplitter::splitterMoved, this, [this] {
+        m_splitMoved.start();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        placeSurface();
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
@@ -650,6 +660,12 @@ MainWindow::MainWindow()
             m_lyricsView->setPosition(m_mpv.property("time-pos").toDouble());
         if (name == "user-data/ghost/source" || name == "path")
             tintLyrics();
+        if (name == "user-data/ghost/source" && !songVideo()) {
+            const QString query = youtube::searchQuery(m_mpv.property("path").toString());
+            const QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+            if (!query.isEmpty() && !id.isEmpty())
+                m_matches.remember(query, id);
+        }
         if (name == "path" || name == "media-title" || name == "metadata/by-key/uploader" ||
             name == "playlist-path" || name == "user-data/ghost/source")
             updateVideoPage();
@@ -1725,8 +1741,14 @@ void MainWindow::fitTitle()
     }
     font.setPointSizeF(size);
     m_titlePt = size;
-    m_playlistName->setStyleSheet(titleSheet(size, false));
+    const bool renaming = m_nameEdit && m_nameEdit->isVisible();
+    m_playlistName->setStyleSheet(titleSheet(size, renaming));
     m_playlistName->setText(QFontMetrics(font).elidedText(name, Qt::ElideRight, qMax(40, available)));
+    if (renaming) {
+        // Narrowed or widened with the panels, as the songs below are.
+        m_nameEdit->setStyleSheet(QStringLiteral("font-size: %1pt;").arg(size));
+        m_nameEdit->setGeometry(m_playlistName->geometry().adjusted(-8, -4, 8, 4));
+    }
 }
 
 QString MainWindow::titleSheet(qreal points, bool hidden)
@@ -2009,7 +2031,14 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
     if (watched == m_playlistName && event->type() == QEvent::MouseButtonDblClick) {
-        renamePlaylist(m_open);
+        // On the name itself, and not the second click of a panel edge just
+        // dragged over it.
+        const QPoint at = static_cast<QMouseEvent *>(event)->position().toPoint();
+        const int textWidth = m_playlistName->fontMetrics().horizontalAdvance(m_playlistName->text());
+        const bool onText = at.x() <= textWidth + 8;
+        const bool dragging = m_splitMoved.isValid() && m_splitMoved.elapsed() < 800;
+        if (onText && !dragging)
+            renamePlaylist(m_open);
         return true;
     }
     return QMainWindow::eventFilter(watched, event);

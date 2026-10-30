@@ -131,6 +131,11 @@ end
 -- YouTube Music results are songs, so an exact title is the strongest sign.
 -- Plain search results are uploads: an exact title there is as often someone's
 -- re-upload, and the artist's name in the title or channel matters more.
+local function video_wanted()
+    return mp.get_property_native("user-data/ghost/audio") == true
+        and mp.get_property_native("user-data/ghost/video-mode") == true
+end
+
 local function score(entry, index, query, track, artist, songs)
     local title = norm(entry.title)
     local wanted = norm(query)
@@ -150,6 +155,14 @@ local function score(entry, index, query, track, artist, songs)
         points = points + 40
     end
     channel = norm(channel)
+    if video_wanted() then
+        -- A song list switched to videos (ghost.lua): the music video, not
+        -- the "Topic" upload with a still picture or an "official audio".
+        if has(channel, " topic ") or has(title, " audio ") then points = points - 40 end
+        if has(title, " official video ") or has(title, " music video ") or has(title, " klip ")
+            or has(title, " video ") then points = points + 15 end
+        return points - 2 * index
+    end
     if has(channel, " topic ") then points = points + 15 end
     if has(title, " official audio ") then points = points + 10
     elseif has(title, " official ") then points = points + 5 end
@@ -224,6 +237,19 @@ end
 -- video id of its own until this script finds one.
 local MATCHES = mp.command_native({"expand-path", "~~/ghost-matches.tsv"})
 
+-- The videos picked for songs in earlier sessions. Only those: a song's own
+-- match is looked up afresh each session, as it always was.
+do
+    local file = io.open(MATCHES, "r")
+    if file then
+        for line in file:lines() do
+            local key, id = line:match("^(video:.-)\t([%w_-]+)%s*$")
+            if key then resolved[key] = id end
+        end
+        file:close()
+    end
+end
+
 local function remember_match(query, id)
     local file = io.open(MATCHES, "a")
     if file then
@@ -234,10 +260,10 @@ end
 
 -- `key` is the query, or the query marked as wanting its video (see
 -- resolve): a song list switched to videos asks YouTube, not YouTube Music,
--- and keeps that answer apart. Only the plain query's answer is written down
--- for the app.
+-- and keeps that answer apart. Both are written down; a song's video is read
+-- back in the next session (see below), so it stays the same video.
 local function finish(key, id, query)
-    if type(id) == "string" and resolved[key] == nil and key == query then remember_match(query, id) end
+    if type(id) == "string" and resolved[key] == nil then remember_match(key, id) end
     resolved[key] = id or false
     local waiting = pending[key] or {}
     pending[key] = nil

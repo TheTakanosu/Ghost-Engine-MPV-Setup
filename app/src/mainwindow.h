@@ -278,6 +278,7 @@ private:
     QLabel *m_playlistInfo = nullptr;
     QHBoxLayout *m_headRow = nullptr;
     QLineEdit *m_nameEdit = nullptr;
+    QElapsedTimer m_splitMoved;      // a panel edge was just dragged
     QLineEdit *m_songSearch = nullptr;
     bool m_renameCancelled = false;
     int m_playingRow = -1;

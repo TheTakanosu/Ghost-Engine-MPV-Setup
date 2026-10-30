@@ -275,7 +275,7 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
         "QLabel { background: transparent; }"
         "QPushButton#npSwitch { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);"
         "  border-radius: 16px; min-height: 30px; max-height: 30px; padding: 0 16px; color: rgb(240,240,245);"
-        "  font-family: 'Segoe UI', 'Segoe Fluent Icons'; font-weight: 600; }"
+        "  font-weight: 600; }"
         "QPushButton#npSwitch:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.3); }"
         "QPushButton#npSwitch:disabled { color: rgb(154,152,166); }");
 
@@ -364,7 +364,13 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     auto *showAll = new QPushButton("Show all");
     showAll->setObjectName("link");
     showAll->setCursor(Qt::PointingHandCursor);
-    connect(showAll, &QPushButton::clicked, this, [this] { if (onAbout) onAbout(); });
+    m_showAll = showAll;
+    // The card grows to every credit, as Spotify's does; About this song is
+    // the (i) by the name.
+    connect(showAll, &QPushButton::clicked, this, [this] {
+        m_creditsOpen = !m_creditsOpen;
+        showCredits();
+    });
     auto *creditsTop = new QHBoxLayout;
     creditsTop->addWidget(heading("Credits"), 1);
     creditsTop->addWidget(showAll);
@@ -470,8 +476,24 @@ void NowPlayingPanel::setVideoState(bool available, bool video, bool busy)
     m_switch->setEnabled(!busy);
     // A screen for the video, a note for the song.
     m_switch->setText(busy ? QStringLiteral("Loading the video...")
-                      : video ? QString(QChar(0xEC4F)) + QStringLiteral("   Switch to audio")
-                              : QString(QChar(0xE714)) + QStringLiteral("   Switch to video"));
+                      : video ? QStringLiteral("Switch to audio") : QStringLiteral("Switch to video"));
+    // The glyph as an icon: inside the text it sat lower than the words and
+    // pushed them off the middle. A note for the song, a screen for the video.
+    const qreal dpr = devicePixelRatioF();
+    QPixmap glyph(QSize(16, 16) * dpr);
+    glyph.setDevicePixelRatio(dpr);
+    glyph.fill(Qt::transparent);
+    if (!busy) {
+        QPainter p(&glyph);
+        p.setRenderHint(QPainter::TextAntialiasing);
+        QFont icons(QStringLiteral("Segoe Fluent Icons"));
+        icons.setPixelSize(14);
+        p.setFont(icons);
+        p.setPen(QColor(240, 240, 245));
+        p.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, QString(QChar(video ? 0xEC4F : 0xE714)));
+    }
+    m_switch->setIcon(QIcon(glyph));
+    m_switch->setIconSize(QSize(busy ? 0 : 16, 16));
 }
 
 void NowPlayingPanel::setLyrics(const Lyrics &lyrics, bool searching)
@@ -557,11 +579,22 @@ void NowPlayingPanel::setArtist(const ArtistInfo *artist)
 void NowPlayingPanel::setCredits(const QList<QPair<QString, QString>> &credits, bool asked)
 {
     Q_UNUSED(asked);
+    if (credits != m_credits)
+        m_creditsOpen = false;   // another song: closed again
+    m_credits = credits;
+    showCredits();
+}
+
+void NowPlayingPanel::showCredits()
+{
+    const auto &credits = m_credits;
     while (QLayoutItem *item = m_creditRows->takeAt(0)) {
         delete item->widget();
         delete item;
     }
-    for (int i = 0; i < credits.size() && i < 3; ++i) {
+    m_showAll->setVisible(credits.size() > 3);
+    m_showAll->setText(m_creditsOpen ? QStringLiteral("Show less") : QStringLiteral("Show all"));
+    for (int i = 0; i < credits.size() && (m_creditsOpen || i < 3); ++i) {
         auto *row = new QWidget;
         auto *name = new QLabel(credits[i].second);
         name->setWordWrap(true);
