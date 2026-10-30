@@ -224,6 +224,9 @@ SongInfoDialog::SongInfoDialog(const QString &title, const QString &artist, QWid
     box->addWidget(m_about);
     box->addSpacing(4);
     box->addLayout(buttons);
+    // As tall as what it says: pulled taller, it only opened a gap under the
+    // cover.
+    box->setSizeConstraint(QLayout::SetFixedSize);
     setCover(QPixmap());
 }
 

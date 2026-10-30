@@ -1747,8 +1747,17 @@ void MainWindow::fitTitle()
     if (renaming) {
         // Narrowed or widened with the panels, as the songs below are.
         m_nameEdit->setStyleSheet(QStringLiteral("font-size: %1pt;").arg(size));
-        m_nameEdit->setGeometry(m_playlistName->geometry().adjusted(-8, -4, 8, 4));
+        placeNameEdit();
     }
+}
+
+void MainWindow::placeNameEdit()
+{
+    // Over the title, wherever the layout has just put it, and never wider
+    // than the header (the panels can narrow it while the box is open).
+    QRect r = m_playlistName->geometry().adjusted(-8, -4, 8, 4);
+    r.setRight(qMin(r.right(), m_playlistCover->width() - 12));
+    m_nameEdit->setGeometry(r);
 }
 
 QString MainWindow::titleSheet(qreal points, bool hidden)
@@ -1769,7 +1778,7 @@ void MainWindow::renamePlaylist(int index)
     m_nameEdit->setText(m_library.playlists()[m_open].name);
     m_nameEdit->setFont(m_playlistName->font());
     m_nameEdit->setStyleSheet(QStringLiteral("font-size: %1pt;").arg(m_titlePt));
-    m_nameEdit->setGeometry(m_playlistName->geometry().adjusted(-8, -4, 8, 4));
+    placeNameEdit();
     // The title stays in the layout, only invisible, so nothing around it moves.
     m_playlistName->setStyleSheet(titleSheet(m_titlePt, true));
     m_nameEdit->show();
@@ -1953,6 +1962,17 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         const bool compact = m_libraryPanel->width() < kCompactBelow;
         if (compact != m_compact)
             setLibraryCompact(compact);
+    }
+    // The title moves after fitTitle has run, once the layout gets to it.
+    if (watched == m_playlistName && (event->type() == QEvent::Move || event->type() == QEvent::Resize) &&
+        m_nameEdit->isVisible())
+        placeNameEdit();
+    // Esc is also the window's (it leaves full screen) and a shortcut would
+    // take it before the box: claim it, so the key below reaches us.
+    if (watched == m_nameEdit && event->type() == QEvent::ShortcutOverride &&
+        static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+        event->accept();
+        return true;
     }
     if (watched == m_nameEdit && event->type() == QEvent::KeyPress &&
         static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
