@@ -287,6 +287,16 @@ MainWindow::MainWindow()
     m_pages->addWidget(m_lyricsView);
     m_videoPage = new VideoPage;
     m_pages->addWidget(m_videoPage);
+    m_profilePage = new ProfilePage;
+    m_topLists = makeShelf();
+    m_profilePage->setListsShelf(m_topLists);
+    m_profilePage->onOpenPlaying = [this] { if (m_mpv.connected()) openPlayingList(); };
+    auto *profileScroll = new QScrollArea;
+    profileScroll->setWidget(m_profilePage);
+    profileScroll->setWidgetResizable(true);
+    profileScroll->setFrameShape(QFrame::NoFrame);
+    m_profileScroll = profileScroll;
+    m_pages->addWidget(m_profileScroll);
     m_videoPage->coverFor = [this](const QString &target) {
         return m_covers.get(idForTarget(target), ThumbnailCache::Size::Card);
     };
@@ -452,7 +462,15 @@ MainWindow::MainWindow()
     connect(&m_artists, &ArtistLookup::ready, this, [this](const QString &channel) {
         if (channel == m_panelChannel)
             m_panel->setArtist(m_artists.known(channel));
+        if (m_pages->currentWidget() == m_profileScroll)
+            m_profileSoon.start();
     });
+    m_profileSoon.setSingleShot(true);
+    m_profileSoon.setInterval(150);
+    connect(&m_profileSoon, &QTimer::timeout, this, &MainWindow::refreshProfile);
+    connect(&m_profile, &DiscordProfile::changed, this, &MainWindow::refreshProfileUser);
+    m_profile.refresh();
+    QTimer::singleShot(0, this, &MainWindow::refreshProfileUser);
     m_panelSoon.setSingleShot(true);
     m_panelSoon.setInterval(150);
     connect(&m_panelSoon, &QTimer::timeout, this, &MainWindow::refreshPanel);
@@ -631,7 +649,7 @@ MainWindow::MainWindow()
             m_settings->load();
     });
     auto repaint = [this] {
-        for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_songs})
+        for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_topLists, m_songs})
             v->viewport()->update();
         m_playlistCover->update();
         m_nowPlaying->refreshCover();
@@ -643,7 +661,12 @@ MainWindow::MainWindow()
         repaint();
     });
     connect(&m_covers, &ThumbnailCache::ready, this, repaint);
-    connect(&m_covers, &ThumbnailCache::ready, this, [this] { if (m_panel->isVisible()) m_panelSoon.start(); });
+    connect(&m_covers, &ThumbnailCache::ready, this, [this] {
+        if (m_panel->isVisible())
+            m_panelSoon.start();
+        if (m_pages->currentWidget() == m_profileScroll)
+            m_profileSoon.start();
+    });
     connect(&m_mpv, &MpvClient::propertyChanged, this, [this, repaint](const QString &name) {
         // A song played since the last look may have given a list its cover.
         if (name == "user-data/ghost/source")
@@ -677,6 +700,15 @@ MainWindow::MainWindow()
             m_panelSoon.start();
         if (name == "time-pos" && m_panel->isVisible())
             m_panel->setPosition(m_mpv.property("time-pos").toDouble());
+        if (name == "time-pos")
+            trackListening();
+        if (m_pages->currentWidget() == m_profileScroll) {
+            if (name == "path" || name == "user-data/ghost/source" || name == "media-title" || name == "pause" ||
+                name == "playlist-pos" || name == "playlist-path")
+                m_profileSoon.start();
+            if (name == "time-pos" || name == "duration")
+                m_profilePage->setPosition(m_mpv.property("time-pos").toDouble(), m_mpv.property("duration").toDouble());
+        }
         if (name == "user-data/ghost/video-on")
             songVideoChanged();
         if (name == "metadata/by-key/uploader" && !m_mpv.property("user-data/ghost/audio").toBool()) {
@@ -870,6 +902,13 @@ QWidget *MainWindow::buildTopBar()
 {
     auto *home = glyphButton(kIconHome, "Home", "pill");
     connect(home, &QPushButton::clicked, this, &MainWindow::showHome);
+    m_profileButton = new QPushButton;
+    m_profileButton->setObjectName("profileButton");
+    m_profileButton->setToolTip("Profile");
+    m_profileButton->setCursor(Qt::PointingHandCursor);
+    m_profileButton->setFixedSize(36, 36);
+    m_profileButton->setIconSize(QSize(28, 28));
+    connect(m_profileButton, &QPushButton::clicked, this, &MainWindow::showProfile);
 
     m_search = new QLineEdit;
     m_search->setObjectName("topSearch");
@@ -892,7 +931,7 @@ QWidget *MainWindow::buildTopBar()
         ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     });
     connect(close, &QPushButton::clicked, this, &MainWindow::close);
-    m_chromeButtons = {home, m_search, gear, minimize, m_maxButton, close};
+    m_chromeButtons = {m_profileButton, home, m_search, gear, minimize, m_maxButton, close};
 
     m_topBar = new QWidget;
     m_topBar->setObjectName("topBar");
@@ -901,6 +940,7 @@ QWidget *MainWindow::buildTopBar()
     auto *row = new QHBoxLayout(m_topBar);
     row->setContentsMargins(8, 0, 0, 0);
     row->setSpacing(8);
+    row->addWidget(m_profileButton);
     row->addWidget(home);
     row->addWidget(m_search);
     row->addStretch();
@@ -2220,7 +2260,7 @@ void MainWindow::chooseCover(int index)
         return;
     }
     m_customCovers.remove(target);
-    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed})
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_topLists})
         v->viewport()->update();
     m_playlistCover->update();
 }
@@ -2233,7 +2273,7 @@ void MainWindow::removeCover(int index)
     const QString target = customCoverPath(all[index].path);
     QFile::remove(target);
     m_customCovers.remove(target);
-    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed})
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_topLists})
         v->viewport()->update();
     m_playlistCover->update();
 }
@@ -2264,9 +2304,9 @@ void MainWindow::changeZoom(qreal step)
 {
     theme::setZoom(*static_cast<QApplication *>(QCoreApplication::instance()), step == 0 ? 1.0 : theme::zoom() + step);
     QSettings().setValue("window/zoom", theme::zoom());
-    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_songs})
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_topLists, m_songs})
         v->doItemsLayout();
-    for (QListWidget *v : {m_recentAdded, m_recentPlayed})
+    for (QListWidget *v : {m_recentAdded, m_recentPlayed, m_topLists})
         v->setFixedHeight(int((kTile + 70 + 26) * theme::zoom()));
     layoutHeader();
 }
@@ -2391,7 +2431,7 @@ void MainWindow::applyLook()
     tiles::setCircleCovers(settings.value("look/circleCovers").toBool());
     m_nowPlaying->setVolumeNumber(settings.value("look/volumeNumber", false).toBool());
     m_nowPlaying->refreshCover();
-    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed})
+    for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_topLists})
         v->viewport()->update();
     m_playlistCover->update();
 }
@@ -2403,6 +2443,128 @@ void MainWindow::sendWindowChoice()
     if (m_mpv.connected())
         m_mpv.command({"change-list", "script-opts", "append",
                        QSettings().value("player/window", true).toBool() ? "ghost-window=yes" : "ghost-window=no"});
+}
+
+void MainWindow::showProfile()
+{
+    m_open = -1;
+    m_libraryList->clearSelection();
+    m_profile.refresh();   // a new avatar or name since the last look
+    refreshProfile();
+    m_pages->setCurrentWidget(m_profileScroll);
+    m_nowPlaying->setLyricsOpen(false);
+}
+
+void MainWindow::refreshProfileUser()
+{
+    // Discord's name and picture; before Discord has ever answered, the
+    // Windows user's name.
+    const bool known = m_profile.known();
+    const QString name = known ? m_profile.name() : qEnvironmentVariable("USERNAME");
+    const QString counts = QStringLiteral("%1 playlists  ·  %2 songs and videos").arg(m_statLists->text(), m_statSongs->text());
+    m_profilePage->setUser(name, known ? m_profile.handle() : QString(),
+                           m_profile.avatar(), known ? counts : counts + QStringLiteral("  ·  Open Discord to show your profile"));
+
+    // The same face, small, at the top left.
+    const qreal dpr = devicePixelRatioF();
+    QPixmap icon(QSize(28, 28) * dpr);
+    icon.setDevicePixelRatio(dpr);
+    icon.fill(Qt::transparent);
+    QPainter p(&icon);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    QPainterPath circle;
+    circle.addEllipse(QRectF(0, 0, 28, 28));
+    p.setClipPath(circle);
+    const QPixmap avatar = m_profile.avatar();
+    if (avatar.isNull()) {
+        p.fillRect(QRectF(0, 0, 28, 28), QColor(46, 44, 58));
+        QFont icons(QStringLiteral("Segoe Fluent Icons"));
+        icons.setPixelSize(14);
+        p.setFont(icons);
+        p.setPen(QColor(220, 218, 230));
+        p.drawText(QRectF(0, 0, 28, 28), Qt::AlignCenter, QString(QChar(0xE77B)));
+    } else {
+        const int edge = qMin(avatar.width(), avatar.height());
+        p.drawPixmap(QRectF(0, 0, 28, 28), avatar,
+                     QRect((avatar.width() - edge) / 2, (avatar.height() - edge) / 2, edge, edge));
+    }
+    p.end();
+    m_profileButton->setIcon(QIcon(icon));
+    m_profileButton->setToolTip(name.isEmpty() ? QStringLiteral("Profile") : name);
+}
+
+void MainWindow::refreshProfile()
+{
+    refreshProfileUser();
+
+    // What friends see on Discord.
+    const QString path = m_mpv.connected() ? m_mpv.property("path").toString() : QString();
+    if (path.isEmpty()) {
+        m_profilePage->setIdle();
+    } else {
+        const auto [artist, track] = playingSong();
+        QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+        if (id.isEmpty())
+            id = idForTarget(path);
+        const QString list = playingListPath();
+        m_profilePage->setListening(m_covers.get(id, ThumbnailCache::Size::Card),
+                                    track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist,
+                                    list.isEmpty() ? QString() : Playlist::peek(list).name,
+                                    m_mpv.property("pause").toBool());
+        m_profilePage->setPosition(m_mpv.property("time-pos").toDouble(), m_mpv.property("duration").toDouble());
+    }
+
+    QList<ProfilePage::Artist> artists;
+    for (const auto &a : m_stats.topArtists(6)) {
+        const ArtistInfo *info = m_artists.known(ArtistLookup::keyFor(a.name));
+        if (!info)
+            m_artists.fetch(a.name, QString());   // the photo, once found
+        artists.append({a.name, info ? info->photo : QPixmap(), a.plays});
+    }
+    m_profilePage->setTopArtists(artists);
+
+    QList<ProfilePage::Song> songs;
+    for (const auto &s : m_stats.topSongs(5))
+        songs.append({s.title, s.artist, m_covers.get(s.id, ThumbnailCache::Size::Card), s.plays});
+    m_profilePage->setTopSongs(songs);
+
+    const auto &all = m_library.playlists();
+    QVector<int> lists;
+    for (const auto &l : m_stats.topLists(kShelfCount))
+        for (int i = 0; i < all.size(); ++i)
+            if (all[i].path.compare(l.name, Qt::CaseInsensitive) == 0) { lists << i; break; }
+    fillShelf(m_topLists, lists);
+    m_profilePage->setListsVisible(!lists.isEmpty());
+    m_profilePage->setSince(m_stats.since(), m_stats.empty());
+}
+
+void MainWindow::trackListening()
+{
+    // Only seconds actually heard: a seek or a pause adds nothing.
+    const QString path = m_mpv.property("path").toString();
+    const double now = m_mpv.property("time-pos").toDouble();
+    const double step = now - m_listenLast;
+    m_listenLast = now;
+    if (path != m_listenPath || (step < -5 && now < 2)) {   // another song, or this one again
+        m_listenPath = path;
+        m_listenSeconds = 0;
+        m_listenCounted = false;
+        return;
+    }
+    if (m_mpv.property("pause").toBool() || step <= 0 || step > 2)
+        return;
+    m_listenSeconds += step;
+    if (m_listenCounted || m_listenSeconds < 30 || path.isEmpty())
+        return;
+    m_listenCounted = true;
+    const auto [artist, track] = playingSong();
+    QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+    if (id.isEmpty())
+        id = idForTarget(path);
+    m_stats.played(track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist, id, playingListPath());
+    if (m_pages->currentWidget() == m_profileScroll)
+        m_profileSoon.start();
 }
 
 void MainWindow::showHome()

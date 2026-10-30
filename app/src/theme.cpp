@@ -201,6 +201,10 @@ void apply(QApplication &app)
         QLabel#bigTitle { font-size: 40pt; font-weight: 800; }
         QListWidget#grid { background: transparent; border: none; outline: none; }
         QLabel#pageTitle { font-size: 22pt; font-weight: 700; }
+        QLabel#profileName { font-size: 34pt; font-weight: 800; }
+        QLabel#tileName { font-weight: 600; }
+        QPushButton#profileButton { background: transparent; border: none; border-radius: 18px; padding: 0; }
+        QPushButton#profileButton:hover { background: rgb(46,44,58); }
         QLabel#sectionTitle { font-size: 14pt; font-weight: 600; padding-top: 6px; }
         QWidget#statCard { background: rgb(33,32,41); border-radius: 14px; }
         QLabel#statValue { font-size: 22pt; font-weight: 700; color: rgb(207,179,240); }

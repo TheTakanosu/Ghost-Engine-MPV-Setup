@@ -3,6 +3,7 @@
 #include "library.h"
 #include "lyrics.h"
 #include "offline.h"
+#include "profile.h"
 #include "mpvclient.h"
 #include "nowplayingpanel.h"
 #include "resolver.h"
@@ -79,6 +80,7 @@ private:
     void undoSongEdit();
     void applyPendingOrder();
     void showHome();
+    void showProfile();
     void showSettings();
     void toggleLyrics();
     // The song mpv is on, as artist and track for a lyrics search.
@@ -208,6 +210,24 @@ private:
     class NowPlayingPanel *m_panel = nullptr;
     class QSplitter *m_rightSplit = nullptr;
     ArtistLookup m_artists;
+
+    // The profile page: who is listening (from Discord), what plays now, and
+    // what has been played most.
+    DiscordProfile m_profile;
+    ListeningStats m_stats;
+    ProfilePage *m_profilePage = nullptr;
+    QWidget *m_profileScroll = nullptr;
+    QListWidget *m_topLists = nullptr;
+    class QPushButton *m_profileButton = nullptr;
+    QTimer m_profileSoon;
+    void refreshProfile();
+    void refreshProfileUser();
+    // A song counts as played after 30 seconds of it.
+    void trackListening();
+    QString m_listenPath;
+    double m_listenLast = 0;
+    double m_listenSeconds = 0;
+    bool m_listenCounted = false;
     Lyrics m_lyrics;                 // the playing song's, once found
     bool m_panelOpen = true;
     QString m_panelFacts;            // the video whose credits the panel shows
