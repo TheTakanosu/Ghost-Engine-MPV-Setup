@@ -788,9 +788,11 @@ MainWindow::MainWindow()
             m_rescanSoon.start();
             return;
         }
+        // Scanned first: a list that has just arrived in Downloads is only
+        // known to the library after it.
+        rescan();
         if (QSettings().value("library/autoImport").toBool())
             importStray(false);
-        rescan();
     });
 
     qApp->installEventFilter(this);
