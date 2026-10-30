@@ -198,6 +198,8 @@ private:
     QHash<QString, QString> m_descriptions;   // video id -> its description
     QString m_describing;            // the id being fetched
     void describeVideo(const QString &id);
+    QHash<QString, QString> m_songInfo;   // a song's entry -> what yt-dlp printed about it
+    void showSongInfo(const QString &target, const QString &title, const QString &artist);
     bool listIsAudio(const QString &path) const;
     int embedFor(bool audio) const;   // 1 inside the app, 0 outside, -1 either
     void restartPlayer(const QueuedPlay &q, double seconds);

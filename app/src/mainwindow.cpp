@@ -2,6 +2,7 @@
 
 #include "covercrop.h"
 #include "settings.h"
+#include "songinfo.h"
 #include "videopage.h"
 #include "icons.h"
 #include "nowplaying.h"
@@ -1570,6 +1571,12 @@ QWidget *MainWindow::buildPlaylistPage()
         const int count = m_songs->selectedItems().size();
         QMenu menu(this);
         menu.addAction("Play", this, [this, item] { playOpen(m_songs->row(item)); });
+        if (count == 1) {
+            const QString target = item->data(Qt::UserRole).toString();
+            const QString title = item->text();
+            const QString artist = item->data(tiles::kArtistRole).toString();
+            menu.addAction("About this song", this, [this, target, title, artist] { showSongInfo(target, title, artist); });
+        }
         QMenu *to = menu.addMenu(count > 1 ? QStringLiteral("Add %1 songs to playlist").arg(count) : QStringLiteral("Add to playlist"));
         to->addAction("New playlist...", this, [this] { newPlaylist(QString(), true); });
         to->addSeparator();
@@ -3266,6 +3273,61 @@ void MainWindow::describeVideo(const QString &id)
                 {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
                  "--print", "%(view_count)s|%(upload_date)s", "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
+}
+
+void MainWindow::showSongInfo(const QString &target, const QString &title, const QString &artist)
+{
+    // Its own video if the entry names one, the one matched for its search
+    // otherwise, or YouTube's first answer to the search.
+    auto *dialog = new SongInfoDialog(title, artist, this);
+    QPointer<SongInfoDialog> alive(dialog);
+    const QString known = idForTarget(target);
+    auto cover = [this, alive](const QString &id) {
+        if (!alive || id.isEmpty())
+            return;
+        alive->setProperty("videoId", id);
+        alive->setCover(m_covers.get(id, ThumbnailCache::Size::Card));
+    };
+    cover(known);
+    // A picture not downloaded yet comes when it is.
+    connect(&m_covers, &ThumbnailCache::ready, dialog, [this, alive](const QString &id) {
+        if (alive && id == alive->property("videoId").toString())
+            alive->setCover(m_covers.get(id, ThumbnailCache::Size::Card));
+    });
+    dialog->show();
+    auto fill = [this, alive, known, cover](const QString &printed) {
+        if (!alive)
+            return;
+        const songinfo::Facts facts = songinfo::parse(printed);
+        alive->setFacts(facts);
+        if (known.isEmpty())
+            cover(facts.id);
+    };
+    if (m_songInfo.contains(target)) {
+        fill(m_songInfo.value(target));
+        return;
+    }
+    const QString query = youtube::searchQuery(target);
+    const QString url = !known.isEmpty() ? QStringLiteral("https://www.youtube.com/watch?v=") + known
+                        : !query.isEmpty() ? QStringLiteral("ytsearch1:") + query
+                                           : target;
+    auto *proc = new QProcess(this);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("PYTHONIOENCODING", "utf-8");
+    env.insert("PYTHONUTF8", "1");
+    proc->setProcessEnvironment(env);
+    connect(proc, &QProcess::finished, this, [this, proc, target, fill, alive] {
+        proc->deleteLater();
+        const QString printed = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+        if (printed.isEmpty()) {
+            if (alive)
+                alive->setFailed();
+            return;
+        }
+        m_songInfo.insert(target, printed);
+        fill(printed);
+    });
+    proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"), songinfo::ytDlpArguments(url));
 }
 
 void MainWindow::setVideoFullScreen(bool full)
