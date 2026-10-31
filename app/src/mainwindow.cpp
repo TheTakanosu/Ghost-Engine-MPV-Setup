@@ -3688,7 +3688,7 @@ void MainWindow::placeSurface()
     if (m_surfaceDrag && (onPage || inPanel)) {
         // Put away until the edge is let go; the thumbnail stands in.
         surface->setVisible(false);
-        miniWindow->hide();
+        m_videoPage->hideMini();
         m_videoPage->corners()->hide();
         m_videoPage->controls()->hide();
         m_surfaceOnPage = false;
@@ -3707,7 +3707,7 @@ void MainWindow::placeSurface()
         m_videoPage->setSurfaceCorner(8);
         m_videoPage->setSurfaceVisibleArea(visible.isEmpty() ? QRect(0, 0, 1, 1) : visible.translated(-picture.topLeft()));
         surface->place(this, picture);
-        miniWindow->hide();
+        m_videoPage->hideMini();
     } else if (onPage) {
         // The page scrolls the picture up and out of view: only what is
         // inside the page's scrolling area shows.
@@ -3718,7 +3718,7 @@ void MainWindow::placeSurface()
         visible = picture & view;
         m_videoPage->setSurfaceVisibleArea(visible.isEmpty() ? QRect(0, 0, 1, 1) : visible.translated(-picture.topLeft()));
         surface->place(this, picture);
-        miniWindow->hide();
+        m_videoPage->hideMini();
     } else if (mini) {
         // The video's shape, 384 px wide unless it was resized; bottom right
         // of the page until it is dragged somewhere else.
@@ -3737,7 +3737,7 @@ void MainWindow::placeSurface()
         miniWindow->show();
         surface->place(miniWindow, QRect(QPoint(0, 0), miniWindow->size()));
     } else {
-        miniWindow->hide();
+        m_videoPage->hideMini();
     }
     surface->setVisible(onPage || mini || (inPanel && !visible.isEmpty()));
     m_surfaceOnPage = onPage || inPanel;   // the controls come over it on hover

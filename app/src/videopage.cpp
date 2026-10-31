@@ -1337,6 +1337,14 @@ void VideoPage::showSeekTip(int value)
     m_seekTip->raise();
 }
 
+void VideoPage::hideMini()
+{
+    m_miniWindow->hide();
+    for (QWidget *w : {m_miniWindow, static_cast<MiniWindow *>(m_miniWindow)->face})
+        if (w && w->testAttribute(Qt::WA_WState_Created) && IsWindowVisible(reinterpret_cast<HWND>(w->winId())))
+            ShowWindow(reinterpret_cast<HWND>(w->winId()), SW_HIDE);
+}
+
 bool VideoPage::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_seek && event->type() == QEvent::Wheel) {

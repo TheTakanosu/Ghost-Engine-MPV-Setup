@@ -88,6 +88,10 @@ public:
     // now playing view) that view.
     void setWheelTarget(QWidget *viewport) { m_wheelTarget = viewport; }
     QWidget *miniWindow() const { return m_miniWindow; }
+    // Put away for good, also when Qt thinks it already is: pinned, it kept
+    // itself up through the app's minimising behind Qt's back, and Qt's
+    // hide() then did nothing.
+    void hideMini();
     QWidget *mini() const { return m_mini; }
     void setOwner(QWidget *window);
 
