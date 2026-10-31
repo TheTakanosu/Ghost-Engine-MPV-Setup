@@ -1350,6 +1350,18 @@ bool VideoPage::eventFilter(QObject *watched, QEvent *event)
     }
     if (watched == m_player && event->type() == QEvent::Resize)
         placeScreen();
+    if (watched == m_screen && event->type() == QEvent::Paint && !m_still.isNull()) {
+        // The thumbnail filling the picture's place, cut to its shape.
+        QPainter p(m_screen);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        const QSizeF box = m_screen->size();
+        QSizeF from = m_still.size();
+        const qreal scale = qMax(box.width() / from.width(), box.height() / from.height());
+        const QSizeF cut(box.width() / scale, box.height() / scale);
+        p.drawPixmap(QRectF(QPointF(0, 0), box), m_still,
+                     QRectF(QPointF((from.width() - cut.width()) / 2, (from.height() - cut.height()) / 2), cut));
+        return true;
+    }
     if ((watched == m_screen || watched == m_player) &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize) && onScreenMoved)
         onScreenMoved();

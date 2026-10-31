@@ -191,13 +191,16 @@ protected:
         QPainterPath shape;
         shape.addRoundedRect(box, 8, 8);
         p.setClipPath(shape);
-        if (picture.isNull() || aspect != 1) {
-            // Under the video, while it loads: dark, not the cover cut wide.
-            p.fillRect(box, aspect != 1 ? QColor(0, 0, 0) : QColor(40, 38, 48));
+        if (picture.isNull()) {
+            p.fillRect(box, QColor(40, 38, 48));
             return;
         }
-        const int side = qMin(picture.width(), picture.height());
-        p.drawPixmap(box, picture, QRectF((picture.width() - side) / 2.0, (picture.height() - side) / 2.0, side, side));
+        // The middle of the cover at this shape: square, or the video's while
+        // it plays here (seen while the panel's edge is dragged).
+        const qreal scale = qMax(box.width() / picture.width(), box.height() / picture.height());
+        const QSizeF cut(box.width() / scale, box.height() / scale);
+        p.drawPixmap(box, picture, QRectF(QPointF((picture.width() - cut.width()) / 2.0,
+                                                  (picture.height() - cut.height()) / 2.0), cut));
     }
 };
 
@@ -271,7 +274,9 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
 {
     setObjectName("panel");
     setAttribute(Qt::WA_StyledBackground);
-    setMinimumWidth(280);
+    // Wide enough for the two video buttons side by side, which were cut
+    // off at the right when the panel was dragged narrower.
+    setMinimumWidth(340);
     setStyleSheet(
         "QFrame#npCard { background: rgb(36,34,44); border-radius: 10px; }"
         "QLabel { background: transparent; }"

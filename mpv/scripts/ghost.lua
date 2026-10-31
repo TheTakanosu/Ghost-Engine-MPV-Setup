@@ -67,8 +67,20 @@ end)
 -- on YouTube instead of YouTube Music meanwhile. 9: after songmatch.lua (8)
 -- has picked the video, before ytdl_hook (10) opens it.
 --
--- "Mini video" is the same for one song only: the app names the entry in
+-- "Mini video" is the same for one song only: the entry is named in
 -- user-data/ghost/video-once, and the next one plays as sound again.
+-- Named here, from mpv's own `path`, at the app's word: the app's copy of
+-- `path` could still be the .m3u's just after a list began, and a name
+-- that matched no entry was forgotten at once, the song staying sound.
+mp.register_script_message("ghost-video-once", function(on)
+    local pos = mp.get_property_number("playlist-pos", -1)
+    if pos < 0 then return end
+    mp.set_property_native("user-data/ghost/video-once", on == "yes" and mp.get_property("path", "") or "")
+    local at = mp.get_property_number("time-pos")
+    if at then mp.set_property("start", string.format("%.1f", at)) end
+    mp.commandv("playlist-play-index", tostring(pos))
+end)
+
 mp.add_hook("on_load", 9, function()
     local once = mp.get_property_native("user-data/ghost/video-once")
     local single = type(once) == "string" and once ~= "" and once == mp.get_property("path", "")

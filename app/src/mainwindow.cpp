@@ -515,6 +515,7 @@ MainWindow::MainWindow()
         m_splitMoved.start();
         // The controls over the picture follow the edge at once, from the
         // page as it is laid out now.
+        startSurfaceDrag();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         placeSurface();
         // And painted now where the picture was: left for later, a strip of
@@ -523,9 +524,20 @@ MainWindow::MainWindow()
     });
     connect(m_rightSplit, &QSplitter::splitterMoved, this, [this] {
         m_splitMoved.start();
+        startSurfaceDrag();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         placeSurface();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+    });
+    m_surfaceDragEnd.setSingleShot(true);
+    m_surfaceDragEnd.setInterval(180);
+    connect(&m_surfaceDragEnd, &QTimer::timeout, this, [this] {
+        if (QApplication::mouseButtons() & Qt::LeftButton) {
+            m_surfaceDragEnd.start();   // held still, not let go yet
+            return;
+        }
+        m_surfaceDrag = false;
+        placeSurface();
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
@@ -753,6 +765,10 @@ MainWindow::MainWindow()
         }
         if (name == "user-data/ghost/video-on")
             songVideoChanged();
+        if (name == "path" && m_findingMini && m_mpv.property("path").toString() != m_miniPath) {
+            m_findingMini = false;
+            m_panelSoon.start();
+        }
         if (name == "metadata/by-key/uploader" && !m_mpv.property("user-data/ghost/audio").toBool()) {
             const QString source = m_mpv.property("user-data/ghost/source").toString();
             m_resolver.rememberChannel(youtube::videoId(source.isEmpty() ? m_mpv.property("path").toString() : source),
@@ -1070,6 +1086,9 @@ QWidget *MainWindow::buildLibrary()
     m_libraryList->setObjectName("library");
     m_libraryList->setMouseTracking(true);
     m_libraryList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    // Names are cut with "..." to the panel's width: nothing to scroll
+    // sideways, and the two bars' meeting corner showed as a black square.
+    m_libraryList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_libraryList->setContextMenuPolicy(Qt::CustomContextMenu);
     m_rowDelegate = new tiles::RowDelegate([this](const QModelIndex &index) {
         return coversFor(index.data(tiles::kIndexRole).toInt());
@@ -3584,6 +3603,20 @@ void MainWindow::placeWithPage()
     }, Qt::QueuedConnection);
 }
 
+void MainWindow::startSurfaceDrag()
+{
+    if (!videoShowing())
+        return;
+    if (!m_surfaceDrag) {
+        m_surfaceDrag = true;
+        QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+        if (id.isEmpty())
+            id = idForTarget(m_mpv.property("path").toString());
+        m_videoPage->setStill(m_covers.get(id, ThumbnailCache::Size::Hero));
+    }
+    m_surfaceDragEnd.start();
+}
+
 void MainWindow::schedulePlace()
 {
     if (m_placeTimer)
@@ -3605,6 +3638,17 @@ void MainWindow::placeSurface()
     const bool inPanel = video && !onPage && !minimized && panelVideo() && m_panel->isVisible();
     const bool mini = video && !onPage && !inPanel && !m_miniClosed;
     QWidget *miniWindow = m_videoPage->miniWindow();
+    if (m_surfaceDrag && (onPage || inPanel)) {
+        // Put away until the edge is let go; the thumbnail stands in.
+        surface->setVisible(false);
+        miniWindow->hide();
+        m_videoPage->corners()->hide();
+        m_videoPage->controls()->hide();
+        m_surfaceOnPage = false;
+        m_barFits = false;
+        m_videoArea = QRect();
+        return;
+    }
     QRect visible;   // of the picture, in the host's coordinates
     m_videoPage->setWheelTarget(inPanel ? m_panel->scrollArea()->findChild<QWidget *>("qt_scrollarea_viewport") : nullptr);
     if (inPanel) {
@@ -3959,11 +4003,20 @@ void MainWindow::setPanelVideo(bool on)
             format = QStringLiteral("bestvideo[height<=?1080]+bestaudio/best");
         m_mpv.setProperty("user-data/ghost/video-format", format);
         m_findingMini = true;
+        m_miniPath = m_mpv.property("path").toString();
+        // Not found in time, or another song came first: the button is the
+        // button again rather than "Loading the video..." for good.
+        QTimer::singleShot(30000, this, [this, path = m_miniPath] {
+            if (m_findingMini && m_miniPath == path) {
+                m_findingMini = false;
+                refreshPanel();
+            }
+        });
     }
-    m_mpv.setProperty("user-data/ghost/video-once", on ? m_mpv.property("path").toString() : QString());
-    m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
+    // ghost.lua names the entry from mpv's own path and replays it at the
+    // same second.
     m_resetStart = true;
-    m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+    m_mpv.command({"script-message", "ghost-video-once", on ? "yes" : "no"});
     refreshPanel();
     schedulePlace();
 }

@@ -251,6 +251,7 @@ void apply(QApplication &app)
         QScrollBar::handle:horizontal:hover { background: rgb(104,100,122); border-radius: 4px; margin: 0px 1px; }
         QScrollBar::handle:horizontal:pressed { background: rgb(176,127,224); }
         QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+        QAbstractScrollArea::corner { background: transparent; border: none; }
         QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
         QMenu { background: rgb(33,32,41); border: 1px solid rgb(52,50,64); border-radius: 8px; padding: 4px; }
         QMenu::item { padding: 6px 18px; border-radius: 6px; }

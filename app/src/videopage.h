@@ -75,6 +75,9 @@ public:
     QAbstractScrollArea *scrollArea() const;
     // Where the picture goes on this page.
     QWidget *screen() const { return m_screen; }
+    // Painted where the picture is, under mpv's window: seen while a panel
+    // edge is dragged and mpv's window is out of the way.
+    void setStill(const QPixmap &still) { m_still = still; m_screen->update(); }
     // The see-through bar of controls laid over the picture, the page-coloured
     // corners laid over its square ones (a window region cannot be smoothed),
     // and the mini player: a small window of its own that the surface moves
@@ -167,6 +170,7 @@ private:
     QWidget *m_mini;
     QWidget *m_miniWindow;
     QPointer<QWidget> m_wheelTarget;
+    QPixmap m_still;
     QWidget *m_corners;
     QGridLayout *m_grid;
     QScrollArea *m_page;

@@ -252,6 +252,7 @@ private:
     bool panelVideo() const;
     void setPanelVideo(bool on);
     bool m_findingMini = false;
+    QString m_miniPath;              // the song "Mini video" was asked for
     bool m_fullFromPanel = false;    // full screen asked for from the view
     void songVideoChanged();
     bool m_findingVideo = false;     // asked for, not playing yet
@@ -266,6 +267,12 @@ private:
     // controls over it shows while the mouse moves on the picture.
     void placeSurface();
     void placeWithPage();
+    // While a panel edge is dragged mpv's window is put away and the
+    // thumbnail shows in its place: resized on every step, mpv held up the
+    // drag (its window shares this window's input queue).
+    void startSurfaceDrag();
+    bool m_surfaceDrag = false;
+    QTimer m_surfaceDragEnd;
     bool m_placeWithPage = false;
     void schedulePlace();
     void watchVideoMouse();
