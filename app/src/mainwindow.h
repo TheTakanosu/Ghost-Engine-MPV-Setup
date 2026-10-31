@@ -265,6 +265,8 @@ private:
     // mini player) while a video plays and another page is open; the bar of
     // controls over it shows while the mouse moves on the picture.
     void placeSurface();
+    void placeWithPage();
+    bool m_placeWithPage = false;
     void schedulePlace();
     void watchVideoMouse();
     bool videoShowing() const;

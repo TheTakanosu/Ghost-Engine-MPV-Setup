@@ -4,6 +4,7 @@
 #include <QString>
 #include <QVariant>
 #include <QVector>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QWidget>
 #include <functional>
@@ -132,6 +133,7 @@ public:
     std::function<void()> onNext;
     std::function<void(double seconds)> onSeek;      // to this second
     std::function<void(double seconds)> onSkip;      // by this many
+    std::function<void(double seconds)> onScrub;     // to here, quickly, while the handle is dragged
     std::function<void(const QVariant &sid)> onSubtitle;   // a track id, or "no"
     std::function<void(int height)> onQuality;       // 0: best
     std::function<void(double speed)> onSpeed;
@@ -186,6 +188,9 @@ private:
     icons::IconButton *m_play;
     icons::IconButton *m_miniPlay;
     QSlider *m_seek;
+    QLabel *m_seekTip = nullptr;   // the time the handle is at, over it while dragged
+    QElapsedTimer m_scrubClock;
+    void showSeekTip(int value);
     QList<QWidget *> m_wideOnly;   // left out over the small picture in the now playing view
     QLabel *m_time;
     QPushButton *m_mute;

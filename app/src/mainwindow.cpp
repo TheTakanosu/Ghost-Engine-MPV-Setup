@@ -361,7 +361,7 @@ MainWindow::MainWindow()
     // At once, not after the next turn of the event loop: the page has
     // already scrolled, and a frame with the picture still at its old place
     // read as a little jump while scrolling.
-    m_videoPage->onScreenMoved = [this] { placeSurface(); };
+    m_videoPage->onScreenMoved = [this] { placeWithPage(); };
     // While the page scrolls, mpv's window moves in the same step as the
     // page, or the old picture is seen for a moment over the top bar.
     m_videoPage->onScrolled = [this] {
@@ -407,7 +407,10 @@ MainWindow::MainWindow()
         schedulePlace();
     };
     m_videoPage->onSeek = [this](double s) { m_mpv.command({"seek", s, "absolute"}); };
-    m_videoPage->onSkip = [this](double s) { m_mpv.command({"seek", s}); };
+    // "exact": a relative seek otherwise lands on the nearest keyframe, 12
+    // or 20 seconds on instead of 10.
+    m_videoPage->onSkip = [this](double s) { m_mpv.command({"seek", s, "relative+exact"}); };
+    m_videoPage->onScrub = [this](double s) { m_mpv.command({"seek", s, "absolute+keyframes"}); };
     m_videoPage->onSubtitle = [this](const QVariant &sid) { m_mpv.setProperty("sid", sid); };
     m_videoPage->onSpeed = [this](double s) { m_mpv.setProperty("speed", s); };
     m_videoPage->onQuality = [this](int height) {
@@ -426,8 +429,8 @@ MainWindow::MainWindow()
         s->setContext(Qt::WidgetWithChildrenShortcut);
         connect(s, &QShortcut::activated, this, act);
     };
-    key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -10}); });
-    key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 10}); });
+    key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -10, "relative+exact"}); });
+    key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 10, "relative+exact"}); });
     key(QKeySequence(Qt::Key_F), [this] { setVideoFullScreen(!m_videoFull); });
     key(QKeySequence(Qt::Key_I), [this] { if (m_videoPage->onMinimize) m_videoPage->onMinimize(); });
     auto *escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -470,7 +473,7 @@ MainWindow::MainWindow()
     m_panel->onMiniVideo = [this] { setPanelVideo(!panelVideo()); };
     m_panel->coverArea()->installEventFilter(this);
     if (auto *scroll = qobject_cast<QScrollArea *>(m_panel->scrollArea()))
-        connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::placeSurface);
+        connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::placeWithPage);
     m_panel->onOpenLyrics = [this] {
         if (m_pages->currentWidget() != m_lyricsView)
             toggleLyrics();
@@ -3562,6 +3565,23 @@ bool MainWindow::videoShowing() const
 {
     return m_mpvEmbedded && m_mpv.connected() && !m_videoPoppedOut &&
            (!m_mpv.property("user-data/ghost/audio").toBool() || songVideo());
+}
+
+void MainWindow::placeWithPage()
+{
+    // While the page scrolls: the page is drawn first, then the picture is
+    // put where it now is, one right after the other so both reach the
+    // screen in the same frame. Placed before the page was drawn, or after
+    // the next turn of the loop, one of the two was a frame behind, and the
+    // picture jumped and settled.
+    if (m_placeWithPage)
+        return;
+    m_placeWithPage = true;
+    QMetaObject::invokeMethod(this, [this] {
+        m_placeWithPage = false;
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+        placeSurface();
+    }, Qt::QueuedConnection);
 }
 
 void MainWindow::schedulePlace()

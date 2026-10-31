@@ -22,6 +22,7 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QSlider>
+#include <QStyle>
 #include <QStyledItemDelegate>
 #include <QTextBrowser>
 #include <QTimer>
@@ -33,6 +34,9 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+
+// Steps of the seek bar: fine enough to land on a second in a long video.
+constexpr int kSeekSteps = 10000;
 
 namespace {
 
@@ -981,13 +985,30 @@ QWidget *VideoPage::buildControls()
 
     m_seek = new QSlider(Qt::Horizontal);
     m_seek->setObjectName("seek");
-    m_seek->setRange(0, 1000);
+    m_seek->setRange(0, kSeekSteps);
     m_seek->setCursor(Qt::PointingHandCursor);
-    connect(m_seek, &QSlider::sliderPressed, this, [this] { m_dragging = true; });
+    connect(m_seek, &QSlider::sliderPressed, this, [this] {
+        m_dragging = true;
+        m_scrubClock.invalidate();
+        showSeekTip(m_seek->value());
+    });
+    // The picture follows the handle while it is dragged, as on YouTube: a
+    // quick seek to the nearest keyframe a few times a second, and the exact
+    // one where it is let go.
+    connect(m_seek, &QSlider::sliderMoved, this, [this](int value) {
+        showSeekTip(value);
+        if (m_duration <= 0 || !onScrub)
+            return;
+        if (!m_scrubClock.isValid() || m_scrubClock.elapsed() > 120) {
+            m_scrubClock.start();
+            onScrub(m_duration * value / kSeekSteps);
+        }
+    });
     connect(m_seek, &QSlider::sliderReleased, this, [this] {
         m_dragging = false;
+        m_seekTip->hide();
         if (onSeek && m_duration > 0)
-            onSeek(m_duration * m_seek->value() / 1000.0);
+            onSeek(m_duration * m_seek->value() / kSeekSteps);
     });
     // The wheel there moved the handle and not the video, as it once did in
     // the song bar: it scrolls the page instead.
@@ -1079,7 +1100,14 @@ QWidget *VideoPage::buildControls()
     row->addWidget(m_speed);
     row->addWidget(full);
     m_wideOnly = {back10, fwd10, m_volume, miniplayer, m_subs, m_quality, m_speed};
+    m_seekTip = new QLabel(bar);
+    m_seekTip->setObjectName("seekTip");
+    m_seekTip->setAlignment(Qt::AlignCenter);
+    m_seekTip->hide();
     auto *column = new QVBoxLayout(bar);
+    // Narrowed over the small picture in the now playing view: the window
+    // may be as narrow as what is left in it.
+    column->setSizeConstraint(QLayout::SetNoConstraint);
     column->setContentsMargins(14, 30, 14, 8);
     column->setSpacing(2);
     column->addWidget(m_seek);
@@ -1196,7 +1224,7 @@ void VideoPage::setTimes(double position, double duration)
     m_duration = duration;
     m_time->setText(clock(position) + QStringLiteral(" / ") + clock(duration));
     if (!m_dragging)
-        m_seek->setValue(duration > 0 && position >= 0 ? int(position / duration * 1000) : 0);
+        m_seek->setValue(duration > 0 && position >= 0 ? int(position / duration * kSeekSteps) : 0);
 }
 
 void VideoPage::setPaused(bool paused)
@@ -1290,6 +1318,23 @@ void VideoPage::setControlsCompact(bool compact)
 {
     for (QWidget *w : std::as_const(m_wideOnly))
         w->setVisible(!compact);
+    m_controls->layout()->activate();
+}
+
+void VideoPage::showSeekTip(int value)
+{
+    // Over the handle, in the room the bar leaves above the seek line.
+    if (m_duration <= 0)
+        return;
+    m_seekTip->setText(clock(m_duration * value / kSeekSteps));
+    m_seekTip->adjustSize();
+    const int handle = 12;
+    const int at = m_seek->x() + handle / 2 +
+                   QStyle::sliderPositionFromValue(0, kSeekSteps, value, m_seek->width() - handle);
+    const int x = qBound(4, at - m_seekTip->width() / 2, m_controls->width() - m_seekTip->width() - 4);
+    m_seekTip->move(x, qMax(2, m_seek->y() - m_seekTip->height() - 4));
+    m_seekTip->show();
+    m_seekTip->raise();
 }
 
 bool VideoPage::eventFilter(QObject *watched, QEvent *event)

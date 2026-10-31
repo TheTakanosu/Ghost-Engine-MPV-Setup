@@ -241,12 +241,12 @@ void apply(QApplication &app)
         QSplitter::handle:hover { background: rgb(60,48,84); }
         QScrollArea { background: transparent; }
         QScrollBar:vertical { background: transparent; width: 12px; margin: 4px 2px; border-radius: 5px; }
-        QScrollBar:vertical:hover { background: rgba(255,255,255,10); }
+
         QScrollBar::handle:vertical { background: rgb(72,70,86); border-radius: 3px; min-height: 30px; margin: 2px 1px; }
         QScrollBar::handle:vertical:hover { background: rgb(104,100,122); border-radius: 4px; margin: 1px 0px; }
         QScrollBar::handle:vertical:pressed { background: rgb(176,127,224); }
         QScrollBar:horizontal { background: transparent; height: 12px; margin: 2px 4px; border-radius: 5px; }
-        QScrollBar:horizontal:hover { background: rgba(255,255,255,10); }
+        QLabel#seekTip { background: rgba(16,15,20,235); color: white; font-weight: 700; border-radius: 6px; padding: 2px 8px; }
         QScrollBar::handle:horizontal { background: rgb(72,70,86); border-radius: 3px; min-width: 30px; margin: 1px 2px; }
         QScrollBar::handle:horizontal:hover { background: rgb(104,100,122); border-radius: 4px; margin: 0px 1px; }
         QScrollBar::handle:horizontal:pressed { background: rgb(176,127,224); }
