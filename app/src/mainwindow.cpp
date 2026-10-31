@@ -451,8 +451,11 @@ MainWindow::MainWindow()
     };
     // On the video page the keys mpv would take in its own window.
     auto key = [this](const QKeySequence &seq, std::function<void()> act) {
+        // While the page shows, wherever the keyboard is: a click on the
+        // picture (a window of its own) or the panel took it off the page,
+        // and F and the arrows did nothing. A text box still takes letters.
         auto *s = new QShortcut(seq, m_videoPage);
-        s->setContext(Qt::WidgetWithChildrenShortcut);
+        s->setContext(Qt::WindowShortcut);
         connect(s, &QShortcut::activated, this, act);
     };
     key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -10, "relative+exact"}); });
@@ -3974,6 +3977,12 @@ void MainWindow::updatePanelVisibility()
 
 void MainWindow::refreshPanel()
 {
+    // "Loading the video..." ends when the video is there, even if the word
+    // that it came was missed.
+    if (m_findingVideo && songVideo() && !panelVideo())
+        m_findingVideo = false;
+    if (m_findingMini && panelVideo())
+        m_findingMini = false;
     updatePanelVisibility();
     if (!m_panel->isVisible())
         return;
