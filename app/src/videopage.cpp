@@ -1347,6 +1347,16 @@ void VideoPage::hideMini()
 
 bool VideoPage::eventFilter(QObject *watched, QEvent *event)
 {
+    // Over the description the wheel scrolled its text inside the card (the
+    // first lines went out of it); on YouTube it scrolls the page.
+    if (m_description && watched == m_description->viewport() && event->type() == QEvent::Wheel) {
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        QWheelEvent copy(m_page->viewport()->mapFromGlobal(wheel->globalPosition()), wheel->globalPosition(),
+                         wheel->pixelDelta(), wheel->angleDelta(), wheel->buttons(), wheel->modifiers(),
+                         wheel->phase(), wheel->inverted());
+        QApplication::sendEvent(m_page->viewport(), &copy);
+        return true;
+    }
     if (watched == m_seek && event->type() == QEvent::Wheel) {
         auto *wheel = static_cast<QWheelEvent *>(event);
         QWidget *target = m_wheelTarget ? m_wheelTarget.data() : m_page->viewport();

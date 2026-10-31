@@ -190,7 +190,7 @@ private:
     QPushButton *m_toAudio = nullptr;
     QWidget *m_card;            // the description's box
     QLabel *m_meta;
-    QTextBrowser *m_description;
+    QTextBrowser *m_description = nullptr;
     QPushButton *m_more;
     QListWidget *m_list;
     icons::IconButton *m_play;
