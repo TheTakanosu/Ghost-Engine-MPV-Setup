@@ -32,6 +32,11 @@ int main(int argc, char *argv[])
     // it ffmpeg): children inherit this, and a missing DLL in one of them
     // should fail quietly, not stack up dialogs.
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+    // A gaming mouse reports its position 1000 times a second or more, and
+    // each move re-laid and repainted the page while a scroll bar was
+    // dragged: the page fell behind the mouse. Moves that pile up are taken
+    // as one, as Qt does by default on Linux.
+    QCoreApplication::setAttribute(Qt::AA_CompressHighFrequencyEvents);
     QApplication app(argc, argv);
     QApplication::setOrganizationName("TheTakanosu");
     QApplication::setApplicationName("Ghost Engine");

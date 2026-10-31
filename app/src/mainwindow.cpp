@@ -163,6 +163,19 @@ public:
             if (m_anim.state() == QAbstractAnimation::Running)
                 m_bar->setValue(v.toInt());
         });
+        // Dragged by its handle: the handle follows the mouse at once, the
+        // page at most once a frame. Moved with every report of a gaming
+        // mouse (1000 a second, some 8000), each one laid out and painted
+        // the page again and it fell behind the mouse.
+        m_bar->setTracking(false);
+        m_frame.setSingleShot(true);
+        m_frame.setInterval(16);
+        connect(m_bar, &QScrollBar::sliderMoved, this, [this](int to) {
+            m_dragTo = to;
+            if (!m_frame.isActive())
+                m_frame.start();
+        });
+        connect(&m_frame, &QTimer::timeout, this, [this] { m_bar->setValue(m_dragTo); });
     }
 
 protected:
@@ -186,6 +199,8 @@ private:
     QScrollBar *m_bar;
     QVariantAnimation m_anim;
     int m_target = 0;
+    QTimer m_frame;
+    int m_dragTo = 0;
 };
 
 // The library panel, where lists are dragged into folders, out of them and
