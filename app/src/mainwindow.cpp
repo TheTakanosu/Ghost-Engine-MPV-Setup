@@ -3513,7 +3513,12 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
     m_launchEmbedded = embed == 1 || (embed == -1 && embedFor(false) == 1);
     if (m_launchEmbedded)
         args << QStringLiteral("--wid=%1").arg(qulonglong(m_videoPage->surface()->winId()))
-             << "--input-vo-keyboard=no";
+             << "--input-vo-keyboard=no"
+             // Drawn the classic way (blit) rather than handed to Windows'
+             // compositor as a layer of its own (flip): as a layer, the cut
+             // the app makes at the page's top edge reached it a frame late
+             // and a strip of the video showed above the page while scrolling.
+             << "--d3d11-flip=no";
     args << "--" << path;
     // From mpv's own folder, the way a double-click on the .m3u starts it, so
     // its scripts and the presence agent behave the same.
