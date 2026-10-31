@@ -564,6 +564,7 @@ MainWindow::MainWindow()
         }
         m_surfaceDrag = false;
         placeSurface();
+        m_panelSoon.start();   // the cover back from the held frame
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
@@ -3640,10 +3641,25 @@ void MainWindow::startSurfaceDrag()
         return;
     if (!m_surfaceDrag) {
         m_surfaceDrag = true;
-        QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
-        if (id.isEmpty())
-            id = idForTarget(m_mpv.property("path").toString());
-        m_videoPage->setStill(m_covers.get(id, ThumbnailCache::Size::Hero));
+        // The frame on screen right now, held still while the edge moves (as
+        // if paused for a moment); the thumbnail when the picture is partly
+        // scrolled away and no whole frame is there to take.
+        QPixmap still;
+        NativeSurface *surface = m_videoPage->surface();
+        if (surface && !m_videoArea.isEmpty() && m_videoArea.size() == surface->geometry().size())
+            if (QScreen *screen = QGuiApplication::screenAt(m_videoArea.center()))
+                still = screen->grabWindow(0, m_videoArea.x() - screen->geometry().x(),
+                                           m_videoArea.y() - screen->geometry().y(),
+                                           m_videoArea.width(), m_videoArea.height());
+        if (still.isNull()) {
+            QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+            if (id.isEmpty())
+                id = idForTarget(m_mpv.property("path").toString());
+            still = m_covers.get(id, ThumbnailCache::Size::Hero);
+        }
+        m_videoPage->setStill(still);
+        if (panelVideo())
+            m_panel->setCover(still);
     }
     m_surfaceDragEnd.start();
 }
