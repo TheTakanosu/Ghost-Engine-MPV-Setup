@@ -156,8 +156,13 @@ public:
         area->viewport()->installEventFilter(this);
         m_anim.setDuration(220);
         m_anim.setEasingCurve(QEasingCurve::OutCubic);
-        connect(&m_anim, &QVariantAnimation::valueChanged, this,
-                [this](const QVariant &v) { m_bar->setValue(v.toInt()); });
+        // Only while it runs: setting the end of a finished animation makes it
+        // report that end at once, and the page jumped to the next stop and
+        // back before every scroll (measured: 110, 220, 110, 132, ...).
+        connect(&m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            if (m_anim.state() == QAbstractAnimation::Running)
+                m_bar->setValue(v.toInt());
+        });
     }
 
 protected:
