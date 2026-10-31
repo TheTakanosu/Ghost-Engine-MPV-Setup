@@ -110,6 +110,9 @@ public:
     void setPoppedOut(bool out);
     // Only the player, filling the screen.
     void setFullScreen(bool full);
+    // The controls over the small picture in the now playing view: play,
+    // the time and full screen, without what only fits the page's width.
+    void setControlsCompact(bool compact);
     // Only the player, as large as the page lets it be.
     void setCinema(bool cinema);
     void refreshCovers() const;
@@ -183,6 +186,7 @@ private:
     icons::IconButton *m_play;
     icons::IconButton *m_miniPlay;
     QSlider *m_seek;
+    QList<QWidget *> m_wideOnly;   // left out over the small picture in the now playing view
     QLabel *m_time;
     QPushButton *m_mute;
     QSlider *m_volume;

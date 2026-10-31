@@ -305,6 +305,8 @@ def read_bridge():
         "duration": _number(_line(lines, 5)),
         "video_id": video_id_from(_line(lines, 6)),
         "channel": _line(lines, 7),
+        # Turned off in Ghost Engine's settings for this kind of playback.
+        "hidden": _line(lines, 8, "no").lower() in ("true", "yes"),
     }
 
 
@@ -475,6 +477,15 @@ def run_advanced_ghost_presence() -> None:
             continue
 
         if state is None:
+            time.sleep(POLL_SECONDS)
+            continue
+
+        if state["hidden"]:
+            # Off for this kind: nothing on the profile until it is on again
+            # (or the next song is of a kind that is shown).
+            if not is_cleared and agent.clear():
+                is_cleared = True
+                anchor = 0
             time.sleep(POLL_SECONDS)
             continue
 

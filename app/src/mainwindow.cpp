@@ -42,6 +42,10 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTextEdit>
+#include <QPlainTextEdit>
+#include <QAbstractSpinBox>
+#include <QComboBox>
 #include <QClipboard>
 #include <QMimeData>
 #include <QJsonArray>
@@ -354,7 +358,10 @@ MainWindow::MainWindow()
     m_videoPage->onNext = [this] { m_mpv.command({"playlist-next"}); };
     m_videoPage->onVolume = [this](int v) { m_mpv.setProperty("volume", v); };
     m_videoPage->onToggleMute = [this] { m_mpv.command({"cycle", "mute"}); };
-    m_videoPage->onScreenMoved = [this] { schedulePlace(); };
+    // At once, not after the next turn of the event loop: the page has
+    // already scrolled, and a frame with the picture still at its old place
+    // read as a little jump while scrolling.
+    m_videoPage->onScreenMoved = [this] { placeSurface(); };
     // While the page scrolls, mpv's window moves in the same step as the
     // page, or the old picture is seen for a moment over the top bar.
     m_videoPage->onScrolled = [this] {
@@ -419,7 +426,6 @@ MainWindow::MainWindow()
         s->setContext(Qt::WidgetWithChildrenShortcut);
         connect(s, &QShortcut::activated, this, act);
     };
-    key(QKeySequence(Qt::Key_Space), [this] { m_mpv.command({"cycle", "pause"}); });
     key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -10}); });
     key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 10}); });
     key(QKeySequence(Qt::Key_F), [this] { setVideoFullScreen(!m_videoFull); });
@@ -464,7 +470,7 @@ MainWindow::MainWindow()
     m_panel->onMiniVideo = [this] { setPanelVideo(!panelVideo()); };
     m_panel->coverArea()->installEventFilter(this);
     if (auto *scroll = qobject_cast<QScrollArea *>(m_panel->scrollArea()))
-        connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::schedulePlace);
+        connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::placeSurface);
     m_panel->onOpenLyrics = [this] {
         if (m_pages->currentWidget() != m_lyricsView)
             toggleLyrics();
@@ -508,15 +514,30 @@ MainWindow::MainWindow()
         // page as it is laid out now.
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         placeSurface();
+        // And painted now where the picture was: left for later, a strip of
+        // what stood there before stayed for a moment.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
     });
     connect(m_rightSplit, &QSplitter::splitterMoved, this, [this] {
         m_splitMoved.start();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         placeSurface();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
     m_settings->onLookChanged = [this] { applyLook(); };
+    // rpc_exporter.lua reads these each time it writes the bridge file and
+    // tells ghost_rpc.py to show nothing for what is turned off.
+    const auto applyPresence = [this] {
+        if (!m_mpv.connected())
+            return;
+        QSettings settings;
+        m_mpv.setProperty("user-data/ghost/rpc-songs", settings.value("presence/songs", true).toBool());
+        m_mpv.setProperty("user-data/ghost/rpc-videos", settings.value("presence/videos", true).toBool());
+    };
+    m_settings->onPresenceChanged = [applyPresence](bool, bool) { applyPresence(); };
+    connect(&m_mpv, &MpvClient::connectionChanged, this, [applyPresence](bool on) { if (on) applyPresence(); });
     m_settings->downloadsSummary = [this] {
         const int n = m_offline.songCount();
         return n == 0 ? QStringLiteral("Nothing downloaded yet.")
@@ -741,8 +762,9 @@ MainWindow::MainWindow()
             m_videoPage->setVolume(int(m_mpv.property("volume").toDouble()), m_mpv.property("mute").toBool());
         if (name == "video-params/aspect")
             m_videoPage->setAspect(m_mpv.property("video-params/aspect").toDouble());
-        // The video page's own controls.
-        if (m_pages->currentWidget() == m_videoPage) {
+        // The video page's own controls, also over the picture in the now
+        // playing view.
+        if (m_pages->currentWidget() == m_videoPage || panelVideo()) {
             if (name == "time-pos" || name == "duration")
                 m_videoPage->setTimes(m_mpv.property("time-pos").isValid() ? m_mpv.property("time-pos").toDouble() : -1,
                                       m_mpv.property("duration").isValid() ? m_mpv.property("duration").toDouble() : -1);
@@ -915,6 +937,18 @@ void MainWindow::changeEvent(QEvent *event)
         m_maxButton->setText(QString(isMaximized() ? kIconRestore : kIconMax));
     if (event->type() == QEvent::WindowStateChange)
         schedulePlace();   // the windows over the picture go and come with it
+    // Brought up from the taskbar, Windows gives the keys back to the window
+    // that last had them, which can be mpv's inside the picture: Space and
+    // the other keys then went to mpv instead of here.
+    if (event->type() == QEvent::ActivationChange && isActiveWindow())
+        QTimer::singleShot(0, this, [this] {
+            const HWND focus = GetFocus();
+            DWORD pid = 0;
+            if (focus)
+                GetWindowThreadProcessId(focus, &pid);
+            if (!focus || pid != GetCurrentProcessId())
+                SetFocus(reinterpret_cast<HWND>(winId()));
+        });
     QMainWindow::changeEvent(event);
 }
 
@@ -960,10 +994,10 @@ QWidget *MainWindow::buildTopBar()
     auto *row = new QHBoxLayout(m_topBar);
     row->setContentsMargins(8, 0, 0, 0);
     row->setSpacing(8);
-    row->addWidget(m_profileButton);
     row->addWidget(home);
     row->addWidget(m_search);
     row->addStretch();
+    row->addWidget(m_profileButton);
     row->addWidget(gear);
     row->addSpacing(10);
     row->addWidget(minimize);
@@ -2045,6 +2079,25 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     if (dragOrResize(watched, event))
         return true;
+    // Space plays and pauses on every page. Before, only the video page had
+    // it; elsewhere it pressed whatever button had the focus, or nothing
+    // after the app was brought up from the taskbar.
+    if (event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        QWidget *focus = QApplication::focusWidget();
+        const bool typing = qobject_cast<QLineEdit *>(focus) || qobject_cast<QTextEdit *>(focus) ||
+                            qobject_cast<QPlainTextEdit *>(focus) || qobject_cast<QAbstractSpinBox *>(focus) ||
+                            qobject_cast<QComboBox *>(focus);
+        QWidget *active = QApplication::activeWindow();
+        const bool ours = active && (active == this || active->parentWidget() == this ||
+                                     active == m_videoPage->controls() || active == m_videoPage->corners());
+        if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier && !typing && ours &&
+            !QApplication::activePopupWidget() && m_mpv.connected()) {
+            if (!key->isAutoRepeat())
+                m_mpv.command({"cycle", "pause"});
+            return true;
+        }
+    }
     if (watched == m_pages && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
         schedulePlace();
     if (watched == m_libraryPanel && event->type() == QEvent::Resize && m_rowDelegate && !m_videoFull) {
@@ -3576,7 +3629,7 @@ void MainWindow::placeSurface()
         miniWindow->hide();
     }
     surface->setVisible(onPage || mini || (inPanel && !visible.isEmpty()));
-    m_surfaceOnPage = onPage;
+    m_surfaceOnPage = onPage || inPanel;   // the controls come over it on hover
 
     // mpv fills its window when the window already has the video's shape,
     // so no hairline of black is left at its edges; in full screen it keeps
@@ -3590,17 +3643,18 @@ void MainWindow::placeSurface()
     }
 
     const QRect global(host->mapToGlobal(surface->geometry().topLeft()), surface->geometry().size());
-    m_videoArea = onPage ? QRect(host->mapToGlobal(visible.topLeft()), visible.size()) : QRect();
+    m_videoArea = onPage || inPanel ? QRect(host->mapToGlobal(visible.topLeft()), visible.size()) : QRect();
+    m_videoPage->setControlsCompact(inPanel);
     if (onPage)
         m_videoPage->placeOverPicture(global, m_videoArea);
     else if (inPanel)   // click to pause, double-click for full screen there too
-        m_videoPage->placeOverPicture(global, QRect(host->mapToGlobal(visible.topLeft()), visible.size()));
+        m_videoPage->placeOverPicture(global, m_videoArea);
     else
         m_videoPage->corners()->hide();
     // The controls sit on the picture's bottom edge, so only while that is
     // in view.
     QWidget *controls = m_videoPage->controls();
-    m_barFits = onPage && !m_videoArea.isEmpty() && m_videoArea.bottom() >= global.bottom() - 1;
+    m_barFits = (onPage || inPanel) && !m_videoArea.isEmpty() && m_videoArea.bottom() >= global.bottom() - 1;
     if (m_barFits) {
         const int h = controls->sizeHint().height();
         controls->setGeometry(global.left(), global.bottom() + 1 - h, global.width(), h);

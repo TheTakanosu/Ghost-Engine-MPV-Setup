@@ -334,6 +334,13 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_volumeNumber = new ToggleSwitch;
     addRow(look, "Show the volume as a number", "A percentage next to the volume bar.", m_volumeNumber);
 
+    QVBoxLayout *discord;
+    auto *discordCard = card("Discord", discord);
+    m_presenceSongs = new ToggleSwitch;
+    addRow(discord, "Show songs on Discord", "What you listen to, on your Discord profile (Ghost RPC).", m_presenceSongs);
+    m_presenceVideos = new ToggleSwitch;
+    addRow(discord, "Show videos on Discord", "What you watch, on your Discord profile (Ghost RPC).", m_presenceVideos);
+
     m_confPath = new QLabel;
     m_confPath->setObjectName("statLabel");
     m_confPath->setWordWrap(true);
@@ -357,6 +364,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     box->addWidget(windowCard);
     box->addWidget(downloadsCard);
     box->addWidget(lookCard);
+    box->addWidget(discordCard);
     box->addLayout(footer);
     box->addStretch();
     auto *scroll = new QScrollArea;
@@ -402,6 +410,15 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (onLookChanged)
             onLookChanged();
     });
+    for (ToggleSwitch *toggle : {m_presenceSongs, m_presenceVideos})
+        connect(toggle, &QAbstractButton::toggled, this, [this] {
+            if (m_loading)
+                return;
+            QSettings().setValue("presence/songs", m_presenceSongs->isChecked());
+            QSettings().setValue("presence/videos", m_presenceVideos->isChecked());
+            if (onPresenceChanged)
+                onPresenceChanged(m_presenceSongs->isChecked(), m_presenceVideos->isChecked());
+        });
     connect(m_volumeNumber, &QAbstractButton::toggled, this, [this](bool on) {
         if (m_loading)
             return;
@@ -444,6 +461,8 @@ void SettingsPage::load()
     m_embedVideo->setChecked(settings.value("player/embedVideo", true).toBool());
     m_covers->setCurrentIndex(settings.value("look/circleCovers").toBool() ? 1 : 0);
     m_volumeNumber->setChecked(settings.value("look/volumeNumber", false).toBool());
+    m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());
+    m_presenceVideos->setChecked(settings.value("presence/videos", true).toBool());
     m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));
     m_offlineUsed->setText(downloadsSummary ? downloadsSummary() : QString());
     // The downloaded lists, built again each time the page is shown.

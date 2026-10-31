@@ -625,7 +625,9 @@ NativeSurface::NativeSurface(QWidget *window)
         wc.lpfnWndProc = DefWindowProcW;
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.lpszClassName = kClass;
-        wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+        // The panels' colour: while the picture is being made larger, mpv
+        // draws the new part a moment later, and black there stood out.
+        wc.hbrBackground = CreateSolidBrush(RGB(22, 21, 27));
         RegisterClassW(&wc);
         registered = true;
     }
@@ -987,6 +989,9 @@ QWidget *VideoPage::buildControls()
         if (onSeek && m_duration > 0)
             onSeek(m_duration * m_seek->value() / 1000.0);
     });
+    // The wheel there moved the handle and not the video, as it once did in
+    // the song bar: it scrolls the page instead.
+    m_seek->installEventFilter(this);
     m_time = new QLabel(QStringLiteral("--:-- / --:--"));
     m_time->setObjectName("videoTime");
 
@@ -1073,6 +1078,7 @@ QWidget *VideoPage::buildControls()
     row->addWidget(m_quality);
     row->addWidget(m_speed);
     row->addWidget(full);
+    m_wideOnly = {back10, fwd10, m_volume, miniplayer, m_subs, m_quality, m_speed};
     auto *column = new QVBoxLayout(bar);
     column->setContentsMargins(14, 30, 14, 8);
     column->setSpacing(2);
@@ -1280,8 +1286,23 @@ void VideoPage::resizeEvent(QResizeEvent *)
         setExpanded(false);   // "...more" only while there is more
 }
 
+void VideoPage::setControlsCompact(bool compact)
+{
+    for (QWidget *w : std::as_const(m_wideOnly))
+        w->setVisible(!compact);
+}
+
 bool VideoPage::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_seek && event->type() == QEvent::Wheel) {
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        QWidget *target = m_wheelTarget ? m_wheelTarget.data() : m_page->viewport();
+        QWheelEvent copy(target->mapFromGlobal(wheel->globalPosition()), wheel->globalPosition(),
+                         wheel->pixelDelta(), wheel->angleDelta(), wheel->buttons(), wheel->modifiers(),
+                         wheel->phase(), wheel->inverted());
+        QApplication::sendEvent(target, &copy);
+        return true;
+    }
     if (watched == m_player && event->type() == QEvent::Resize)
         placeScreen();
     if ((watched == m_screen || watched == m_player) &&

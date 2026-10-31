@@ -13,6 +13,8 @@
 --   6  duration     seconds, or empty when unknown
 --   7  path         source URL, so the reader can recover the video id
 --   8  uploader     channel name, when the source carries one
+--   9  hidden       yes when Ghost Engine's settings turn the presence off
+--                  for this kind (songs or videos)
 --
 -- Lines 5-8 were added later; the reader treats a shorter file as "playing,
 -- unknown duration, no id, no channel", so an old bridge still works.
@@ -43,6 +45,10 @@ function export_advanced_presence()
     local path = (type(source) == "string" and source ~= "") and source or mp.get_property("path", "")
     -- yt-dlp passes the channel through as an "uploader" tag.
     local uploader = mp.get_property("metadata/by-key/uploader", "")
+    -- The app's "Show songs / videos on Discord": a song list is songs, even
+    -- played as its videos; anything else is videos. Unset means shown.
+    local song = mp.get_property_native("user-data/ghost/audio") == true
+    local shown = mp.get_property_native(song and "user-data/ghost/rpc-songs" or "user-data/ghost/rpc-videos")
 
     local file = io.open(BRIDGE, "w")
     if file then
@@ -54,6 +60,7 @@ function export_advanced_presence()
         file:write(duration .. "\n")
         file:write(path .. "\n")
         file:write(uploader .. "\n")
+        file:write((shown == false and "yes" or "no") .. "\n")
         file:close()
     end
 end

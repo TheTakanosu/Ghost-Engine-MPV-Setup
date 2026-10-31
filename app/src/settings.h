@@ -42,6 +42,8 @@ public:
 
     // Told when a setting the rest of the app shows changes.
     std::function<void()> onLookChanged;
+    // Rich Presence on Discord, for songs and for videos apart.
+    std::function<void(bool songs, bool videos)> onPresenceChanged;
     std::function<void(const QString &format)> onVideoFormatChanged;
     std::function<void(bool shown)> onPlayerWindowChanged;
     // Downloads: a line on what is kept, and clearing all of it.
@@ -72,6 +74,8 @@ private:
     ToggleSwitch *m_embedVideo;
     QComboBox *m_covers;
     ToggleSwitch *m_volumeNumber;
+    ToggleSwitch *m_presenceSongs;
+    ToggleSwitch *m_presenceVideos;
     QLabel *m_confPath;
     QComboBox *m_offlineQuality;
     QLabel *m_offlineUsed;
