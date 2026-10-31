@@ -164,7 +164,7 @@ public:
                 m_bar->setValue(v.toInt());
         });
         // Dragged by its handle: the handle follows the mouse at once, the
-        // page at most once a frame. Moved with every report of a gaming
+        // page at most once a frame of the screen. Moved with every report of a gaming
         // mouse (1000 a second, some 8000), each one laid out and painted
         // the page again and it fell behind the mouse.
         m_bar->setTracking(false);
@@ -174,6 +174,12 @@ public:
             m_dragTo = to;
             if (!m_frame.isActive())
                 m_frame.start();
+        });
+        // A frame of the screen the page is on: 60 Hz, 144, 280...
+        connect(m_bar, &QScrollBar::sliderPressed, this, [this] {
+            const QScreen *screen = m_bar->screen();
+            const qreal hz = screen && screen->refreshRate() > 1 ? screen->refreshRate() : 60;
+            m_frame.setInterval(qMax(2, int(1000 / hz)));
         });
         connect(&m_frame, &QTimer::timeout, this, [this] { m_bar->setValue(m_dragTo); });
     }
