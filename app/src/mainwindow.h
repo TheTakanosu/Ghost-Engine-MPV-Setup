@@ -112,6 +112,8 @@ private:
     void syncSearchWidth();
     void fitLibraryHead();
     QPixmap grabStill() const;
+    bool panelFits() const;
+    int compactBelow() const;
     void setLibraryCompact(bool compact);
     // `order`: the entries in the order to play them, when the list is shown
     // sorted; empty plays the file's order.
@@ -275,7 +277,9 @@ private:
     void startSurfaceDrag();
     bool m_surfaceDrag = false;
     QPixmap m_pressedStill;
-    QRect m_normalPlace;   // the window's normal size while full screen hides it   // the picture as it was when a panel's edge was pressed
+    QRect m_normalPlace;
+    int m_libraryWanted = -1;
+    int m_chipsWidth = 0;   // the library panel's width the chips need, counts left out   // the library's width about to be set, for panelFits   // the window's normal size while full screen hides it   // the picture as it was when a panel's edge was pressed
     QTimer m_surfaceDragEnd;
     bool m_placeWithPage = false;
     void schedulePlace();

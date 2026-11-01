@@ -41,6 +41,7 @@ signals:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void onProperty(const QString &name);
@@ -62,6 +63,7 @@ private:
     void showRepeat();
     QSlider *m_position;
     QSlider *m_volume;
+    QWidget *m_rightBox = nullptr;
     QLabel *m_volumeNumber;
     QAbstractButton *m_speaker;
     class QPushButton *m_lyrics;

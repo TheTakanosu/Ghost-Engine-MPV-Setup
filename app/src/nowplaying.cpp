@@ -219,6 +219,7 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     leftBox->setMinimumWidth(0);
     leftBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     rightBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_rightBox = rightBox;
 
     connect(prev, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-prev"}); });
     connect(next, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-next"}); });
@@ -398,4 +399,17 @@ void NowPlayingBar::onProperty(const QString &name)
                                                         m_mpv->property("mute").toBool());
     if (name == "volume" && !m_volume->isSliderDown())
         m_volume->setValue(int(m_mpv->property("volume").toDouble()));
+}
+
+void NowPlayingBar::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    // The right column is a fixed share of the bar; narrowed, the volume
+    // slider gives way (to 48 px) before the percentage is pushed onto it.
+    const QMargins m = layout()->contentsMargins();
+    const int column = (width() - m.left() - m.right() - 2 * 16) * 3 / 10;
+    int others = m_volumeNumber->width() + 6;
+    for (QWidget *w : std::initializer_list<QWidget *>{m_panel, m_lyrics, m_speaker})
+        others += w->sizeHint().width() + m_rightBox->layout()->spacing();
+    m_volume->setFixedWidth(qBound(48, column - others, 120));
 }

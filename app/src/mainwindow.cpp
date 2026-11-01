@@ -114,6 +114,9 @@ QWidget *statCard(QLabel *&value, const QString &label)
     value->setObjectName("statValue");
     auto *caption = new QLabel(label);
     caption->setObjectName("statLabel");
+    // Onto a second line in a narrow page, rather than holding the page
+    // wider than its view and the last card cut off at the right.
+    caption->setWordWrap(true);
     auto *box = new QVBoxLayout(card);
     box->setContentsMargins(18, 14, 18, 14);
     box->setSpacing(2);
@@ -542,8 +545,9 @@ MainWindow::MainWindow()
     m_split->setSizes({300, 940});
     m_split->handle(1)->installEventFilter(this);
     connect(m_split, &QSplitter::splitterMoved, this, [this] {
-        setLibraryCompact(m_split->sizes().value(0) < kCompactBelow);
+        setLibraryCompact(m_split->sizes().value(0) < compactBelow());
         syncSearchWidth();
+        updatePanelVisibility();
         m_splitMoved.start();
         // The controls over the picture follow the edge at once, from the
         // page as it is laid out now.
@@ -667,6 +671,8 @@ MainWindow::MainWindow()
         updatePanelVisibility();
         if (m_panelOpen)
             refreshPanel();
+        if (m_panelOpen && !panelFits())
+            toast("Make the window wider to see the now playing view");
     });
 
     auto *root = new QVBoxLayout;
@@ -704,7 +710,7 @@ MainWindow::MainWindow()
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
     m_rightSplit->restoreState(settings.value("window/panelSplit").toByteArray());
-    setLibraryCompact(m_split->sizes().value(0) < kCompactBelow);
+    setLibraryCompact(m_split->sizes().value(0) < compactBelow());
 
     m_resolver.setYtDlp(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"));
     m_offline.setYtDlp(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"));
@@ -1072,8 +1078,17 @@ QWidget *MainWindow::buildLibrary()
         const bool compact = !m_compact;
         const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
         const int left = compact ? kCompactWidth : 300;
+        // Room made first: in a small window the page and the now playing
+        // view kept the library at its covers-only width, and it was drawn
+        // as the full panel squeezed into that.
+        m_libraryWanted = left;
+        updatePanelVisibility();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         m_split->setSizes({left, total - left});
-        setLibraryCompact(compact);
+        m_libraryWanted = -1;
+        setLibraryCompact(m_split->sizes().value(0) < compactBelow());
+        if (!compact && m_compact)
+            toast("Make the window wider to open the library");
     });
     auto *add = glyphButton(kIconAdd, "New folder, add a folder, refresh");
     m_addButton = add;
@@ -2170,7 +2185,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     if (watched == m_pages && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
         schedulePlace();
     if (watched == m_libraryPanel && event->type() == QEvent::Resize && m_rowDelegate && !m_videoFull) {
-        const bool compact = m_libraryPanel->width() < kCompactBelow;
+        fitLibraryHead();
+        const bool compact = m_libraryPanel->width() < compactBelow();
         if (compact != m_compact)
             setLibraryCompact(compact);
         fitLibraryHead();
@@ -2295,6 +2311,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     restoreLibraryWidth();
     layoutHeader();
     syncSearchWidth();
+    updatePanelVisibility();
     // The picture held still while the window changes size, as while a
     // panel's edge is dragged: mpv redrawn at every size stood a frame at
     // its old size over the list beside it, and on the way into or out of
@@ -2391,6 +2408,11 @@ void MainWindow::fitLibraryHead()
     const QMargins m = m_libraryPanel->layout()->contentsMargins();
     const int room = m_libraryPanel->width() - m.left() - m.right();
     static const char *names[] = {"All", "Songs", "Videos"};
+    // Without their counts the chips are as narrow as they go; the panel
+    // goes covers-only below that (they were squashed to "ong", "de").
+    for (int i = 0; i < 3; ++i)
+        m_chips->button(i)->setText(QString::fromLatin1(names[i]));
+    m_chipsWidth = m_chipRow->layout()->sizeHint().width() + m.left() + m.right();
     for (bool counts : {true, false}) {
         for (int i = 0; i < 3; ++i) {
             QAbstractButton *chip = m_chips->button(i);
@@ -2405,6 +2427,11 @@ void MainWindow::fitLibraryHead()
     for (QWidget *w : std::initializer_list<QWidget *>{m_collapse, m_viewToggle, m_addButton})
         buttons += w->sizeHint().width() + m_libraryHead->layout()->spacing();
     m_libraryTitle->setText(m_libraryTitle->fontMetrics().elidedText("Your Library", Qt::ElideRight, qMax(0, room - buttons)));
+}
+
+int MainWindow::compactBelow() const
+{
+    return qMax(kCompactBelow, m_chipsWidth);
 }
 
 void MainWindow::syncSearchWidth()
@@ -4049,8 +4076,21 @@ void MainWindow::updatePanelVisibility()
         return;
     const bool playing = m_mpv.connected() && !m_mpv.property("path").toString().isEmpty();
     // Not over a video: its page has the list at its side already.
-    m_panel->setVisible(m_panelOpen && playing && m_pages->currentWidget() != m_videoPage && !m_videoFull);
+    const bool was = m_panel->isVisible();
+    m_panel->setVisible(m_panelOpen && playing && m_pages->currentWidget() != m_videoPage && !m_videoFull && panelFits());
     m_nowPlaying->setPanelOpen(m_panelOpen);
+    if (m_panel->isVisible() && !was)
+        m_panelSoon.start();   // filled again once it is back
+}
+
+bool MainWindow::panelFits() const
+{
+    // In a window too narrow for the page beside it the view is left out
+    // (still open, it comes back as the window widens): squeezed in, its
+    // right side and its close button were past the window's edge.
+    const qreal z = theme::zoom();
+    const int library = m_libraryWanted >= 0 ? m_libraryWanted : m_split->sizes().value(0);
+    return width() - 32 - library - qRound(340 * z) >= qRound(380 * z);
 }
 
 void MainWindow::refreshPanel()
