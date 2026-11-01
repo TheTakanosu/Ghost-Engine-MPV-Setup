@@ -165,6 +165,7 @@ private:
     QWidget *buildMini();
     void setExpanded(bool expanded);
     void arrange();
+    bool sideFits() const;
 
     NativeSurface *m_surface = nullptr;
     QWidget *m_screen;          // the picture's place, under the surface
@@ -217,6 +218,7 @@ private:
     QString m_link;
     bool m_full = false;
     bool m_cinema = false;
+    bool m_stacked = false;   // the list under the description
     bool m_expanded = false;
     bool m_hasDescription = false;
     bool m_pinned = false;      // the mini player kept above other programs

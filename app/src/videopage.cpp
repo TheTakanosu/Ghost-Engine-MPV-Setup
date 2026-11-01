@@ -873,14 +873,34 @@ void VideoPage::arrange()
     // description, as in YouTube's theatre mode.
     for (QWidget *w : {m_player, m_info, m_side})
         m_grid->removeWidget(w);
-    const bool wide = m_cinema || m_full;
+    // Too narrow for the list beside anything (a small window with the
+    // library open): it goes under the description, the width of the page,
+    // or the page would be wider than its view and the picture cut off.
+    m_stacked = !m_full && !sideFits();
+    const bool wide = m_cinema || m_full || m_stacked;
     m_grid->addWidget(m_player, 0, 0, 1, wide ? 2 : 1);
-    m_grid->addWidget(m_info, 1, 0, Qt::AlignTop);
-    if (wide)
-        m_grid->addWidget(m_side, 1, 1);
-    else
-        m_grid->addWidget(m_side, 0, 1, 2, 1);
+    if (m_stacked) {
+        m_grid->addWidget(m_info, 1, 0, 1, 2, Qt::AlignTop);
+        m_grid->addWidget(m_side, 2, 0, 1, 2);
+        m_side->setMinimumWidth(0);
+        m_side->setMaximumWidth(QWIDGETSIZE_MAX);
+    } else {
+        m_grid->addWidget(m_info, 1, 0, Qt::AlignTop);
+        if (wide)
+            m_grid->addWidget(m_side, 1, 1);
+        else
+            m_grid->addWidget(m_side, 0, 1, 2, 1);
+        m_side->setFixedWidth(kSideWidth);
+    }
     m_side->layout()->setContentsMargins(0, wide ? 14 : 0, 0, 0);
+}
+
+bool VideoPage::sideFits() const
+{
+    // What is left beside the list must hold the description's buttons.
+    const QMargins m = m_grid->contentsMargins();
+    const int left = width() - 12 - m.left() - m.right() - m_grid->horizontalSpacing() - kSideWidth;
+    return left >= qMax(380, m_info->minimumSizeHint().width());
 }
 
 void VideoPage::attachSurface(QWidget *host)
@@ -1297,8 +1317,8 @@ void VideoPage::setCinema(bool cinema)
     m_page->setVerticalScrollBarPolicy(m_full ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
     if (m_full)
         m_page->verticalScrollBar()->setValue(0);
-    arrange();
     m_grid->setContentsMargins(m_full ? QMargins() : m_cinema ? QMargins(16, 14, 16, 12) : QMargins(24, 20, 20, 12));
+    arrange();
     fitPlayer();
 }
 
@@ -1309,6 +1329,8 @@ void VideoPage::refreshCovers() const
 
 void VideoPage::resizeEvent(QResizeEvent *)
 {
+    if (!m_full && sideFits() == m_stacked)
+        arrange();
     fitPlayer();
     if (!m_expanded && m_hasDescription)
         setExpanded(false);   // "...more" only while there is more
@@ -1427,7 +1449,7 @@ void VideoPage::fitPlayer()
     // start of the description show under it; the rest scrolls into view.
     if (!m_expanded)
         m_under = m_info->sizeHint().height();
-    const int width = viewWidth - m.left() - m.right() - (m_cinema ? 0 : kSideWidth + 20);
+    const int width = viewWidth - m.left() - m.right() - (m_cinema || m_stacked ? 0 : kSideWidth + 20);
     const int under = m_cinema ? 120 : m_under;
     m_player->setFixedHeight(qMax(180, qMin(width * 9 / 16, viewHeight - under - m.top() - m.bottom())));
 }
