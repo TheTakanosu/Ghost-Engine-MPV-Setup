@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -18,6 +19,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -228,6 +230,94 @@ void addRow(QVBoxLayout *rows, const QString &name, const QString &about, QWidge
 
 } // namespace
 
+namespace performance {
+
+const Level &level(int index)
+{
+    // High is what mpv.conf always had: three minutes or so of 1080p either
+    // side of where it plays, so seeking there is instant. Balanced keeps
+    // two-thirds of it, Low a short stretch (a seek back further loads again).
+    static const Level levels[kLevels] = {
+        {"Low", "20M", "10M", 20, 10},
+        {"Balanced", "50M", "50M", 60, 20},
+        {"High", "75M", "75M", 60, 30},
+    };
+    return levels[qBound(0, index, kLevels - 1)];
+}
+
+} // namespace performance
+
+// The zoom as Discord shows it: the steps marked above a bar, 100 in the
+// accent colour, the handle dragged or the bar clicked to a step.
+class ZoomBar : public QWidget {
+public:
+    std::function<void(qreal)> onPicked;
+
+    explicit ZoomBar(QWidget *parent = nullptr) : QWidget(parent)
+    {
+        setMinimumHeight(46);
+        setCursor(Qt::PointingHandCursor);
+    }
+    void setZoom(qreal zoom)
+    {
+        m_step = qBound(0, qRound((zoom - kFirst) * 10), kSteps - 1);
+        update();
+    }
+
+protected:
+    static constexpr qreal kFirst = 0.7;
+    static constexpr int kSteps = 10;   // 70 % to 160 %
+
+    qreal xOf(int step) const { return 12 + (width() - 24) * step / qreal(kSteps - 1); }
+    int stepAt(qreal x) const { return qBound(0, qRound((x - 12) / (width() - 24) * (kSteps - 1)), kSteps - 1); }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QFont small = font();
+        small.setPointSizeF(font().pointSizeF() * 0.8);
+        p.setFont(small);
+        const qreal line = height() - 12;
+        for (int i = 0; i < kSteps; ++i) {
+            const int percent = qRound((kFirst + i / 10.0) * 100);
+            const QRectF text(xOf(i) - 20, 0, 40, line - 12);
+            p.setPen(percent == 100 ? theme::accent() : (i == m_step ? QColor(236, 236, 241) : QColor(150, 148, 162)));
+            p.drawText(text, Qt::AlignHCenter | Qt::AlignTop, QString::number(percent));
+            p.fillRect(QRectF(xOf(i) - 0.5, line - 9, 1, 5), QColor(90, 88, 104));
+        }
+        const QRectF groove(12, line - 2, width() - 24, 4);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(60, 58, 72));
+        p.drawRoundedRect(groove, 2, 2);
+        p.setBrush(theme::accent());
+        p.drawRoundedRect(QRectF(12, line - 2, xOf(m_step) - 12, 4), 2, 2);
+        p.setBrush(Qt::white);
+        p.drawEllipse(QPointF(xOf(m_step), line), 8, 8);
+    }
+    void mousePressEvent(QMouseEvent *e) override { move(e->position().x()); }
+    void mouseMoveEvent(QMouseEvent *e) override
+    {
+        if (e->buttons() & Qt::LeftButton)
+            move(e->position().x());
+    }
+    // Applied when let go: every step of the whole app laid out again is too
+    // much to do while the handle is dragged.
+    void mouseReleaseEvent(QMouseEvent *) override
+    {
+        if (onPicked)
+            onPicked(kFirst + m_step / 10.0);
+    }
+
+private:
+    void move(qreal x)
+    {
+        m_step = stepAt(x);
+        update();
+    }
+    int m_step = 3;
+};
+
 SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
 {
     auto *title = new QLabel("Settings");
@@ -325,7 +415,27 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     });
 
     QVBoxLayout *look;
-    auto *lookCard = card("Look", look);
+    auto *lookCard = card("Appearance", look);
+    // The zoom bar takes the card's whole width under its name.
+    {
+        auto *name = new QLabel("Zoom");
+        name->setObjectName("settingName");
+        auto *about = new QLabel("The size of everything in the app. Ctrl + and Ctrl -, or Ctrl and the mouse wheel, change it too.");
+        about->setObjectName("statLabel");
+        about->setWordWrap(true);
+        m_zoom = new ZoomBar;
+        m_zoom->onPicked = [this](qreal zoom) {
+            if (onZoomChanged)
+                onZoomChanged(zoom);
+        };
+        auto *words = new QVBoxLayout;
+        words->setSpacing(2);
+        words->addWidget(name);
+        words->addWidget(about);
+        words->addSpacing(6);
+        words->addWidget(m_zoom);
+        look->addLayout(words);
+    }
     m_covers = new QComboBox;
     m_covers->addItem("Rounded corners", false);
     m_covers->addItem("Circles", true);
@@ -333,6 +443,45 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     addRow(look, "Playlist covers", "The shape of playlist covers in the library, on Home and on a playlist's page.", m_covers);
     m_volumeNumber = new ToggleSwitch;
     addRow(look, "Show the volume as a number", "A percentage next to the volume bar.", m_volumeNumber);
+
+    QVBoxLayout *speed;
+    auto *speedCard = card("Performance", speed);
+    m_memory = new QComboBox;
+    for (int i = 0; i < performance::kLevels; ++i)
+        m_memory->addItem(performance::level(i).name, i);
+    m_memory->setMinimumWidth(190);
+    addRow(speed, "Memory use",
+           "How much of a video is kept around where it plays, and how many covers the app keeps ready. "
+           "High seeks a few minutes either way at once; Low uses the least memory and loads again "
+           "when you seek further.", m_memory);
+    m_memoryNow = new QLabel;
+    m_memoryNow->setObjectName("statLabel");
+    m_memoryNow->setWordWrap(true);
+    addRow(speed, "Right now", QString(), new QWidget);
+    {
+        // The figures stand where the description goes.
+        auto *row = speed->itemAt(speed->count() - 1)->layout();
+        auto *words = row->itemAt(0)->layout();
+        static_cast<QLabel *>(words->itemAt(1)->widget())->hide();
+        words->addWidget(m_memoryNow);
+    }
+    m_memoryTimer = new QTimer(this);
+    m_memoryTimer->setInterval(2000);
+    connect(m_memoryTimer, &QTimer::timeout, this, [this] {
+        m_memoryNow->setText(memoryUsage ? memoryUsage() : QString());
+    });
+    connect(m_memory, &QComboBox::currentIndexChanged, this, [this] {
+        if (m_loading || m_memory->currentData().toInt() < 0)
+            return;
+        const int index = m_memory->currentData().toInt();
+        const performance::Level &l = performance::level(index);
+        mpvconf::setValue("demuxer-max-bytes", QString::fromLatin1(l.ahead));
+        mpvconf::setValue("demuxer-max-back-bytes", QString::fromLatin1(l.back));
+        mpvconf::setValue("demuxer-readahead-secs", QString::number(l.aheadSecs));
+        QSettings().setValue("performance/memory", index);
+        if (onMemoryChanged)
+            onMemoryChanged(index);
+    });
 
     QVBoxLayout *discord;
     auto *discordCard = card("Discord", discord);
@@ -364,6 +513,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     box->addWidget(windowCard);
     box->addWidget(downloadsCard);
     box->addWidget(lookCard);
+    box->addWidget(speedCard);
     box->addWidget(discordCard);
     box->addLayout(footer);
     box->addStretch();
@@ -464,6 +614,23 @@ void SettingsPage::load()
     m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());
     m_presenceVideos->setChecked(settings.value("presence/videos", true).toBool());
     m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));
+    m_zoom->setZoom(theme::zoom());
+    // The level whose three values mpv.conf has; values set by hand show as such.
+    int memory = -1;
+    for (int i = 0; i < performance::kLevels; ++i) {
+        const performance::Level &l = performance::level(i);
+        if (mpvconf::value("demuxer-max-bytes") == QLatin1String(l.ahead) &&
+            mpvconf::value("demuxer-max-back-bytes") == QLatin1String(l.back) &&
+            mpvconf::value("demuxer-readahead-secs") == QString::number(l.aheadSecs))
+            memory = i;
+    }
+    const int customMemory = m_memory->findData(-1);
+    if (memory < 0 && customMemory < 0)
+        m_memory->addItem("Custom (set in mpv.conf)", -1);
+    else if (memory >= 0 && customMemory >= 0)
+        m_memory->removeItem(customMemory);
+    m_memory->setCurrentIndex(m_memory->findData(memory));
+    m_memoryNow->setText(memoryUsage ? memoryUsage() : QString());
     m_offlineUsed->setText(downloadsSummary ? downloadsSummary() : QString());
     // The downloaded lists, built again each time the page is shown.
     QLayout *rows = m_listsBox->layout();
@@ -516,4 +683,21 @@ void SettingsPage::load()
     m_confPath->setText(QStringLiteral("Playback settings are kept in %1, and updates keep them.")
                             .arg(QDir::toNativeSeparators(mpvconf::path())));
     m_loading = false;
+}
+
+void SettingsPage::showZoom(qreal zoom)
+{
+    m_zoom->setZoom(zoom);
+}
+
+void SettingsPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    m_memoryTimer->start();   // the figures, only while they can be seen
+}
+
+void SettingsPage::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    m_memoryTimer->stop();
 }

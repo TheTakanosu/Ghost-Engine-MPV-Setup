@@ -112,6 +112,7 @@ private:
     void syncSearchWidth();
     void fitLibraryHead();
     void foldHeader();
+    QString memoryUsage() const;
     int headerTallNow() const;
     void snapCompactLibrary();
     QPixmap grabStill() const;

@@ -9,6 +9,24 @@
 class QComboBox;
 class QLabel;
 class QSlider;
+class QTimer;
+class ZoomBar;
+
+// How much memory the player and the app may keep, from Settings > Performance.
+namespace performance {
+
+struct Level {
+    const char *name;
+    const char *ahead;      // demuxer-max-bytes: video loaded ahead of where it plays
+    const char *back;       // demuxer-max-back-bytes: kept behind it, to seek back without loading again
+    int aheadSecs;          // demuxer-readahead-secs
+    int coversMb;           // covers the app keeps decoded
+};
+const Level &level(int index);    // 0 Low, 1 Balanced, 2 High
+constexpr int kLevels = 3;
+constexpr int kDefault = 1;
+
+} // namespace performance
 
 // mpv.conf, read and changed one setting at a time. Lines the app does not
 // manage are left exactly as they are, and conf-merge.ps1 keeps the user's
@@ -60,6 +78,14 @@ public:
     };
     std::function<QList<DownloadedList>()> downloadedLists;
     std::function<void(const QString &path)> onRemoveListDownload;
+    // Appearance: the zoom picked on the bar (the same as Ctrl + / Ctrl -).
+    std::function<void(qreal zoom)> onZoomChanged;
+    // Performance: a level picked, and what the app and its player use now.
+    std::function<void(int level)> onMemoryChanged;
+    std::function<QString()> memoryUsage;
+
+    // The zoom changed elsewhere (Ctrl + wheel): the bar follows.
+    void showZoom(qreal zoom);
 
     // Read again from mpv.conf and the app's settings, when the page opens.
     void load();
@@ -80,5 +106,13 @@ private:
     QComboBox *m_offlineQuality;
     QLabel *m_offlineUsed;
     QWidget *m_listsBox;
+    ZoomBar *m_zoom;
+    QComboBox *m_memory;
+    QLabel *m_memoryNow;
+    QTimer *m_memoryTimer;
     bool m_loading = false;
+
+protected:
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 };

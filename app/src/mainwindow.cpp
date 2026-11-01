@@ -71,6 +71,8 @@
 #include <random>
 
 #include <windows.h>
+#include <psapi.h>
+#include <tlhelp32.h>
 #include <dwmapi.h>
 
 namespace {
@@ -584,6 +586,21 @@ MainWindow::MainWindow()
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
     m_settings->onLookChanged = [this] { applyLook(); };
+    m_settings->onZoomChanged = [this](qreal zoom) { changeZoom(zoom - theme::zoom()); };
+    // Settings > Performance: mpv takes the new cache at once (the file
+    // playing keeps what it has loaded), the covers' budget too.
+    const auto applyMemory = [this](int index) {
+        const performance::Level &l = performance::level(index);
+        m_covers.setMemoryBudget(l.coversMb);
+        if (!m_mpv.connected())
+            return;
+        m_mpv.setProperty("demuxer-max-bytes", QString::fromLatin1(l.ahead) + "iB");
+        m_mpv.setProperty("demuxer-max-back-bytes", QString::fromLatin1(l.back) + "iB");
+        m_mpv.setProperty("demuxer-readahead-secs", l.aheadSecs);
+    };
+    m_settings->onMemoryChanged = applyMemory;
+    m_covers.setMemoryBudget(performance::level(QSettings().value("performance/memory", performance::kDefault).toInt()).coversMb);
+    m_settings->memoryUsage = [this] { return memoryUsage(); };
     // rpc_exporter.lua reads these each time it writes the bridge file and
     // tells ghost_rpc.py to show nothing for what is turned off.
     const auto applyPresence = [this] {
@@ -2722,6 +2739,43 @@ void MainWindow::changeZoom(qreal step)
     syncSearchWidth();
     fitLibraryHead();
     layoutHeader();
+    if (m_settings)
+        m_settings->showZoom(theme::zoom());
+}
+
+QString MainWindow::memoryUsage() const
+{
+    // As Task Manager's Memory column counts it (private working set): the
+    // app, mpv, and what mpv started (Ghost RPC for Discord).
+    const auto privateMb = [](DWORD pid) -> double {
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (!h)
+            return 0;
+        PROCESS_MEMORY_COUNTERS_EX2 counters{};
+        counters.cb = sizeof(counters);
+        double mb = 0;
+        if (GetProcessMemoryInfo(h, reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters), sizeof(counters)))
+            mb = counters.PrivateWorkingSetSize / (1024.0 * 1024.0);
+        CloseHandle(h);
+        return mb;
+    };
+    const double app = privateMb(GetCurrentProcessId());
+    const DWORD mpv = m_mpv.connected() ? DWORD(m_mpv.property("pid").toLongLong()) : 0;
+    double player = mpv ? privateMb(mpv) : 0, helpers = 0;
+    if (mpv) {
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        PROCESSENTRY32W entry{sizeof(entry)};
+        for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
+            if (entry.th32ParentProcessID == mpv)
+                helpers += privateMb(entry.th32ProcessID);
+        CloseHandle(snapshot);
+    }
+    QString text = QStringLiteral("About %1 MB: the app %2 MB").arg(qRound(app + player + helpers)).arg(qRound(app));
+    if (mpv)
+        text += QStringLiteral(", the player %1 MB").arg(qRound(player));
+    if (helpers > 0.5)
+        text += QStringLiteral(", Discord status %1 MB").arg(qRound(helpers));
+    return text + QStringLiteral(".");
 }
 
 void MainWindow::markPlaying()

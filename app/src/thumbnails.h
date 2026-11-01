@@ -20,6 +20,8 @@ public:
     // The cover if it is ready; otherwise starts fetching it and returns a
     // null pixmap. ready() fires when it arrives.
     QPixmap get(const QString &videoId, Size size);
+    // How many megabytes of decoded covers are kept (Settings > Performance).
+    void setMemoryBudget(int megabytes) { m_memory.setMaxCost(megabytes * 1024); }
 
 signals:
     void ready(const QString &videoId);
