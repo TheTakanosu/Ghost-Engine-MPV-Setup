@@ -1,0 +1,4 @@
+// The exe's icon: Explorer, the Start menu shortcut and the taskbar show it,
+// and Qt gives it to every window that sets none (IDI_ICON1 is the name it
+// looks for). assets/make_icon.py draws it.
+IDI_ICON1 ICON "assets/ghost.ico"

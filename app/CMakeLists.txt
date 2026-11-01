@@ -30,6 +30,7 @@ qt_add_executable(GhostEngine WIN32
     src/songinfo.h src/songinfo.cpp
     src/nowplayingpanel.h src/nowplayingpanel.cpp
     src/profile.h src/profile.cpp
+    ghostengine.rc
 )
 qt_add_resources(GhostEngine "assets" PREFIX "/" FILES assets/chevron-down.png)
 target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network dwmapi dbghelp)
