@@ -2743,6 +2743,27 @@ void MainWindow::changeZoom(qreal step)
         m_settings->showZoom(theme::zoom());
 }
 
+void MainWindow::tieToApp(qint64 pid)
+{
+    // An mpv playing inside the app ends with it, also when the app does not
+    // get to say so (a crash, or ended from Task Manager): before, it played
+    // on with nothing left to stop it from. Its own children (yt-dlp, Ghost
+    // RPC) go with it. One in its own window is left out and plays on, as
+    // it does when the app is closed.
+    if (!m_playerJob) {
+        m_playerJob = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (m_playerJob)
+            SetInformationJobObject(m_playerJob, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+    }
+    if (HANDLE process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, DWORD(pid))) {
+        if (m_playerJob)
+            AssignProcessToJobObject(m_playerJob, process);
+        CloseHandle(process);
+    }
+}
+
 QString MainWindow::memoryUsage() const
 {
     // As Task Manager's Memory column counts it (private working set): the
@@ -3731,6 +3752,8 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
     qint64 pid = 0;
     if (QProcess::startDetached(mpv, args, QFileInfo(mpv).absolutePath(), &pid)) {
         m_launchedPids << pid;
+        if (m_launchEmbedded)
+            tieToApp(pid);
         m_launching.start();
         m_mpv.hurry();
         if (!audio && m_launchEmbedded)
