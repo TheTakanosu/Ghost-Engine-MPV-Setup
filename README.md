@@ -1,21 +1,47 @@
-# Ghost Engine MPV Setup
+# Ghost Engine
 
 [![tests](https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/actions/workflows/ci.yml/badge.svg)](https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/actions/workflows/ci.yml)
 
-Watch and listen to YouTube on your own machine instead of in a browser tab —
-on the second monitor, in the background, without a browser eating your RAM.
+A music and video player for Windows that plays your YouTube playlists from
+Discord: a library, synced lyrics and videos in one window, with no ads and a
+fraction of the memory a browser tab or Spotify takes.
 
-One download, one double-click. It sets up [mpv](https://mpv.io/) with a
-configuration that:
+![The Ghost Engine app: a playlist with the now playing view beside it](docs/screenshots/playlist.png)
 
-- **plays playlists from Discord.** The
+- **Your playlists, as a library.** The
   [Takanosu YT-Indexer](https://github.com/TheTakanosu/Takanosu-YT-Indexer) bot
-  exports a `.m3u`; open it and the whole list plays.
-- **switches itself to audio-only** when the list is an audio export — no flags
-  to remember, and you still get a window with the usual seek and volume
-  controls.
-- **shows what you are playing on Discord**, with the video's own thumbnail, the
-  channel, and a real progress bar.
+  turns a search, a YouTube list or a Spotify playlist into a `.m3u`; open it
+  and it joins your library, with covers, folders, sorting and search.
+- **Synced lyrics**, line by line as the song plays, and a preview beside it.
+- **Videos inside the app**, a mini player in the corner, or the song's video
+  right where its cover was.
+- **Songs kept on your disk** to play without the internet.
+- **What you play, on your Discord profile**, with the thumbnail and a real
+  progress bar.
+
+| | |
+|---|---|
+| ![Home](docs/screenshots/home.png) | ![Lyrics](docs/screenshots/lyrics.png) |
+
+### Light enough to leave on while you play
+
+Measured in Counter-Strike 2 on one PC (RX 6800, 32 GB), standing still on the
+same spot, 60 seconds a run, frame times from
+[PresentMon](https://github.com/GameTechDev/PresentMon), memory as Task
+Manager counts it:
+
+| Playing while you game | Average FPS | Memory |
+|---|---|---|
+| Nothing | 546 | — |
+| **Ghost Engine** | 530 | **~100 MB** |
+| Spotify | 525–534 | ~720 MB |
+| Spotify with a Spicetify theme, window in view | 395 | ~790 MB |
+
+Playing music costs a game a few percent whichever player does it, and Ghost
+Engine costs no more than Spotify does. Song changes did not stutter in either
+(12 changes, none with a frame over 10 ms). The difference is memory, about a
+seventh, and themes: Ghost Engine has its own look and settings, so there is no
+need for a Spotify mod, which in this test took 15 % of the CPU while in view.
 
 ---
 
@@ -26,27 +52,27 @@ configuration that:
 2. Unpack it anywhere
 3. Double-click **`install.bat`**
 
-That is the whole list. There is exactly one thing to run, and the folder you
-unpack has exactly two things you might click — `install.bat` and
-`uninstall.bat`. Everything else is either the payload it installs or the
-PowerShell it calls, tucked into `lib/` so it is not in your way.
+That is the whole list. It installs the player, the app and a Start menu
+shortcut, and asks a few questions on the way: where to install (`C:\mpv` by
+default), whether you want node, a desktop shortcut, Discord Rich Presence and
+file associations. Rich Presence runs on Python: if there is none on the PC,
+or it is older than 3.9, the installer offers to install it for you (per user,
+from python.org). A couple of minutes on a normal connection. No administrator
+rights.
 
-`ghost_rpc.bat` and `update.bat` end up in the install folder afterwards. **You
-do not run those to set anything up** — the first prints what the presence agent
-is doing when you want to know why it is quiet, and mpv tells you when the
-second is worth running.
-
-It asks where to install (`C:\mpv` by default), whether you want node, Rich
-Presence and file associations, and then it is done. Rich Presence runs on
-Python: if there is none on the PC, or it is older than 3.9, the installer
-offers to install it for you (per user, from python.org). Takes under a minute on a
-normal connection. No administrator rights.
+The folder you unpack has exactly two things you might click, `install.bat`
+and `uninstall.bat`; the rest is the payload and the PowerShell it calls,
+tucked into `lib/`. `ghost_rpc.bat` and `update.bat` end up in the install
+folder afterwards. **You do not run those to set anything up**: the first
+prints what the presence agent is doing when you want to know why it is quiet,
+and you are told when the second is worth running.
 
 **Windows 10 (1803 or newer) or Windows 11.** That is the version that started
 shipping `tar.exe`, which is what unpacks mpv.
 
-Undo it with **`uninstall.bat`**, which deletes the install folder and nothing
-else.
+Undo it with **`uninstall.bat`**, which deletes the install folder and the
+shortcuts it made, and nothing else. Your playlists in `Music\Ghost Engine`
+stay.
 
 ### Linux and macOS
 
@@ -79,13 +105,16 @@ from the project that publishes it, at install time:
 
 | | From | Checked |
 |---|---|---|
+| `GhostEngine.exe` and the Qt libraries beside it | Built by GitHub from this repository's source when a version is tagged ([the workflow](.github/workflows/release.yml); each run's log is public), attached to the [release](https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/releases/latest) | ✅ SHA-256, against the one GitHub records for the file |
 | `mpv.exe` | [shinchiro's Windows builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases) — the ones mpv.io points at | — |
 | `yt-dlp.exe` + `_internal` (`yt-dlp_win.zip`) | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | ✅ SHA-256, against the sum yt-dlp publishes with the release |
 | `node.exe` *(optional, skipped if a node 22+ is already there)* | [nodejs.org](https://nodejs.org/dist/), the current LTS | ✅ SHA-256, against the sums node publishes |
 | Python *(only for Rich Presence, only if missing)* | [python.org](https://www.python.org/downloads/windows/) | ✅ Authenticode signature of the Python Software Foundation |
 
-Only the small stuff is ours: `mpv.conf`, a handful of Lua scripts and a Python agent,
-all of which you can read in this repo in about five minutes.
+The rest is ours and small: `mpv.conf`, a handful of Lua scripts and a Python
+agent, all of which you can read in this repo in about five minutes. The app
+is ours too, and nobody's machine builds it but GitHub's, from the source you
+can read here.
 
 This is on purpose. An installer that hands you binaries asks you to trust
 whoever built them; one that fetches from the source and verifies the checksum
@@ -112,8 +141,9 @@ Run update.bat in your mpv folder.
 
 `update.bat` in the install folder then does the rest:
 
-- **Ghost Engine:** a newer release is installed straight away; the zip is
-  checked against the SHA-256 GitHub records for it. A newer **pre-release** (a
+- **Ghost Engine:** a newer release is installed straight away, the app with
+  it (an open app is closed first, after asking); both zips are checked
+  against the SHA-256 GitHub records for them. A newer **pre-release** (a
   test build) is only offered: it is labelled as one and installs only if you
   answer yes. `cookies.txt` is never touched.
 - **Your `mpv.conf` changes stay.** If you set `volume=20`, it is still 20
@@ -148,10 +178,57 @@ once more. Turn the checks off with `GHOST_NO_UPDATE_CHECK=1`, or by deleting
 
 ---
 
-## Using it
+## Using the app
 
-Drag a `.m3u` onto `mpv.exe`, or just double-click one if you let the installer
-register the file types.
+Open **Ghost Engine** from the Start menu. A `.m3u` the bot gives you joins the
+library when you open it with the app; it is moved
+out of Downloads into `Music\Ghost Engine`, where your lists live as plain
+files.
+
+- **Double-click** a list or a song to play it. The bar at the bottom has
+  shuffle, repeat (list or song), the volume and a seek bar you can click
+  anywhere on; <kbd>Space</kbd> pauses anywhere in the app.
+- **Search** at the top looks through list names and every song title and
+  artist; a list found by a song opens filtered to it.
+- **Lyrics**: the microphone in the bottom bar. They come from
+  [LRCLIB](https://lrclib.net) and follow the song line by line.
+- **Videos**: a video list plays inside the app, with a mini player in the
+  corner when you leave the page. For a song, *Switch to video* or *Mini video*
+  in the now playing view.
+- **Downloads**: the arrow on a song list keeps its songs on your disk, to play
+  without the internet. Settings shows how much they take and removes them.
+- **Settings** has the zoom (Ctrl + / Ctrl -), the quality of video and
+  downloads, and **Memory use**: how much of a video is kept around where it
+  plays. Balanced is the default; Low uses the least and loads again when you
+  seek further.
+
+### Getting playlists
+
+Add the bot to your Discord server:
+
+```
+https://discord.com/oauth2/authorize?client_id=1530546215303909518&permissions=117760&scope=bot
+```
+
+Then `!s <search>` to find things, `!add <num>` to queue them, and `!export` or
+`!exportmp3` for the `.m3u`. A YouTube or Spotify playlist link works too.
+`!commands` lists the rest.
+
+## Legal
+
+Ghost Engine is for personal use. It plays what YouTube serves through
+[yt-dlp](https://github.com/yt-dlp/yt-dlp), and keeping to YouTube's terms and
+to copyright in what you play or keep on your disk is up to you. It is not
+affiliated with YouTube, Google, Spotify or Discord, and it is not a way to
+get music for free: it plays what is already public, as a browser would.
+
+---
+
+## mpv on its own
+
+The app is optional: mpv plays the lists by itself too. Drag a `.m3u` onto
+`mpv.exe`, or just double-click one if you let the installer register the file
+types.
 
 An audio export announces itself in the console with `Ghost-Audio is online!`
 and plays with no video track but a normal window. A video export plays
@@ -193,17 +270,6 @@ again under it. There is no per-artist list to keep up. Age-restricted songs
 are checked with your cookies.txt and still opened when YouTube refuses the
 check, so they reach the cookie retry below instead of being skipped.
 Rich Presence still gets the picked video's id, thumbnail and button.
-
-### Getting playlists
-
-Add the bot to your Discord server:
-
-```
-https://discord.com/oauth2/authorize?client_id=1530546215303909518&permissions=117760&scope=bot
-```
-
-Then `!s <search>` to find things, `!add <num>` to queue them, and `!export` or
-`!exportmp3` for the `.m3u`. `!commands` lists the rest.
 
 ---
 
