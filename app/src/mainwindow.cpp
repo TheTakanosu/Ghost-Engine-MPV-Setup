@@ -1,4 +1,4 @@
-﻿#include "mainwindow.h"
+#include "mainwindow.h"
 
 #include "covercrop.h"
 #include "settings.h"
@@ -158,6 +158,7 @@ std::pair<QString, QString> splitTitle(const QString &title)
 
 } // namespace
 
+
 // Wheel scrolling that glides instead of jumping three rows a notch: each
 // notch moves the target 110 px and the view eases to it, as Spotify's does.
 class SmoothScroll : public QObject {
@@ -165,15 +166,11 @@ public:
     explicit SmoothScroll(QAbstractScrollArea *area) : QObject(area), m_bar(area->verticalScrollBar())
     {
         area->viewport()->installEventFilter(this);
-        m_anim.setDuration(220);
-        m_anim.setEasingCurve(QEasingCurve::OutCubic);
-        // Only while it runs: setting the end of a finished animation makes it
-        // report that end at once, and the page jumped to the next stop and
-        // back before every scroll (measured: 110, 220, 110, 132, ...).
-        connect(&m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
-            if (m_anim.state() == QAbstractAnimation::Running)
-                m_bar->setValue(v.toInt());
-        });
+        // Stepped once a frame of the screen, not on Qt's animation clock,
+        // which ticks at 60 a second whatever the screen shows: on a 144 or
+        // 280 Hz screen the glide moved in visible steps.
+        m_tick.setTimerType(Qt::PreciseTimer);
+        connect(&m_tick, &QTimer::timeout, this, &SmoothScroll::step);
         // Dragged by its handle: the handle follows the mouse at once, the
         // page at most once a frame of the screen. Moved with every report of a gaming
         // mouse (1000 a second, some 8000), each one laid out and painted
@@ -186,11 +183,9 @@ public:
             if (!m_frame.isActive())
                 m_frame.start();
         });
-        // A frame of the screen the page is on: 60 Hz, 144, 280...
         connect(m_bar, &QScrollBar::sliderPressed, this, [this] {
-            const QScreen *screen = m_bar->screen();
-            const qreal hz = screen && screen->refreshRate() > 1 ? screen->refreshRate() : 60;
-            m_frame.setInterval(qMax(2, int(1000 / hz)));
+            m_tick.stop();   // the handle wins over a glide still running
+            m_frame.setInterval(frameMs());
         });
         connect(&m_frame, &QTimer::timeout, this, [this] { m_bar->setValue(m_dragTo); });
     }
@@ -203,18 +198,39 @@ protected:
         auto *wheel = static_cast<QWheelEvent *>(event);
         if (wheel->modifiers() != Qt::NoModifier || wheel->angleDelta().y() == 0)
             return false;
-        const int from = m_anim.state() == QAbstractAnimation::Running ? m_target : m_bar->value();
+        const int from = m_tick.isActive() ? m_target : m_bar->value();
         m_target = qBound(m_bar->minimum(), from - wheel->angleDelta().y() * 110 / 120, m_bar->maximum());
-        m_anim.stop();
-        m_anim.setStartValue(m_bar->value());
-        m_anim.setEndValue(m_target);
-        m_anim.start();
+        m_start = m_bar->value();
+        m_clock.start();
+        m_tick.setInterval(frameMs());
+        m_tick.start();
+        step();
         return true;
     }
 
 private:
+    static constexpr qreal kGlideMs = 220;
+
+    // A frame of the screen the page is on: 60 Hz, 144, 280...
+    int frameMs() const
+    {
+        const QScreen *screen = m_bar->screen();
+        const qreal hz = screen && screen->refreshRate() > 1 ? screen->refreshRate() : 60;
+        return qMax(2, int(1000 / hz));
+    }
+    void step()
+    {
+        const qreal t = qMin(1.0, m_clock.elapsed() / kGlideMs);
+        m_bar->setValue(qRound(m_start + (m_target - m_start) * m_ease.valueForProgress(t)));
+        if (t >= 1.0)
+            m_tick.stop();
+    }
+
     QScrollBar *m_bar;
-    QVariantAnimation m_anim;
+    QTimer m_tick;
+    QElapsedTimer m_clock;
+    QEasingCurve m_ease{QEasingCurve::OutCubic};
+    int m_start = 0;
     int m_target = 0;
     QTimer m_frame;
     int m_dragTo = 0;
@@ -1163,6 +1179,16 @@ QWidget *MainWindow::buildLibrary()
     // sideways, and the two bars' meeting corner showed as a black square.
     m_libraryList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_libraryList->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_libraryEmpty = new QLabel;
+    m_libraryEmpty->setObjectName("statLabel");
+    m_libraryEmpty->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_libraryEmpty->setWordWrap(true);
+    m_libraryEmpty->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_libraryEmpty->hide();
+    auto *emptyLayout = new QVBoxLayout(m_libraryList->viewport());
+    emptyLayout->setContentsMargins(12, 24, 12, 0);
+    emptyLayout->addWidget(m_libraryEmpty);
+    emptyLayout->addStretch();
     m_rowDelegate = new tiles::RowDelegate([this](const QModelIndex &index) {
         return coversFor(index.data(tiles::kIndexRole).toInt());
     }, m_libraryList);
@@ -1171,6 +1197,10 @@ QWidget *MainWindow::buildLibrary()
         const QString folder = item->data(tiles::kFolderRole).toString();
         if (folder.isEmpty()) {
             openPlaylist(item->data(tiles::kIndexRole).toInt());
+            // Found by a song in it: open on that song, the rest filtered out.
+            const QString match = item->data(tiles::kMatchRole).toString();
+            if (!match.isEmpty())
+                m_songSearch->setText(match);
             return;
         }
         // A folder opens and closes in place. A double-click arrives as a
@@ -3105,8 +3135,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     m_shuffleSeed = sort.value(2).toUInt();
     m_sortDescending = sort.value(1) == "desc";
     fillDurations();
-    applySort();
-    m_emptyHint->setVisible(m_songs->count() == 0);
+    applySort();   // and filterSongs, which shows the empty hint
     showDownloadState();
     m_pages->setCurrentIndex(1);
     if (keepView) {
@@ -3233,12 +3262,21 @@ void MainWindow::applySort()
 void MainWindow::filterSongs()
 {
     const QString needle = m_songSearch->text().trimmed();
+    int shown = 0;
     for (int row = 0; row < m_songs->count(); ++row) {
         QListWidgetItem *item = m_songs->item(row);
-        item->setHidden(!needle.isEmpty() &&
+        const bool hide = !needle.isEmpty() &&
             !item->text().contains(needle, Qt::CaseInsensitive) &&
-            !item->data(tiles::kArtistRole).toString().contains(needle, Qt::CaseInsensitive));
+            !item->data(tiles::kArtistRole).toString().contains(needle, Qt::CaseInsensitive);
+        item->setHidden(hide);
+        shown += hide ? 0 : 1;
     }
+    // An empty list says how to fill it; a search that hides every song
+    // says so instead of leaving a blank page.
+    m_emptyHint->setText(m_songs->count() == 0
+        ? QStringLiteral("Nothing here yet.\nRight-click a song in any playlist and choose Add to playlist.")
+        : QStringLiteral("No songs match \"%1\".").arg(needle));
+    m_emptyHint->setVisible(shown == 0);
     // A drag moves songs in the file, so only where the rows are the file's
     // own order, all of them shown.
     const bool canDrag = m_sortKey == SortKey::Custom && needle.isEmpty() && !m_videoGrid;
@@ -3531,9 +3569,46 @@ void MainWindow::refill()
     // finds hides; the order is then the newest first, and nothing drags.
     m_libraryList->setDragDropMode(needle.isEmpty() ? QAbstractItemView::InternalMove : QAbstractItemView::NoDragDrop);
     if (!needle.isEmpty()) {
-        for (int i = 0; i < all.size(); ++i)
-            if (shown(all[i]))
+        // Lists by name first, then lists holding a song (title or artist)
+        // that matches, each saying which song.
+        QVector<int> bySong;
+        QHash<int, QStringList> songsIn;
+        for (int i = 0; i < all.size(); ++i) {
+            const Playlist &p = all[i];
+            if (shown(p)) {
                 addList(i, false);
+                continue;
+            }
+            if ((m_filter == Songs && !p.audio) || (m_filter == Videos && p.audio))
+                continue;
+            auto cached = m_titleCache.constFind(p.path);
+            if (cached == m_titleCache.constEnd() || cached->first != p.modified) {
+                QStringList titles;
+                for (const PlaylistEntry &entry : p.readEntries())
+                    titles << entry.title;
+                cached = m_titleCache.insert(p.path, {p.modified, titles});
+            }
+            QStringList found;
+            for (const QString &title : cached->second)
+                if (title.contains(needle, Qt::CaseInsensitive))
+                    found << title;
+            if (!found.isEmpty()) {
+                bySong << i;
+                songsIn.insert(i, found);
+            }
+        }
+        for (int i : bySong) {
+            addList(i, false);
+            QListWidgetItem *row = m_libraryList->item(m_libraryList->count() - 1);
+            const QStringList &found = songsIn[i];
+            const QString first = splitTitle(found.first()).first;
+            row->setData(tiles::kSubtitleRole, found.size() == 1
+                ? QStringLiteral("Song: %1").arg(first)
+                : QStringLiteral("%1 songs · %2").arg(found.size()).arg(first));
+            row->setData(tiles::kMatchRole, needle);
+            row->setToolTip(found.mid(0, 8).join('\n') + (found.size() > 8 ? QStringLiteral("\n...") : QString()));
+        }
+        m_libraryEmpty->setText(QStringLiteral("No playlists or songs match \"%1\".").arg(needle));
     } else {
         // Folders, then lists newest first, until the user places them.
         QStringList top;
@@ -3569,6 +3644,7 @@ void MainWindow::refill()
                     addList(byKey.value(k), true);
         }
     }
+    m_libraryEmpty->setVisible(!needle.isEmpty() && m_libraryList->count() == 0);
 
     // Home
     m_greeting->setText(greetingFor(QTime::currentTime()));
@@ -3803,8 +3879,10 @@ void MainWindow::showVideoPage()
     m_videoPage->setVolume(int(m_mpv.property("volume").toDouble()), m_mpv.property("mute").toBool());
     m_videoPage->setCinema(m_compact);
     m_miniClosed = false;
-    if (m_pages->currentWidget() != m_videoPage)
+    if (m_pages->currentWidget() != m_videoPage) {
         m_beforeVideo = m_pages->currentWidget();
+        m_videoPage->ignorePictureClicks();
+    }
     m_pages->setCurrentWidget(m_videoPage);
     m_nowPlaying->setLyricsOpen(false);
     schedulePlace();
@@ -3989,7 +4067,7 @@ void MainWindow::placeSurface()
     } else {
         m_videoPage->hideMini();
     }
-    surface->setVisible(onPage || mini || (inPanel && !visible.isEmpty()));
+    surface->setVisible(onPage || (mini && !m_videoPage->miniSizing()) || (inPanel && !visible.isEmpty()));
     m_surfaceOnPage = onPage || inPanel;   // the controls come over it on hover
 
     // mpv fills its window when the window already has the video's shape,
@@ -4484,6 +4562,14 @@ void MainWindow::closeExtraPlayers(bool all)
     // where nobody can see or stop it. Each is checked to still be mpv.exe,
     // since Windows reuses process ids.
     const qint64 ours = m_mpv.property("pid").toLongLong();
+    if (!all && ours <= 0) {
+        // mpv has not said which process it is yet (on a first start it can
+        // be busy opening the first song for seconds): the one just started
+        // was taken for a stray and ended, and the first Play did nothing.
+        if (m_mpv.connected())
+            QTimer::singleShot(1500, this, [this] { closeExtraPlayers(false); });
+        return;
+    }
     QList<qint64> keep;
     for (qint64 pid : std::as_const(m_launchedPids)) {
         HANDLE h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pid));

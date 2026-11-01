@@ -50,6 +50,7 @@ private:
 constexpr int kFolderRole = Qt::UserRole + 8;
 constexpr int kInFolderRole = Qt::UserRole + 9;
 constexpr int kOpenRole = Qt::UserRole + 10;     // a folder showing its playlists
+constexpr int kMatchRole = Qt::UserRole + 15;    // a list found by a song in it: the search
 
 // A playlist as a row in the library panel: small cover, name, count. In a
 // narrow panel only the cover is left, as Spotify's library does; the dense

@@ -84,10 +84,15 @@ public:
     // into, with its buttons on top. All owned by the main window.
     QWidget *controls() const { return m_controls; }
     QWidget *corners() const { return m_corners; }
+    // Just opened by a click elsewhere: that click's release is not a
+    // click on the picture.
+    void ignorePictureClicks();
     // Where the wheel goes over the picture: the page, or (the picture in the
     // now playing view) that view.
     void setWheelTarget(QWidget *viewport) { m_wheelTarget = viewport; }
     QWidget *miniWindow() const { return m_miniWindow; }
+    // Its edges being dragged: a still stands in for mpv, which stays hidden.
+    bool miniSizing() const;
     // Put away for good, also when Qt thinks it already is: pinned, it kept
     // itself up through the app's minimising behind Qt's back, and Qt's
     // hide() then did nothing.

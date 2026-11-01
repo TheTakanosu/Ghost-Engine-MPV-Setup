@@ -6,8 +6,10 @@
 
 #include <QDesktopServices>
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QLinearGradient>
 #include <QListWidget>
@@ -34,6 +36,10 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+
+#ifndef PW_RENDERFULLCONTENT
+#define PW_RENDERFULLCONTENT 0x00000002
+#endif
 
 // Steps of the seek bar: fine enough to land on a second in a long video.
 constexpr int kSeekSteps = 10000;
@@ -134,6 +140,11 @@ public:
     std::function<void(QWheelEvent *)> wheeled;
 
     void reshape() { update(); }
+    // The video page has just come up, opened by a double-click on a list:
+    // that click's release, handled once the page was built, landed on the
+    // picture and paused the video before it had started (Qt makes up the
+    // press it never saw, so checking for one was not enough).
+    void ignoreClicksBriefly() { m_quiet.start(); }
 
 protected:
     void paintEvent(QPaintEvent *) override
@@ -152,7 +163,8 @@ protected:
     }
     void mouseReleaseEvent(QMouseEvent *event) override
     {
-        if (event->button() == Qt::LeftButton && !m_double && clicked)
+        const bool quiet = m_quiet.isValid() && m_quiet.elapsed() < 600;
+        if (event->button() == Qt::LeftButton && !quiet && !m_double && clicked)
             clicked();
         m_double = false;
     }
@@ -161,7 +173,7 @@ protected:
         if (event->button() != Qt::LeftButton)
             return;
         m_double = true;
-        if (doubleClicked)
+        if (doubleClicked && !(m_quiet.isValid() && m_quiet.elapsed() < 600))
             doubleClicked();
     }
     void wheelEvent(QWheelEvent *event) override
@@ -171,6 +183,7 @@ protected:
     }
 
 private:
+    QElapsedTimer m_quiet;
     bool m_double = false;
 };
 
@@ -192,6 +205,48 @@ public:
     double aspect = 16.0 / 9.0;
     bool pinned = false;
     std::function<void(const QSize &)> resized;
+
+    // While its edges are dragged, mpv draws each new size a moment late and
+    // the corner being pulled showed black. For the drag, mpv's window steps
+    // aside and a still of the picture, stretched with the window, stands in.
+    void beginSizing()
+    {
+        const HWND hwnd = reinterpret_cast<HWND>(winId());
+        m_surface = FindWindowExW(hwnd, nullptr, L"GhostEngineVideo", nullptr);
+        if (!m_surface || !IsWindowVisible(m_surface))
+            return;
+        RECT r;
+        GetClientRect(m_surface, &r);
+        const int w = r.right - r.left, h = r.bottom - r.top;
+        if (w <= 0 || h <= 0)
+            return;
+        // PrintWindow asks for what mpv drew, without the face on top.
+        HDC screen = GetDC(nullptr);
+        HDC dc = CreateCompatibleDC(screen);
+        HBITMAP bitmap = CreateCompatibleBitmap(screen, w, h);
+        HGDIOBJ old = SelectObject(dc, bitmap);
+        const bool ok = PrintWindow(m_surface, dc, PW_RENDERFULLCONTENT);
+        SelectObject(dc, old);
+        if (ok)
+            m_still = QPixmap::fromImage(QImage::fromHBITMAP(bitmap));
+        DeleteObject(bitmap);
+        DeleteDC(dc);
+        ReleaseDC(nullptr, screen);
+        if (m_still.isNull())
+            return;
+        repaint();
+        ShowWindow(m_surface, SW_HIDE);
+    }
+    bool sizing() const { return !m_still.isNull(); }
+    void endSizing()
+    {
+        if (m_still.isNull())
+            return;
+        m_still = QPixmap();
+        if (m_surface)
+            ShowWindow(m_surface, SW_SHOWNA);
+        update();
+    }
 
     // Larger or smaller around its middle, the video's shape kept.
     void zoomBy(double factor)
@@ -239,6 +294,14 @@ protected:
         follow();
     }
     void hideEvent(QHideEvent *) override { face->hide(); }
+    void paintEvent(QPaintEvent *) override
+    {
+        if (m_still.isNull())
+            return;
+        QPainter p(this);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.drawPixmap(rect(), m_still);
+    }
     void moveEvent(QMoveEvent *) override { follow(); }
     void resizeEvent(QResizeEvent *) override
     {
@@ -287,6 +350,9 @@ protected:
     }
 
 private:
+    HWND m_surface = nullptr;
+    QPixmap m_still;
+
     void follow()
     {
         // Its face stays on top of it: Windows put the mini window back
@@ -346,8 +412,15 @@ protected:
     {
         if (!carry)
             return;
+        auto *mini = static_cast<MiniWindow *>(carry);
+        const bool sizing = (command & 0xFFF0) == SC_SIZE;
+        if (sizing)
+            mini->beginSizing();
         ReleaseCapture();
+        // Returns once the drag has ended.
         SendMessageW(reinterpret_cast<HWND>(carry->winId()), WM_SYSCOMMAND, command, 0);
+        if (sizing)
+            mini->endSizing();
         if (moved)
             moved(carry->pos());
     }
@@ -638,6 +711,20 @@ NativeSurface::NativeSurface(QWidget *window)
     m_hwnd = CreateWindowExW(0, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1,
                              reinterpret_cast<HWND>(window->winId()), nullptr, GetModuleHandleW(nullptr), nullptr);
     m_dpr = window->devicePixelRatioF();
+}
+
+void VideoPage::ignorePictureClicks()
+{
+    // Again once the app is free: building the page can take longer than
+    // the quiet spell, and the release waits behind it.
+    auto *mask = static_cast<CornerMask *>(m_corners);
+    mask->ignoreClicksBriefly();
+    QTimer::singleShot(0, mask, [mask] { mask->ignoreClicksBriefly(); });
+}
+
+bool VideoPage::miniSizing() const
+{
+    return m_miniWindow && static_cast<MiniWindow *>(m_miniWindow)->sizing();
 }
 
 void NativeSurface::place(QWidget *window, const QRect &rect)
