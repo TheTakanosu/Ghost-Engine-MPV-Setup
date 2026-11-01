@@ -197,7 +197,8 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         return;
     }
 
-    const qreal side = row.height() - 12;
+    // Compact, the panel may be narrower than a row is tall.
+    const qreal side = m_compact ? qMin(row.height(), row.width()) - 12 : row.height() - 12;
     const QRectF cover(m_compact ? row.center().x() - side / 2 : row.left() + 6 + indent, row.top() + 6, side, side);
     if (folder) {
         QPainterPath tile;

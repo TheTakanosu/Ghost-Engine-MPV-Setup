@@ -82,6 +82,11 @@ constexpr int kTopBar = 50;         // height of the draggable strip: 8 px under
 constexpr int kHeaderTall = 264;    // playlist header, scrolled to the top
 constexpr int kHeaderShort = 92;    // ... and once the songs are scrolled
 constexpr int kCompactWidth = 84;   // the library panel, covers only
+// These at the zoom: at 100% they held the zoomed title and cover, and at
+// 160% the header's text ran up over its top and the covers out of the panel.
+int headerTall() { return qRound(kHeaderTall * theme::zoom()); }
+int headerShort() { return qRound(kHeaderShort * theme::zoom()); }
+int compactWidth() { return qRound(kCompactWidth * theme::zoom()); }
 constexpr int kCompactBelow = 150;  // narrower than this, the panel goes compact
 
 // Segoe Fluent Icons (Windows 11) / MDL2 Assets (10): same code points.
@@ -256,7 +261,7 @@ public:
     // header on scroll shrinks the cover with it.
     QRect coverRect() const
     {
-        const int margin = height() > 160 ? 28 : 14;
+        const int margin = height() > 160 * theme::zoom() ? 28 : 14;
         const int side = height() - 2 * margin;
         return {margin + 4, margin, side, side};
     }
@@ -1077,7 +1082,7 @@ QWidget *MainWindow::buildLibrary()
     connect(m_collapse, &QPushButton::clicked, this, [this] {
         const bool compact = !m_compact;
         const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
-        const int left = compact ? kCompactWidth : 300;
+        const int left = compact ? compactWidth() : qRound(300 * theme::zoom());
         // Room made first: in a small window the page and the now playing
         // view kept the library at its covers-only width, and it was drawn
         // as the full panel squeezed into that.
@@ -1199,7 +1204,7 @@ QWidget *MainWindow::buildLibrary()
     auto *panel = new QWidget;
     panel->setObjectName("libraryPanel");
     panel->setAttribute(Qt::WA_StyledBackground);
-    panel->setMinimumWidth(kCompactWidth);
+    panel->setMinimumWidth(compactWidth());
     // Compact or not follows the panel's real width, judged whenever it
     // changes: read in the constructor it was not laid out yet, looked
     // narrow, and the panel opened compact at full width.
@@ -1656,7 +1661,7 @@ QWidget *MainWindow::buildPlaylistPage()
 {
     auto *header = new PlaylistHeader([this] { return coversFor(m_open); });
     m_playlistCover = header;
-    header->setFixedHeight(kHeaderTall);
+    header->setFixedHeight(headerTall());
     m_playlistKind = new QLabel;
     m_playlistKind->setObjectName("kicker");
     m_playlistName = new QLabel;
@@ -1814,16 +1819,8 @@ QWidget *MainWindow::buildPlaylistPage()
     // Not while the bar's handle is held: the header's height is taken from
     // the list's, so the range under the mouse changed as it moved and the
     // handle jumped rows. It folds or opens once let go.
-    const auto foldHeader = [this] {
-        QScrollBar *bar = m_songs->verticalScrollBar();
-        if (bar->isSliderDown())
-            return;
-        const qreal t = qBound(0.0, bar->value() / 170.0, 1.0);
-        m_playlistCover->setFixedHeight(int(kHeaderTall - t * (kHeaderTall - kHeaderShort)));
-        layoutHeader();
-    };
-    connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, foldHeader);
-    connect(m_songs->verticalScrollBar(), &QScrollBar::sliderReleased, this, foldHeader);
+    connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::foldHeader);
+    connect(m_songs->verticalScrollBar(), &QScrollBar::sliderReleased, this, &MainWindow::foldHeader);
     connect(m_songs, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
         playOpen(m_songs->row(item));
     });
@@ -1905,18 +1902,37 @@ QWidget *MainWindow::buildPlaylistPage()
     return page;
 }
 
+int MainWindow::headerTallNow() const
+{
+    // Zoomed in a short window the header took most of the page and the
+    // songs had no room under it: at most half the page's height.
+    const int page = m_pages ? m_pages->height() : 0;
+    return qMin(headerTall(), qMax(headerShort() + 60, page / 2));
+}
+
+void MainWindow::foldHeader()
+{
+    QScrollBar *bar = m_songs->verticalScrollBar();
+    if (bar->isSliderDown())
+        return;
+    const qreal t = qBound(0.0, bar->value() / 170.0, 1.0);
+    m_playlistCover->setFixedHeight(int(headerTallNow() - t * (headerTallNow() - headerShort())));
+    layoutHeader();
+}
+
 void MainWindow::layoutHeader()
 {
     if (!m_playlistCover || !m_headRow)
         return;   // a resize while the window is still being built
     auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
     const QRect cover = header->coverRect();
-    const bool tall = header->height() > 160;
+    const qreal z = theme::zoom();
+    const bool tall = header->height() > 160 * z;
     m_headRow->setContentsMargins(cover.right() + (tall ? 26 : 16), cover.top(), 28, cover.top());
     m_playlistKind->setVisible(tall);
-    m_playlistInfo->setVisible(header->height() > 120);
+    m_playlistInfo->setVisible(header->height() > 120 * z);
     if (m_open >= 0)
-        m_sharedBy->setVisible(header->height() > 150 && !m_library.playlists()[m_open].shared.isEmpty());
+        m_sharedBy->setVisible(header->height() > 150 * z && !m_library.playlists()[m_open].shared.isEmpty());
     fitTitle();
     header->update();
 }
@@ -1930,7 +1946,7 @@ void MainWindow::fitTitle()
     const QString name = m_library.playlists()[m_open].name;
     const auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
     const int available = header->width() - header->coverRect().right() - 60;
-    const qreal t = qBound(0.0, qreal(kHeaderTall - header->height()) / (kHeaderTall - kHeaderShort), 1.0);
+    const qreal t = qBound(0.0, qreal(headerTallNow() - header->height()) / (headerTallNow() - headerShort()), 1.0);
     qreal size = 40 - t * 20;
     QFont font = m_playlistName->font();
     font.setWeight(QFont::ExtraBold);
@@ -2163,6 +2179,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     if (event->type() == QEvent::MouseButtonPress && videoShowing() &&
         (watched == m_split->handle(1) || watched == m_rightSplit->handle(1)))
         m_pressedStill = grabStill();
+    if (event->type() == QEvent::MouseButtonRelease && watched == m_split->handle(1))
+        QTimer::singleShot(0, this, &MainWindow::snapCompactLibrary);
     // Space plays and pauses on every page. Before, only the video page had
     // it; elsewhere it pressed whatever button had the focus, or nothing
     // after the app was brought up from the taskbar.
@@ -2189,6 +2207,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         const bool compact = m_libraryPanel->width() < compactBelow();
         if (compact != m_compact)
             setLibraryCompact(compact);
+        if (!(QApplication::mouseButtons() & Qt::LeftButton))
+            QTimer::singleShot(0, this, &MainWindow::snapCompactLibrary);
         fitLibraryHead();
     }
     if (m_panel && watched == m_panel->coverArea() && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
@@ -2294,6 +2314,21 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     return QMainWindow::eventFilter(watched, event);
 }
 
+void MainWindow::snapCompactLibrary()
+{
+    // Covers only is covers wide: with the chips' width as the line, a
+    // panel left between the two (zoomed in, or let go there) stood wide
+    // with its covers in the middle of it.
+    if (!m_compact || m_videoFull || !m_split)
+        return;
+    const QList<int> sizes = m_split->sizes();
+    if (sizes.value(0) <= compactWidth() + 4)
+        return;
+    const int total = sizes.value(0) + sizes.value(1);
+    m_split->setSizes({compactWidth(), total - compactWidth()});
+    syncSearchWidth();
+}
+
 void MainWindow::restoreLibraryWidth()
 {
     if (m_videoFull || !m_restoreLibraryUntil.isValid() || m_restoreLibraryUntil.elapsed() > 1000)
@@ -2312,6 +2347,8 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     layoutHeader();
     syncSearchWidth();
     updatePanelVisibility();
+    if (m_playlistCover)
+        foldHeader();
     // The picture held still while the window changes size, as while a
     // panel's edge is dragged: mpv redrawn at every size stood a frame at
     // its old size over the list beside it, and on the way into or out of
@@ -2441,7 +2478,19 @@ void MainWindow::syncSearchWidth()
         return;
     const int panel = m_split->sizes().value(0);
     // Less the Home button (34 px at 100%, as in the style sheet) and its gap.
-    m_search->setFixedWidth(qMax(int(220 * theme::zoom()), panel - qRound(34 * theme::zoom()) - 8));
+    const qreal z = theme::chromeZoom();
+    int width = qMax(int(220 * z), panel - qRound(34 * z) - 8);
+    // And no wider than the bar has room for beside its buttons: zoomed in a
+    // narrow window it ran under Home and the profile picture.
+    if (m_topBar) {
+        const auto *row = m_topBar->layout();
+        int others = row->contentsMargins().left() + row->contentsMargins().right() + 10;
+        for (QWidget *w : std::as_const(m_chromeButtons))
+            if (w != m_search && w->isVisible())
+                others += w->sizeHint().width() + row->spacing();
+        width = qMin(width, m_topBar->width() - others - 8);
+    }
+    m_search->setFixedWidth(qMax(120, width));
 }
 
 void MainWindow::openPlayingList()
@@ -2551,7 +2600,7 @@ void MainWindow::showSharedBy(const QString &tag)
         p.drawPixmap(QRectF(0, 0, 22, 22), avatar, QRectF(avatar.rect()));
     p.end();
     m_sharedAvatar->setPixmap(round);
-    m_sharedBy->setVisible(m_playlistCover->height() > 150);
+    m_sharedBy->setVisible(m_playlistCover->height() > 150 * theme::zoom());
 }
 
 void MainWindow::shareList(int index)
@@ -2657,6 +2706,14 @@ void MainWindow::changeZoom(qreal step)
         v->setFixedHeight(int((kTile + 70 + 26) * theme::zoom()));
     if (m_panel)
         m_panel->setMinimumWidth(qRound(340 * theme::zoom()));
+    m_topBar->setFixedHeight(qRound(kTopBar * theme::chromeZoom()));
+    m_libraryPanel->setMinimumWidth(compactWidth());
+    if (m_compact) {
+        const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
+        m_split->setSizes({compactWidth(), total - compactWidth()});
+    }
+    if (m_playlistCover)
+        foldHeader();
     syncSearchWidth();
     fitLibraryHead();
     layoutHeader();
@@ -2976,7 +3033,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
         m_songs->verticalScrollBar()->setValue(scrolled);
     } else {
         m_songs->scrollToTop();
-        m_playlistCover->setFixedHeight(kHeaderTall);
+        m_playlistCover->setFixedHeight(headerTallNow());
     }
     layoutHeader();
     // Ask for every song's cover now rather than as each row scrolls into
@@ -3691,6 +3748,9 @@ void MainWindow::setVideoGrid(bool grid)
         m_columnsBar->setVisible(!grid);
     }
     fitVideoGrid();
+    // Again once the page is laid out: opened from another page, the list's
+    // width was still the old one and the cards stood at half the width.
+    QTimer::singleShot(0, this, &MainWindow::fitVideoGrid);
 }
 
 void MainWindow::fitVideoGrid()

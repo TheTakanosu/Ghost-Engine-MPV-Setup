@@ -411,5 +411,11 @@ void NowPlayingBar::resizeEvent(QResizeEvent *event)
     int others = m_volumeNumber->width() + 6;
     for (QWidget *w : std::initializer_list<QWidget *>{m_panel, m_lyrics, m_speaker})
         others += w->sizeHint().width() + m_rightBox->layout()->spacing();
+    // As wide as "130%" in its bold font at this zoom: a fixed 46 px cut the
+    // sign off zoomed in.
+    QFont bold = m_volumeNumber->font();
+    bold.setBold(true);
+    m_volumeNumber->setFixedWidth(QFontMetrics(bold).horizontalAdvance(QStringLiteral("130%")) + 12);
+    others += m_volumeNumber->width() - 46;
     m_volume->setFixedWidth(qBound(48, column - others, 120));
 }

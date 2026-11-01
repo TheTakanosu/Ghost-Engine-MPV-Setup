@@ -111,6 +111,9 @@ private:
     void reopenAfter(const QString &path);
     void syncSearchWidth();
     void fitLibraryHead();
+    void foldHeader();
+    int headerTallNow() const;
+    void snapCompactLibrary();
     QPixmap grabStill() const;
     bool panelFits() const;
     int compactBelow() const;

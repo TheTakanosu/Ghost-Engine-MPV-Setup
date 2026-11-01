@@ -13,6 +13,8 @@ void apply(QApplication &app);
 
 // Ctrl + / Ctrl - : every font and row grows together. 1.0 is normal.
 qreal zoom();
+// The top strip's controls follow the zoom only up to 120%.
+qreal chromeZoom();
 void setZoom(QApplication &app, qreal factor);
 
 QColor window();

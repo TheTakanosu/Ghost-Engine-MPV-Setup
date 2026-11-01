@@ -16,6 +16,7 @@ namespace theme {
 namespace { qreal g_zoom = 1.0; }
 
 qreal zoom() { return g_zoom; }
+qreal chromeZoom() { return qMin(g_zoom, 1.2); }
 
 QColor window()       { return {22, 21, 27}; }
 QColor card()         { return {33, 32, 41}; }
@@ -162,7 +163,7 @@ void apply(QApplication &app)
         QComboBox QAbstractItemView::item { padding: 6px 14px; border-radius: 6px; color: rgb(236,236,241); min-height: 20px; }
         QComboBox QAbstractItemView::item:selected, QComboBox QAbstractItemView::item:hover { background: rgb(60,48,84); }
         QComboBoxPrivateContainer { background: transparent; border: none; }
-        QLabel#toast { background: rgb(236,236,241); color: rgb(24,18,34); border-radius: 16px; font-weight: 600; }
+        QLabel#toast { background: rgb(44,38,60); color: rgb(236,236,241); border: 1px solid rgb(176,127,224); border-radius: 16px; font-weight: 600; }
         QPushButton#columnButton, QPushButton#clockHeader {
             background: transparent; border: none; padding: 0; color: rgb(154,152,166); font-size: 9pt; text-align: left;
         }
@@ -264,7 +265,15 @@ void apply(QApplication &app)
     qsizetype last = 0;
     for (auto it = unit.globalMatch(css); it.hasNext();) {
         const auto m = it.next();
-        const qreal v = m.captured(1).toDouble() * g_zoom;
+        // The window's own controls (Home, search, settings, minimise...) stop
+        // growing at 120%: past that they were taller than their strip.
+        const qsizetype open = css.lastIndexOf(QLatin1Char('{'), m.capturedStart());
+        const qsizetype close = css.lastIndexOf(QLatin1Char('}'), open);
+        const QString selector = css.mid(close + 1, open - close - 1);
+        const bool chrome = !selector.contains(QLatin1String("#glyph")) &&
+            (selector.contains(QLatin1String("#pill")) || selector.contains(QLatin1String("#topSearch")) ||
+             selector.contains(QLatin1String("#chrome")) || selector.contains(QLatin1String("#profileButton")));
+        const qreal v = m.captured(1).toDouble() * (chrome ? chromeZoom() : g_zoom);
         // A radius rounds down, the box it is half of rounds to nearest: two
         // halves rounded up were wider than the box at some zooms (1.4: 24 + 24
         // over 47), and the button was drawn square.
