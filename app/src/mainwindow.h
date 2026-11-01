@@ -110,6 +110,8 @@ private:
     void deletePlaylist(int index);
     void reopenAfter(const QString &path);
     void syncSearchWidth();
+    void fitLibraryHead();
+    QPixmap grabStill() const;
     void setLibraryCompact(bool compact);
     // `order`: the entries in the order to play them, when the list is shown
     // sorted; empty plays the file's order.
@@ -272,6 +274,8 @@ private:
     // drag (its window shares this window's input queue).
     void startSurfaceDrag();
     bool m_surfaceDrag = false;
+    QPixmap m_pressedStill;
+    QRect m_normalPlace;   // the window's normal size while full screen hides it   // the picture as it was when a panel's edge was pressed
     QTimer m_surfaceDragEnd;
     bool m_placeWithPage = false;
     void schedulePlace();

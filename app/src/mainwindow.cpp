@@ -9,6 +9,7 @@
 #include "theme.h"
 #include "tiles.h"
 
+#include <utility>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCloseEvent>
@@ -489,6 +490,7 @@ MainWindow::MainWindow()
     m_rightSplit->addWidget(m_panel);
     m_rightSplit->setStretchFactor(0, 1);
     m_rightSplit->setStretchFactor(1, 0);
+    m_rightSplit->handle(1)->installEventFilter(this);
     m_rightSplit->setHandleWidth(8);
     m_rightSplit->setChildrenCollapsible(false);
     m_rightSplit->setSizes({940, 340});
@@ -538,6 +540,7 @@ MainWindow::MainWindow()
     m_split->setHandleWidth(8);
     m_split->setChildrenCollapsible(false);
     m_split->setSizes({300, 940});
+    m_split->handle(1)->installEventFilter(this);
     connect(m_split, &QSplitter::splitterMoved, this, [this] {
         setLibraryCompact(m_split->sizes().value(0) < kCompactBelow);
         syncSearchWidth();
@@ -1061,6 +1064,9 @@ QWidget *MainWindow::buildLibrary()
 {
     m_libraryTitle = new QLabel("Your Library");
     m_libraryTitle->setObjectName("panelTitle");
+    // Cut short with "..." rather than running under the buttons beside it.
+    m_libraryTitle->setMinimumWidth(0);
+    m_libraryTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_collapse = glyphButton(kIconCollapse, "Collapse library");
     connect(m_collapse, &QPushButton::clicked, this, [this] {
         const bool compact = !m_compact;
@@ -1790,11 +1796,19 @@ QWidget *MainWindow::buildPlaylistPage()
     };
     // Scrolling the songs folds the header into a slim bar, as Spotify does:
     // the cover and title shrink over the first 170 px of scrolling.
-    connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
-        const qreal t = qBound(0.0, value / 170.0, 1.0);
+    // Not while the bar's handle is held: the header's height is taken from
+    // the list's, so the range under the mouse changed as it moved and the
+    // handle jumped rows. It folds or opens once let go.
+    const auto foldHeader = [this] {
+        QScrollBar *bar = m_songs->verticalScrollBar();
+        if (bar->isSliderDown())
+            return;
+        const qreal t = qBound(0.0, bar->value() / 170.0, 1.0);
         m_playlistCover->setFixedHeight(int(kHeaderTall - t * (kHeaderTall - kHeaderShort)));
         layoutHeader();
-    });
+    };
+    connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, foldHeader);
+    connect(m_songs->verticalScrollBar(), &QScrollBar::sliderReleased, this, foldHeader);
     connect(m_songs, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
         playOpen(m_songs->row(item));
     });
@@ -2131,6 +2145,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     if (dragOrResize(watched, event))
         return true;
+    if (event->type() == QEvent::MouseButtonPress && videoShowing() &&
+        (watched == m_split->handle(1) || watched == m_rightSplit->handle(1)))
+        m_pressedStill = grabStill();
     // Space plays and pauses on every page. Before, only the video page had
     // it; elsewhere it pressed whatever button had the focus, or nothing
     // after the app was brought up from the taskbar.
@@ -2156,6 +2173,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         const bool compact = m_libraryPanel->width() < kCompactBelow;
         if (compact != m_compact)
             setLibraryCompact(compact);
+        fitLibraryHead();
     }
     if (m_panel && watched == m_panel->coverArea() && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
         schedulePlace();
@@ -2277,6 +2295,16 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     restoreLibraryWidth();
     layoutHeader();
     syncSearchWidth();
+    // The picture held still while the window changes size, as while a
+    // panel's edge is dragged: mpv redrawn at every size stood a frame at
+    // its old size over the list beside it, and on the way into or out of
+    // full screen showed in its new place over the old picture, or black
+    // (filmed). It comes back once the size has settled.
+    if (videoShowing() && !isMinimized()) {
+        startSurfaceDrag();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        placeSurface();
+    }
     schedulePlace();
 }
 
@@ -2354,13 +2382,39 @@ void MainWindow::moveEvent(QMoveEvent *event)
     schedulePlace();   // the windows over the picture follow
 }
 
+void MainWindow::fitLibraryHead()
+{
+    // Zoomed in, or with the panel narrow, the chips with their counts and
+    // the title were wider than the panel and ran over each other.
+    if (!m_chips || !m_libraryPanel)
+        return;
+    const QMargins m = m_libraryPanel->layout()->contentsMargins();
+    const int room = m_libraryPanel->width() - m.left() - m.right();
+    static const char *names[] = {"All", "Songs", "Videos"};
+    for (bool counts : {true, false}) {
+        for (int i = 0; i < 3; ++i) {
+            QAbstractButton *chip = m_chips->button(i);
+            const QVariant count = chip->property("count");
+            chip->setText(counts && count.isValid() ? QStringLiteral("%1 %2").arg(names[i]).arg(count.toInt())
+                                                    : QString::fromLatin1(names[i]));
+        }
+        if (m_chipRow->layout()->sizeHint().width() <= room)
+            break;
+    }
+    int buttons = 0;
+    for (QWidget *w : std::initializer_list<QWidget *>{m_collapse, m_viewToggle, m_addButton})
+        buttons += w->sizeHint().width() + m_libraryHead->layout()->spacing();
+    m_libraryTitle->setText(m_libraryTitle->fontMetrics().elidedText("Your Library", Qt::ElideRight, qMax(0, room - buttons)));
+}
+
 void MainWindow::syncSearchWidth()
 {
     // The search box spans the library panel below it, edge to edge.
     if (!m_search || !m_split)
         return;
     const int panel = m_split->sizes().value(0);
-    m_search->setFixedWidth(qMax(220, panel - 42));   // less the Home button and its gap
+    // Less the Home button (34 px at 100%, as in the style sheet) and its gap.
+    m_search->setFixedWidth(qMax(int(220 * theme::zoom()), panel - qRound(34 * theme::zoom()) - 8));
 }
 
 void MainWindow::openPlayingList()
@@ -2574,6 +2628,10 @@ void MainWindow::changeZoom(qreal step)
         v->doItemsLayout();
     for (QListWidget *v : {m_recentAdded, m_recentPlayed, m_topLists})
         v->setFixedHeight(int((kTile + 70 + 26) * theme::zoom()));
+    if (m_panel)
+        m_panel->setMinimumWidth(qRound(340 * theme::zoom()));
+    syncSearchWidth();
+    fitLibraryHead();
     layoutHeader();
 }
 
@@ -3274,9 +3332,10 @@ void MainWindow::refill()
         items += p.count;
         fresh += p.modified > weekAgo ? 1 : 0;
     }
-    m_chips->button(AllLists)->setText(QStringLiteral("All %1").arg(all.size()));
-    m_chips->button(Songs)->setText(QStringLiteral("Songs %1").arg(songLists));
-    m_chips->button(Videos)->setText(QStringLiteral("Videos %1").arg(all.size() - songLists));
+    m_chips->button(AllLists)->setProperty("count", int(all.size()));
+    m_chips->button(Songs)->setProperty("count", songLists);
+    m_chips->button(Videos)->setProperty("count", int(all.size()) - songLists);
+    fitLibraryHead();
 
     // library panel
     const QString needle = m_search->text().trimmed();
@@ -3595,7 +3654,11 @@ void MainWindow::setVideoGrid(bool grid)
         m_songs->setMovement(QListView::Static);
         m_songs->setFlow(grid ? QListView::LeftToRight : QListView::TopToBottom);
         m_songs->setWrapping(grid);
-        m_songs->setResizeMode(grid ? QListView::Adjust : QListView::Fixed);
+        // Laid out again by fitVideoGrid on every resize, at once: the view's
+        // own Adjust waits 100 ms, and while a panel's edge was dragged the
+        // cards stood in the old flow (two columns where three now fit),
+        // jumping back and forth (filmed).
+        m_songs->setResizeMode(QListView::Fixed);
         if (!grid)
             m_songs->setGridSize(QSize());
         m_columnsBar->setVisible(!grid);
@@ -3608,11 +3671,15 @@ void MainWindow::fitVideoGrid()
     // As many columns as fit at 280 px or more, sharing the width.
     if (!m_videoGrid)
         return;
-    const int width = m_songs->viewport()->width() - 4;
+    // 8 px to spare: with 4 the view wrapped the last column whenever the
+    // cards came to within 4 px of its edge (measured: 3 x 321 in 967 went
+    // to two columns), and dragging an edge flicked between the two.
+    const int width = m_songs->viewport()->width() - 8;
     const int columns = qMax(1, width / int(280 * theme::zoom()));
     m_cardDelegate->setCardWidth(width / columns);
     if (m_songs->gridSize() != m_cardDelegate->cardSize())
         m_songs->setGridSize(m_cardDelegate->cardSize());
+    m_songs->doItemsLayout();
 }
 
 bool MainWindow::videoShowing() const
@@ -3647,13 +3714,12 @@ void MainWindow::startSurfaceDrag()
         // The frame on screen right now, held still while the edge moves (as
         // if paused for a moment); the thumbnail when the picture is partly
         // scrolled away and no whole frame is there to take.
-        QPixmap still;
-        NativeSurface *surface = m_videoPage->surface();
-        if (surface && !m_videoArea.isEmpty() && m_videoArea.size() == surface->geometry().size())
-            if (QScreen *screen = QGuiApplication::screenAt(m_videoArea.center()))
-                still = screen->grabWindow(0, m_videoArea.x() - screen->geometry().x(),
-                                           m_videoArea.y() - screen->geometry().y(),
-                                           m_videoArea.width(), m_videoArea.height());
+        // Taken when the edge was pressed if it was: by the first move the
+        // page had already been drawn moved over part of the picture, and a
+        // fast drag held a frame with the picture twice in it.
+        QPixmap still = std::exchange(m_pressedStill, QPixmap());
+        if (still.isNull())
+            still = grabStill();
         if (still.isNull()) {
             QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
             if (id.isEmpty())
@@ -3665,6 +3731,18 @@ void MainWindow::startSurfaceDrag()
             m_panel->setCover(still);
     }
     m_surfaceDragEnd.start();
+}
+
+QPixmap MainWindow::grabStill() const
+{
+    NativeSurface *surface = m_videoPage->surface();
+    if (!surface || m_videoArea.isEmpty() || m_videoArea.size() != surface->geometry().size())
+        return {};
+    QScreen *screen = QGuiApplication::screenAt(m_videoArea.center());
+    if (!screen)
+        return {};
+    return screen->grabWindow(0, m_videoArea.x() - screen->geometry().x(), m_videoArea.y() - screen->geometry().y(),
+                              m_videoArea.width(), m_videoArea.height());
 }
 
 void MainWindow::schedulePlace()
@@ -4142,6 +4220,7 @@ void MainWindow::setVideoFullScreen(bool full)
     if (full == m_videoFull)
         return;
     m_videoFull = full;
+    startSurfaceDrag();   // the frame on screen now, before anything moves
     // The library's width is kept: hidden, the panel reads as narrowed and
     // would come back in its covers-only form.
     if (full) {
@@ -4180,11 +4259,37 @@ void MainWindow::setVideoFullScreen(bool full)
     DwmSetWindowAttribute(hwnd, 34, &border, sizeof(border));
     if (full) {
         m_wasMaximized = isMaximized();
+        if (m_wasMaximized) {
+            // On the way out Qt puts the window at its normal size and only
+            // then maximises it: two frames of a small window with the
+            // desktop around it (filmed). Its normal size is made the whole
+            // work area meanwhile, and the real one put back after.
+            WINDOWPLACEMENT wp{sizeof(wp)};
+            MONITORINFO screen{sizeof(screen)}, primary{sizeof(primary)};
+            if (GetWindowPlacement(hwnd, &wp) &&
+                GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &screen) &&
+                GetMonitorInfo(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &primary)) {
+                m_normalPlace = QRect(QPoint(wp.rcNormalPosition.left, wp.rcNormalPosition.top),
+                                      QPoint(wp.rcNormalPosition.right - 1, wp.rcNormalPosition.bottom - 1));
+                // Placements are in work area coordinates (the primary's).
+                OffsetRect(&screen.rcWork, -primary.rcWork.left, -primary.rcWork.top);
+                wp.rcNormalPosition = screen.rcWork;
+                SetWindowPlacement(hwnd, &wp);
+            }
+        }
         showFullScreen();
         m_videoPage->setFocus();
     } else if (m_wasMaximized) {
-        showNormal();
-        ShowWindow(reinterpret_cast<HWND>(winId()), SW_MAXIMIZE);
+        // Straight back to maximised: through showNormal() the window stood
+        // two frames at its normal size, the desktop showing around it
+        // (filmed).
+        setWindowState(Qt::WindowMaximized);
+        WINDOWPLACEMENT wp{sizeof(wp)};
+        if (m_normalPlace.isValid() && GetWindowPlacement(hwnd, &wp)) {
+            wp.rcNormalPosition = {m_normalPlace.left(), m_normalPlace.top(), m_normalPlace.right() + 1, m_normalPlace.bottom() + 1};
+            SetWindowPlacement(hwnd, &wp);   // still maximised: nothing moves
+        }
+        m_normalPlace = QRect();
     } else {
         showNormal();
     }

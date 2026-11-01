@@ -1,4 +1,5 @@
 #include "nowplayingpanel.h"
+#include "theme.h"
 
 #include <QFrame>
 #include <QGridLayout>
@@ -276,7 +277,7 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     setAttribute(Qt::WA_StyledBackground);
     // Wide enough for the two video buttons side by side, which were cut
     // off at the right when the panel was dragged narrower.
-    setMinimumWidth(340);
+    setMinimumWidth(qRound(340 * theme::zoom()));
     setStyleSheet(
         "QFrame#npCard { background: rgb(36,34,44); border-radius: 10px; }"
         "QLabel { background: transparent; }"

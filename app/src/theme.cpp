@@ -265,9 +265,15 @@ void apply(QApplication &app)
     for (auto it = unit.globalMatch(css); it.hasNext();) {
         const auto m = it.next();
         const qreal v = m.captured(1).toDouble() * g_zoom;
+        // A radius rounds down, the box it is half of rounds to nearest: two
+        // halves rounded up were wider than the box at some zooms (1.4: 24 + 24
+        // over 47), and the button was drawn square.
+        const qsizetype from = qMax(css.lastIndexOf(QLatin1Char(';'), m.capturedStart()),
+                                    css.lastIndexOf(QLatin1Char('{'), m.capturedStart()));
+        const bool radius = css.mid(from, m.capturedStart() - from).contains(QLatin1String("radius"));
         const QString n = m.captured(2) == QLatin1String("pt")
             ? QString::number(v, 'f', 1)
-            : QString::number(v > 0 ? qMax(1, qRound(v)) : 0);
+            : QString::number(v <= 0 ? 0 : radius ? qMax(1, int(v)) : qMax(1, qRound(v)));
         scaled += css.mid(last, m.capturedStart() - last) + n + m.captured(2);
         last = m.capturedEnd();
     }
@@ -276,7 +282,7 @@ void apply(QApplication &app)
 
 void setZoom(QApplication &app, qreal factor)
 {
-    g_zoom = qBound(0.7, factor, 1.6);
+    g_zoom = qBound(0.7, qRound(factor * 10) / 10.0, 1.6);   // tenths: 0.1 steps added up drift
     apply(app);
 }
 
