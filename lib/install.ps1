@@ -92,7 +92,13 @@ function Install-Python([string]$Temp) {
     }
     Say "signature verified" "Green"
     Say "installing Python (a minute or so) ..."
-    $p = Start-Process $setup -Wait -PassThru -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=1", "Include_test=0"
+    # Only what the agent needs: the docs, headers and Tcl/Tk were each a
+    # package of their own, two minutes apiece on a slow machine (measured in
+    # Windows Sandbox). The py launcher goes in per user too: for all users
+    # it wants an administrator.
+    $p = Start-Process $setup -Wait -PassThru -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1",
+        "Include_launcher=1", "InstallLauncherAllUsers=0", "Include_test=0", "Include_doc=0",
+        "Include_dev=0", "Include_tcltk=0"
     if ($p.ExitCode -ne 0) {
         Say "The Python installer stopped with code $($p.ExitCode)." "Red"
         return $null
