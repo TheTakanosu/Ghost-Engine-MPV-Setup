@@ -8,7 +8,10 @@
 #  This script ships no binaries. mpv, yt-dlp and node are downloaded from the
 #  projects that publish them, and yt-dlp is checked against the SHA-256 sum it
 #  publishes alongside the release. Nobody has to take our word for what is in
-#  an .exe we handed them.
+#  an .exe we handed them. The one program of our own, the Ghost Engine app,
+#  is built by GitHub from this repository's source when a version is tagged
+#  (.github/workflows/release.yml, its log public) and checked against the
+#  SHA-256 GitHub records for the file.
 #
 #  Nothing beyond Windows itself is required: `curl`/`Invoke-WebRequest` to
 #  download, `tar.exe` (bsdtar, shipped since Windows 10 1803) to unpack the
@@ -22,6 +25,10 @@ param(
     [string]$InstallDir = "C:\mpv",
     [switch]$SkipNode,
     [switch]$SkipRichPresence,
+    [switch]$SkipApp,
+    # A GhostEngine-win64.zip on disk instead of the release's: for trying a
+    # build before its release is published (a draft's files need a login).
+    [string]$AppZip,
     [switch]$Unattended
 )
 
@@ -33,6 +40,7 @@ $ProgressPreference = "SilentlyContinue"
 
 $MPV_RELEASES  = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases?per_page=1"
 $YTDLP_RELEASE = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+$APP_RELEASES  = "https://api.github.com/repos/TheTakanosu/Ghost-Engine-MPV-Setup/releases?per_page=20"
 $NODE_INDEX    = "https://nodejs.org/dist/index.json"
 $DISCORD       = "https://discord.gg/w6cR8JU3qP"
 $BOT_INVITE    = "https://discord.com/oauth2/authorize?client_id=1530546215303909518&permissions=117760&scope=bot"
@@ -150,6 +158,64 @@ function Fetch([string]$Url, [string]$Path, [string]$Label) {
     Say "  $mb MB" "DarkGray"
 }
 
+# The app is built by GitHub from this repository's source when a version is
+# tagged (.github/workflows/release.yml) and attached to that release; the
+# zip is checked against the SHA-256 GitHub records for it. The release this
+# setup came from is the one installed, so the app and the scripts match.
+function Install-App([string]$Dir, [string]$Temp, [string]$Version) {
+    if ($AppZip) {
+        $zip = $AppZip
+        Say "from $AppZip (not checked: a local file you chose)" "Yellow"
+    } else {
+        $releases = @(Get-Json $APP_RELEASES | Where-Object { -not $_.draft })
+        $release = $releases | Where-Object { ($_.tag_name -replace '^v', '') -eq $Version } | Select-Object -First 1
+        if (-not $release) { $release = $releases | Where-Object { -not $_.prerelease } | Select-Object -First 1 }
+        $asset = if ($release) { $release.assets | Where-Object { $_.name -eq "GhostEngine-win64.zip" } | Select-Object -First 1 }
+        if (-not $asset) { throw "No release has GhostEngine-win64.zip yet." }
+
+        Say "release $($release.tag_name)" "DarkGray"
+        $zip = Join-Path $Temp $asset.name
+        Fetch $asset.browser_download_url $zip "the app"
+        $expected = "$($asset.digest)" -replace '^sha256:', ''
+        $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+        if (-not $expected -or $actual -ne $expected.ToLower()) {
+            throw "GhostEngine-win64.zip does not match the checksum GitHub recorded.`n       expected $expected`n       got      $actual"
+        }
+        Say "checksum verified against GitHub's SHA-256" "Green"
+    }
+
+    # An open copy locks its exe and DLLs. Closing it ends what it plays,
+    # so it is asked rather than done.
+    $open = @(Get-Process GhostEngine -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and (Split-Path $_.Path -Parent) -eq $Dir })
+    if ($open.Count) {
+        if (-not (Ask "Ghost Engine is open. Close it to install the new one?" $true)) {
+            Say "the app was left as it is" "Yellow"
+            return
+        }
+        $open | Stop-Process -Force
+        Start-Sleep -Seconds 1
+    }
+    $unpacked = Join-Path $Temp "app"
+    Expand-Archive $zip $unpacked -Force
+    if (-not (Test-Path (Join-Path $unpacked "GhostEngine.exe"))) { throw "the zip has no GhostEngine.exe" }
+    # Beside mpv.exe, where the app looks for the player.
+    Copy-Item (Join-Path $unpacked "*") $Dir -Recurse -Force
+    Say "app installed" "Green"
+
+    $exe = Join-Path $Dir "GhostEngine.exe"
+    $shell = New-Object -ComObject WScript.Shell
+    $places = @([Environment]::GetFolderPath("Programs"))
+    if (Ask "Put a Ghost Engine shortcut on the desktop too?" $true) { $places += [Environment]::GetFolderPath("Desktop") }
+    foreach ($place in $places) {
+        $link = $shell.CreateShortcut((Join-Path $place "Ghost Engine.lnk"))
+        $link.TargetPath = $exe
+        $link.WorkingDirectory = $Dir
+        $link.Save()
+    }
+    Say "shortcut in the Start menu$(if ($places.Count -gt 1) { ' and on the desktop' })" "DarkGray"
+}
+
 Write-Host ""
 Write-Host "  ==============================================" -ForegroundColor Magenta
 Write-Host "   Ghost Engine MPV Setup" -ForegroundColor Magenta
@@ -186,7 +252,7 @@ New-Item -ItemType Directory -Force $temp | Out-Null
 
 try {
     # -- mpv ------------------------------------------------------------------
-    Step "1/5  mpv"
+    Step "1/6  mpv"
     $existingMpv = Join-Path $InstallDir "mpv.exe"
     if (Test-Path $existingMpv) {
         # An old build is worth replacing: a December 2025 one lost its
@@ -228,7 +294,7 @@ try {
     }
 
     # -- yt-dlp ---------------------------------------------------------------
-    Step "2/5  yt-dlp  (this is what actually resolves YouTube links)"
+    Step "2/6  yt-dlp  (this is what actually resolves YouTube links)"
     $ytRelease = Get-Json $YTDLP_RELEASE
     Say "release $($ytRelease.tag_name)" "DarkGray"
     # The folder build, not the single yt-dlp.exe. The single file unpacks ~140
@@ -268,7 +334,7 @@ try {
     Say "yt-dlp installed" "Green"
 
     # -- node -----------------------------------------------------------------
-    Step "3/5  node  (optional)"
+    Step "3/6  node  (optional)"
     Say "YouTube increasingly asks the player to run JavaScript. Without node," "DarkGray"
     Say "some videos fail to resolve." "DarkGray"
     # yt-dlp finds node beside it or on PATH, so either one already there
@@ -293,7 +359,7 @@ try {
     }
 
     # -- the Ghost Engine layer ----------------------------------------------
-    Step "4/5  Ghost Engine configuration"
+    Step "4/6  Ghost Engine configuration"
     # mpv.conf goes through the merge, so running the installer again keeps
     # what someone changed in it (volume=20 stays 20).
     Copy-Item (Join-Path $payload "*") $InstallDir -Recurse -Force -Exclude "mpv.conf"
@@ -303,8 +369,23 @@ try {
     Say "mpv.conf, scripts\*.lua, ghost_rpc.py" "DarkGray"
     Say "configuration installed" "Green"
 
+    # -- the app --------------------------------------------------------------
+    Step "5/6  Ghost Engine app  (your library, lyrics, videos)"
+    if ($SkipApp) {
+        Say "skipped" "DarkGray"
+    } else {
+        $version = (Get-Content (Join-Path $payload "VERSION") -Raw).Trim()
+        try {
+            Install-App $InstallDir $temp $version
+        } catch {
+            # The player and the scripts work without it; say why and go on.
+            Say "The app was not installed: $($_.Exception.Message)" "Yellow"
+            Say "mpv still plays .m3u files on its own; run install.bat again later." "Yellow"
+        }
+    }
+
     # -- Rich Presence --------------------------------------------------------
-    Step "5/5  Discord Rich Presence  (optional)"
+    Step "6/6  Discord Rich Presence  (optional)"
     Say "mpv starts the presence agent itself; it needs one Python package." "DarkGray"
     if (-not $SkipRichPresence -and (Ask "Set up Rich Presence?" $true)) {
         $py = Find-Python
@@ -351,9 +432,14 @@ Write-Host "  ==============================================" -ForegroundColor G
 Write-Host "   Done - $InstallDir  ($size MB)" -ForegroundColor Green
 Write-Host "  ==============================================" -ForegroundColor Green
 Write-Host ""
-Say "Drag a .m3u onto mpv.exe, or double-click one if you registered the"
-Say "file types. An audio export switches itself to audio-only and opens a"
-Say "window you can seek and change the volume in."
+if (Test-Path (Join-Path $InstallDir "GhostEngine.exe")) {
+    Say "Open Ghost Engine from the Start menu. Playlists the bot gives you"
+    Say "(.m3u files) go into its library when you open them with it."
+} else {
+    Say "Drag a .m3u onto mpv.exe, or double-click one if you registered the"
+    Say "file types. An audio export switches itself to audio-only and opens a"
+    Say "window you can seek and change the volume in."
+}
 Write-Host ""
 Say "Add the bot to your server:" "Cyan"
 Say "  $BOT_INVITE" "White"

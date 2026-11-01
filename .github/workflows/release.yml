@@ -1,0 +1,94 @@
+name: release
+
+# A version tag (v1.3.0, v1.3.1-beta.1) builds the app from this source and
+# attaches it, with the setup zip, to a draft release. Nothing built on a
+# personal machine is shipped: the steps below, and the log of the run that
+# made each file, are public. The draft is published by hand once checked.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag matches mpv/VERSION
+        # update.ps1 compares the installed VERSION with the release tags, so
+        # a release whose zip says another version would be offered forever.
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $file = (Get-Content mpv/VERSION -Raw).Trim()
+          if ($tag -ne $file) { Write-Host "::error::the tag is $tag but mpv/VERSION says $file"; exit 1 }
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.11.0'
+          arch: win64_msvc2022_64
+          cache: true
+
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Build the app
+        shell: pwsh
+        run: |
+          cmake -S app -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE) { exit 1 }
+          cmake --build build
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          # The app: the exe, its .pdb (the crash log names functions with
+          # it), Qt beside it, and the MSVC runtime too - a PC that never had
+          # the Visual C++ redistributable would not start it otherwise.
+          $app = "dist/app"
+          New-Item -ItemType Directory -Force $app | Out-Null
+          Copy-Item build/GhostEngine.exe, build/GhostEngine.pdb $app
+          windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime "$app/GhostEngine.exe"
+          if ($LASTEXITCODE) { exit 1 }
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          if (-not $crt) { Write-Host "::error::no MSVC runtime under $env:VCToolsRedistDir"; exit 1 }
+          Copy-Item "$($crt.FullName)\*.dll" $app
+          Compress-Archive "$app/*" dist/GhostEngine-win64.zip
+
+          # The setup, laid out as every release before this one.
+          $setup = "dist/setup"
+          New-Item -ItemType Directory -Force $setup | Out-Null
+          Copy-Item LICENSE, README.md, install.bat, uninstall.bat $setup
+          Copy-Item lib, mpv, vencord-plugin $setup -Recurse
+          Compress-Archive "$setup/*" dist/Ghost-Engine-MPV-Setup.zip
+
+          Get-FileHash dist/*.zip -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content dist/SHA256SUMS -Encoding ascii
+          Get-Content dist/SHA256SUMS
+
+      - name: Keep the files with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghost-engine
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS
+
+      - name: Attach to a draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/GhostEngine-win64.zip
+            dist/Ghost-Engine-MPV-Setup.zip
+            dist/SHA256SUMS

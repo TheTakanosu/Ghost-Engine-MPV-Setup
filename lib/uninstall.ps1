@@ -29,8 +29,25 @@ Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" |
     Where-Object { $_.CommandLine -like "*ghost_rpc*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
+Get-Process GhostEngine -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and (Split-Path $_.Path -Parent) -eq $InstallDir } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+# The shortcuts install.bat made, by name, only where they point into the folder.
+foreach ($place in [Environment]::GetFolderPath("Programs"), [Environment]::GetFolderPath("Desktop")) {
+    $lnk = Join-Path $place "Ghost Engine.lnk"
+    if ((Test-Path $lnk) -and (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath -like "$InstallDir*") {
+        Remove-Item $lnk -Force
+        Say "removed $lnk" "DarkGray"
+    }
+}
+
 $mpv = Join-Path $InstallDir "mpv.exe"
-if (Test-Path $mpv) { & $mpv --unregister 2>$null; Say "file associations removed" "DarkGray" }
+# Waited for: mpv.exe is a windowed program, so calling it straight returned
+# at once and the folder was then deleted under it ("access denied").
+if (Test-Path $mpv) {
+    Start-Process $mpv -ArgumentList "--unregister" -Wait -WindowStyle Hidden
+    Say "file associations removed" "DarkGray"
+}
 
 Remove-Item $InstallDir -Recurse -Force
 Say "removed $InstallDir" "Green"

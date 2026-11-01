@@ -142,6 +142,43 @@ if ($target) {
             # for and what the next check compares against.
             [System.IO.File]::WriteAllText($versionFile, ($target.Tag -replace '^v', '') + "`n")
             Say "Ghost Engine updated to $($target.Tag). Reopen mpv to use it." "Green"
+
+            # The app, built by GitHub for the same tag, where there is one
+            # (releases before 1.3.0 had none) and the app is installed here.
+            $appAsset = $target.Release.assets | Where-Object { $_.name -eq "GhostEngine-win64.zip" } | Select-Object -First 1
+            $appExe = Join-Path $PSScriptRoot "GhostEngine.exe"
+            if ($appAsset -and ((Test-Path $appExe) -or (Ask "Install the Ghost Engine app as well?" $true))) {
+                $appZip = Temp-Path ".zip"
+                $appDir = Temp-Path ""
+                try {
+                    Say "downloading the app ..."
+                    Invoke-WebRequest -Uri $appAsset.browser_download_url -OutFile $appZip -UseBasicParsing
+                    $expected = "$($appAsset.digest)" -replace '^sha256:', ''
+                    if (-not $expected -or (Get-FileHash $appZip -Algorithm SHA256).Hash.ToLower() -ne $expected.ToLower()) {
+                        throw "checksum mismatch"
+                    }
+                    $open = @(Get-Process GhostEngine -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Path -and (Split-Path $_.Path -Parent) -eq $PSScriptRoot })
+                    if ($open.Count) {
+                        if (-not (Ask "Ghost Engine is open. Close it to update it?" $true)) { throw "it is open" }
+                        $open | Stop-Process -Force
+                        Start-Sleep -Seconds 1
+                    }
+                    Expand-Archive $appZip $appDir -Force
+                    if (-not (Test-Path (Join-Path $appDir "GhostEngine.exe"))) { throw "the zip has no GhostEngine.exe" }
+                    Copy-Item (Join-Path $appDir "*") $PSScriptRoot -Recurse -Force
+                    $menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Ghost Engine.lnk"
+                    if (-not (Test-Path $menu)) {
+                        $link = (New-Object -ComObject WScript.Shell).CreateShortcut($menu)
+                        $link.TargetPath = $appExe; $link.WorkingDirectory = $PSScriptRoot; $link.Save()
+                    }
+                    Say "app updated" "Green"
+                } catch {
+                    Say "The app was not updated: $($_.Exception.Message)" "Red"
+                } finally {
+                    Remove-Item $appZip, $appDir -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
         } catch {
             Say "Ghost Engine was not updated: $($_.Exception.Message)" "Red"
         } finally {
