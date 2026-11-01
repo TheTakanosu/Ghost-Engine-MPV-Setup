@@ -279,9 +279,15 @@ void apply(QApplication &app)
         // over 47), and the button was drawn square.
         const qsizetype from = qMax(css.lastIndexOf(QLatin1Char(';'), m.capturedStart()),
                                     css.lastIndexOf(QLatin1Char('{'), m.capturedStart()));
-        const bool radius = css.mid(from, m.capturedStart() - from).contains(QLatin1String("radius"));
+        const QString property = css.mid(from, m.capturedStart() - from);
+        const bool radius = property.contains(QLatin1String("radius"));
+        // Border lines stay 1 px: at 2 px Qt left a hairline between a round
+        // border and the background inside it, and the light palette showed
+        // through around search boxes and chips at 160%.
+        const bool line = !radius && property.contains(QLatin1String("border"));
         const QString n = m.captured(2) == QLatin1String("pt")
             ? QString::number(v, 'f', 1)
+            : line ? m.captured(1)
             : QString::number(v <= 0 ? 0 : radius ? qMax(1, int(v)) : qMax(1, qRound(v)));
         scaled += css.mid(last, m.capturedStart() - last) + n + m.captured(2);
         last = m.capturedEnd();

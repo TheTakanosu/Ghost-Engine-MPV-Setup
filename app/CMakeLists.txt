@@ -32,5 +32,10 @@ qt_add_executable(GhostEngine WIN32
     src/profile.h src/profile.cpp
 )
 qt_add_resources(GhostEngine "assets" PREFIX "/" FILES assets/chevron-down.png)
-target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network dwmapi)
+target_link_libraries(GhostEngine PRIVATE Qt6::Widgets Qt6::Network dwmapi dbghelp)
+# A .pdb with the release build, so a crash log names the function and line.
+if(MSVC)
+    target_compile_options(GhostEngine PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_link_options(GhostEngine PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+endif()
 target_compile_definitions(GhostEngine PRIVATE GHOST_VERSION="${PROJECT_VERSION}")

@@ -6,6 +6,9 @@
 #include <QLocalSocket>
 
 #include <windows.h>
+#include <dbghelp.h>
+#include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -24,10 +27,60 @@ bool handOver(const QStringList &files)
     return true;
 }
 
+// A crash leaves its stack in %TEMP%\GhostEngine-crash.txt: module, offset
+// and, where the .pdb is beside the exe, function and line. One at zoom
+// could not be made to happen again on purpose; this is what it leaves next
+// time. Plain C here, nothing of Qt: the program is already broken.
+LONG WINAPI writeCrash(EXCEPTION_POINTERS *ep)
+{
+    char path[MAX_PATH];
+    GetTempPathA(MAX_PATH, path);
+    strcat_s(path, "GhostEngine-crash.txt");
+    FILE *f = nullptr;
+    if (fopen_s(&f, path, "a") != 0 || !f)
+        return EXCEPTION_CONTINUE_SEARCH;
+    SYSTEMTIME now;
+    GetLocalTime(&now);
+    fprintf(f, "\n%04d-%02d-%02d %02d:%02d:%02d  " GHOST_VERSION "  code %08lx\n", now.wYear, now.wMonth, now.wDay,
+            now.wHour, now.wMinute, now.wSecond, ep->ExceptionRecord->ExceptionCode);
+    const HANDLE process = GetCurrentProcess();
+    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+    SymInitialize(process, nullptr, TRUE);
+    CONTEXT context = *ep->ContextRecord;
+    STACKFRAME64 frame{};
+    frame.AddrPC = {context.Rip, 0, AddrModeFlat};
+    frame.AddrFrame = {context.Rbp, 0, AddrModeFlat};
+    frame.AddrStack = {context.Rsp, 0, AddrModeFlat};
+    for (int i = 0; i < 48 && StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, GetCurrentThread(), &frame, &context, nullptr,
+                                          SymFunctionTableAccess64, SymGetModuleBase64, nullptr); ++i) {
+        const DWORD64 at = frame.AddrPC.Offset;
+        const DWORD64 base = SymGetModuleBase64(process, at);
+        char module[MAX_PATH] = "?";
+        if (base)
+            GetModuleFileNameA(reinterpret_cast<HMODULE>(base), module, MAX_PATH);
+        const char *name = strrchr(module, '\\') ? strrchr(module, '\\') + 1 : module;
+        char buffer[sizeof(SYMBOL_INFO) + 256] = {};
+        auto *symbol = reinterpret_cast<SYMBOL_INFO *>(buffer);
+        symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+        symbol->MaxNameLen = 255;
+        DWORD64 into = 0;
+        IMAGEHLP_LINE64 line{sizeof(line)};
+        DWORD column = 0;
+        fprintf(f, "%2d %s+%llx  %s", i, name, at - base, SymFromAddr(process, at, &into, symbol) ? symbol->Name : "");
+        if (SymGetLineFromAddr64(process, at, &column, &line))
+            fprintf(f, "  %s:%lu", strrchr(line.FileName, '\\') ? strrchr(line.FileName, '\\') + 1 : line.FileName,
+                    line.LineNumber);
+        fputc('\n', f);
+    }
+    fclose(f);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
 {
+    SetUnhandledExceptionFilter(writeCrash);
     // No Windows error boxes from the tools this starts (yt-dlp, and through
     // it ffmpeg): children inherit this, and a missing DLL in one of them
     // should fail quietly, not stack up dialogs.

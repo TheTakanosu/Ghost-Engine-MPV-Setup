@@ -1295,6 +1295,10 @@ void MainWindow::setLibraryCompact(bool compact)
     // A scroll bar in a cover-wide panel would cut the covers off.
     m_libraryList->setVerticalScrollBarPolicy(compact ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
     m_libraryList->doItemsLayout();
+    // Rows are wider than the panel while it is dragged from covers-only to
+    // full and back, and the list had scrolled sideways with them: the covers
+    // stood cut off at the panel's left edge.
+    m_libraryList->horizontalScrollBar()->setValue(0);
 }
 
 void MainWindow::showLibraryMenu(const QPoint &at)
@@ -2209,6 +2213,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             setLibraryCompact(compact);
         if (!(QApplication::mouseButtons() & Qt::LeftButton))
             QTimer::singleShot(0, this, &MainWindow::snapCompactLibrary);
+        m_libraryList->horizontalScrollBar()->setValue(0);
         fitLibraryHead();
     }
     if (m_panel && watched == m_panel->coverArea() && (event->type() == QEvent::Resize || event->type() == QEvent::Move))
@@ -2449,7 +2454,7 @@ void MainWindow::fitLibraryHead()
     // goes covers-only below that (they were squashed to "ong", "de").
     for (int i = 0; i < 3; ++i)
         m_chips->button(i)->setText(QString::fromLatin1(names[i]));
-    m_chipsWidth = m_chipRow->layout()->sizeHint().width() + m.left() + m.right();
+    m_chipsWidth = m_chipRow->layout()->sizeHint().width() + m.left() + m.right() + 8;
     for (bool counts : {true, false}) {
         for (int i = 0; i < 3; ++i) {
             QAbstractButton *chip = m_chips->button(i);
