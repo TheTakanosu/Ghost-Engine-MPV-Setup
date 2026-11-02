@@ -210,6 +210,12 @@ void apply(QApplication &app)
         QWidget#statCard { background: rgb(33,32,41); border-radius: 14px; }
         QLabel#statValue { font-size: 22pt; font-weight: 700; color: rgb(207,179,240); }
         QLabel#statLabel { color: rgb(154,152,166); }
+        QWidget#welcome { background: rgb(33,32,41); border-radius: 14px; }
+        QLabel#welcomeTitle { font-size: 15pt; font-weight: 700; color: rgb(240,240,245); }
+        QLabel#welcomeText { color: rgb(190,188,202); }
+        QPushButton#welcomeAction { background: rgb(176,127,224); border: none; border-radius: 17px; padding: 0 18px;
+                                    min-height: 34px; max-height: 34px; color: rgb(24,18,34); font-weight: 600; }
+        QPushButton#welcomeAction:hover { background: rgb(196,152,240); }
         QWidget#nowPlaying { background: rgb(12,11,15); }
         QLabel#npTitle { font-size: 11pt; font-weight: 600; }
         QLabel#npSubtitle, QLabel#npTime { color: rgb(154,152,166); font-size: 9pt; }

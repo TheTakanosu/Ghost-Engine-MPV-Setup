@@ -32,6 +32,10 @@ public:
 signals:
     void connectionChanged(bool connected);
     void propertyChanged(const QString &name, const QVariant &value);
+    // An entry mpv could not open (each of ghost.lua's retries counts), and
+    // one that did open.
+    void fileFailed(int entryId);
+    void fileLoaded();
 
 private:
     void tryConnect();

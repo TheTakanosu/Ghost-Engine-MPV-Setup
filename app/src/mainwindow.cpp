@@ -20,6 +20,7 @@
 #include <QCursor>
 #include <QDropEvent>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -64,6 +65,7 @@
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
@@ -80,6 +82,9 @@ namespace {
 constexpr int kTile = 168;          // cover size on the Home shelves
 constexpr int kShelfCount = 8;      // tiles on each Home shelf
 constexpr int kMinutesPerSong = 3;  // for the "hours of music" estimate
+// The README's link for adding the bot to a server.
+constexpr const char *kBotInvite =
+    "https://discord.com/oauth2/authorize?client_id=1530546215303909518&permissions=117760&scope=bot";
 constexpr int kTopBar = 50;         // height of the draggable strip: 8 px under the search box
 constexpr int kHeaderTall = 264;    // playlist header, scrolled to the top
 constexpr int kHeaderShort = 92;    // ... and once the songs are scrolled
@@ -924,10 +929,18 @@ MainWindow::MainWindow()
         QTimer::singleShot(0, this, [this, savedZoom] { changeZoom(savedZoom - theme::zoom()); });
 
     applyLook();
+    connect(&m_mpv, &MpvClient::fileFailed, this, &MainWindow::songFailed);
+    connect(&m_mpv, &MpvClient::fileLoaded, this, [this] {
+        m_failedSongs.clear();
+        if (m_failNoticeShown && m_toast)
+            m_toast->hide();
+        m_failNoticeShown = false;
+    });
     connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
         schedulePlace();
         if (!on) {
             m_mpvEmbedded = false;
+            m_failedSongs.clear();   // the next mpv numbers its entries anew
             if (m_restartPlay) {
                 const QueuedPlay q = *m_restartPlay;
                 m_restartPlay.reset();
@@ -1657,6 +1670,49 @@ QWidget *MainWindow::buildHome()
     m_recentPlayed = makeShelf();
     m_recentPlayedTitle = sectionTitle("Jump back in");
 
+    // A first start shows zeros and empty shelves, and nothing says where a
+    // list comes from: the bot on Discord, whose .m3u lands in Downloads,
+    // which the library already watches.
+    m_welcome = new QWidget;
+    m_welcome->setObjectName("welcome");
+    m_welcome->setAttribute(Qt::WA_StyledBackground);
+    auto *welcomeTitle = new QLabel("Your library is empty");
+    welcomeTitle->setObjectName("welcomeTitle");
+    auto *welcomeText = new QLabel(
+        "Playlists come from the Ghost Engine bot on Discord. Add it to a server, find songs with "
+        "<b>!s</b>, queue them with <b>!add</b>, then <b>!export</b>.<br>"
+        "The .m3u you download shows up here by itself.");
+    welcomeText->setObjectName("welcomeText");
+    welcomeText->setWordWrap(true);
+    auto *addBot = new QPushButton("Add the bot to Discord");
+    addBot->setObjectName("welcomeAction");
+    addBot->setCursor(Qt::PointingHandCursor);
+    connect(addBot, &QPushButton::clicked, this, [] {
+        QDesktopServices::openUrl(QUrl(QString::fromLatin1(kBotInvite)));
+    });
+    auto *openFile = new QPushButton("Open a .m3u");
+    openFile->setObjectName("videoAction");
+    openFile->setCursor(Qt::PointingHandCursor);
+    connect(openFile, &QPushButton::clicked, this, [this] {
+        const QStringList files = QFileDialog::getOpenFileNames(this, "Open a playlist",
+            QStandardPaths::writableLocation(QStandardPaths::DownloadLocation), "Playlists (*.m3u *.m3u8)");
+        if (!files.isEmpty())
+            importFiles(files);
+    });
+    auto *buttons = new QHBoxLayout;
+    buttons->setSpacing(10);
+    buttons->addWidget(addBot);
+    buttons->addWidget(openFile);
+    buttons->addStretch();
+    auto *welcomeBox = new QVBoxLayout(m_welcome);
+    welcomeBox->setContentsMargins(22, 18, 22, 18);
+    welcomeBox->setSpacing(8);
+    welcomeBox->addWidget(welcomeTitle);
+    welcomeBox->addWidget(welcomeText);
+    welcomeBox->addSpacing(4);
+    welcomeBox->addLayout(buttons);
+    m_welcome->hide();
+
     auto *page = new QWidget;
     page->setObjectName("home");
     auto *box = new QVBoxLayout(page);
@@ -1664,6 +1720,7 @@ QWidget *MainWindow::buildHome()
     box->setSpacing(12);
     box->addWidget(m_greeting);
     box->addSpacing(4);
+    box->addWidget(m_welcome);
     box->addLayout(stats);
     box->addSpacing(10);
     box->addWidget(sectionTitle("Recently added"));
@@ -3388,7 +3445,7 @@ void MainWindow::newPlaylist(const QString &folder, bool addSelected)
     reopenAfter(path);
 }
 
-void MainWindow::toast(const QString &text)
+void MainWindow::toast(const QString &text, int ms)
 {
     // A short note at the bottom of the window, gone by itself.
     if (!m_toast) {
@@ -3404,7 +3461,29 @@ void MainWindow::toast(const QString &text)
     m_toast->move((width() - m_toast->width()) / 2, height() - m_nowPlaying->height() - m_toast->height() - 16);
     m_toast->show();
     m_toast->raise();
-    m_toastTimer.start(2600);
+    m_toastTimer.start(ms);
+}
+
+void MainWindow::songFailed(int entryId)
+{
+    // Every song failing in a row is rarely the songs: YouTube wants proof
+    // that this is no bot (or the connection is down), and mpv only moves
+    // on in silence. Said once two different songs have failed, and said
+    // again with each further one, so it stays up for as long as songs keep
+    // failing; the first song that opens takes it away.
+    if (entryId < 0 || m_failedSongs.contains(entryId))
+        return;
+    m_failedSongs.insert(entryId);
+    if (m_failedSongs.size() < 2)
+        return;
+    m_failNoticeShown = true;
+    const bool haveCookies = QFileInfo::exists(QFileInfo(findMpv()).absoluteDir().filePath("cookies.txt"));
+    toast(haveCookies
+        ? QStringLiteral("Songs aren't opening, even with your cookies.txt.\n"
+                         "It has probably expired: export a fresh one and put it next to mpv.exe.")
+        : QStringLiteral("Songs aren't opening. If your internet works, YouTube is probably checking for bots.\n"
+                         "A cookies.txt from your browser next to mpv.exe gets past it (see the README)."),
+        20000);
 }
 
 void MainWindow::undoSongEdit()
@@ -3652,6 +3731,7 @@ void MainWindow::refill()
     m_statSongs->setText(QString::number(items));
     m_statHours->setText(QString::number((items * kMinutesPerSong + 30) / 60));
     m_statNew->setText(QString::number(fresh));
+    m_welcome->setVisible(all.isEmpty());
 
     QVector<int> newest;
     for (int i = 0; i < all.size() && newest.size() < kShelfCount; ++i)

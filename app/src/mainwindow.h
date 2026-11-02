@@ -76,7 +76,8 @@ private:
     void removeSelectedSongs();
     void addSelectedSongsTo(const QString &path);
     void newPlaylist(const QString &folder = QString(), bool addSelected = false);
-    void toast(const QString &text);
+    void toast(const QString &text, int ms = 2600);
+    void songFailed(int entryId);
     void undoSongEdit();
     void applyPendingOrder();
     void showHome();
@@ -328,6 +329,9 @@ private:
     QLabel *m_greeting = nullptr;
     QLabel *m_toast = nullptr;
     QTimer m_toastTimer;
+    QSet<int> m_failedSongs;        // entries that failed since a song last opened
+    bool m_failNoticeShown = false;
+    QWidget *m_welcome = nullptr;   // Home's card while the library is empty
     QLabel *m_emptyHint = nullptr;
     QLabel *m_statLists = nullptr;
     QLabel *m_statSongs = nullptr;

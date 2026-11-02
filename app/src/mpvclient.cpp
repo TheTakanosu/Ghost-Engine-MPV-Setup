@@ -65,7 +65,16 @@ void MpvClient::readLines()
         const QByteArray line = m_buffer.left(newline);
         m_buffer.remove(0, newline + 1);
         const QJsonObject msg = QJsonDocument::fromJson(line).object();
-        if (msg.value("event").toString() != "property-change")
+        const QString event = msg.value("event").toString();
+        if (event == "end-file" && msg.value("reason").toString() == "error") {
+            emit fileFailed(msg.value("playlist_entry_id").toInt(-1));
+            continue;
+        }
+        if (event == "file-loaded") {
+            emit fileLoaded();
+            continue;
+        }
+        if (event != "property-change")
             continue;
         const QString name = msg.value("name").toString();
         const QVariant value = msg.value("data").toVariant();
