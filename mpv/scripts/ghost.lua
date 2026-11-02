@@ -82,6 +82,14 @@ mp.register_script_message("ghost-video-once", function(on)
 end)
 
 mp.add_hook("on_load", 9, function()
+    -- Never the list itself. A list opened while songs were playing as
+    -- videos still found video-mode on here (the hook at 50 resets it after
+    -- this one), and the options set file-local on the .m3u were put back to
+    -- the song list's once the .m3u had been read: vid=no and an audio
+    -- format, over the video list's own. Its videos then played as sound
+    -- only, and so did every list after it until mpv was closed.
+    local path = mp.get_property("path", "")
+    if string.match(path:lower(), "%.m3u8?$") then return end
     local once = mp.get_property_native("user-data/ghost/video-once")
     local single = type(once) == "string" and once ~= "" and once == mp.get_property("path", "")
     if not single and type(once) == "string" and once ~= "" then
