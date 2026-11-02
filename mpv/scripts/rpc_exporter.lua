@@ -15,9 +15,10 @@
 --   8  uploader     channel name, when the source carries one
 --   9  hidden       yes when Ghost Engine's settings turn the presence off
 --                  for this kind (songs or videos)
+--  10  list         the playlist's name, when a .m3u is playing
 --
--- Lines 5-8 were added later; the reader treats a shorter file as "playing,
--- unknown duration, no id, no channel", so an old bridge still works.
+-- Lines 5-10 were added later; the reader treats a shorter file as "playing,
+-- unknown duration, no id, no channel, no list", so an old bridge still works.
 --
 -- `core-idle` is the important one. A YouTube track takes several seconds to
 -- resolve through yt-dlp, and during that gap mpv already knows the title but
@@ -31,6 +32,30 @@
 local utils = require 'mp.utils'
 
 local BRIDGE = mp.command_native({"expand-path", "~~/ghost_rpc.txt"})
+
+-- The name the app gives a list lives inside the file (#PLAYLIST:), since its
+-- library files have random names; the bot's exports are named after the list.
+-- Read once per list, from its first lines.
+local list_names = {}
+local function list_name(path)
+    if path == "" then return "" end
+    if list_names[path] == nil then
+        local name
+        local file = io.open(path, "r")
+        if file then
+            for _ = 1, 10 do
+                local line = file:read("*l")
+                if not line then break end
+                name = line:match("^#PLAYLIST:%s*(.-)%s*$")
+                if name then break end
+            end
+            file:close()
+        end
+        list_names[path] = (name and name ~= "") and name
+            or (path:match("([^/\\]+)%.[mM]3[uU]8?$") or "")
+    end
+    return list_names[path]
+end
 
 function export_advanced_presence()
     local title = mp.get_property("media-title", "Standing by...")
@@ -61,6 +86,7 @@ function export_advanced_presence()
         file:write(path .. "\n")
         file:write(uploader .. "\n")
         file:write((shown == false and "yes" or "no") .. "\n")
+        file:write(list_name(mp.get_property("playlist-path", "")) .. "\n")
         file:close()
     end
 end

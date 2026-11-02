@@ -123,11 +123,6 @@ RECONNECT_BACKOFF = (2, 5, 10, 30)
 
 _VIDEO_ID_RE = re.compile(r"(?:v=|/|^)([A-Za-z0-9_-]{11})(?:[?&]|$)")
 
-# Permanent, no expiry and no use limit — this is a button on every card the
-# agent shows, so an invite that can run out would quietly turn into an
-# "Invite Invalid" page for everyone using it.
-DISCORD_INVITE = "https://discord.gg/w6cR8JU3qP"
-
 # mqdefault, not hqdefault. Measured across several videos: default (120x90),
 # hqdefault (480x360) and sddefault (640x480) are all 4:3, and YouTube pads the
 # 16:9 frame into them with black bars baked into the JPEG — which Discord then
@@ -152,11 +147,17 @@ THUMBNAIL = "https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
 # than the single character it counts as — dropping "▶" is what bought the row.
 # Shortening further to "Watch YouTube" would add margin but reads as watching
 # the site rather than the video, so 30 is where this stops.
+#
+# The second button used to be the Discord server. A friend who sees the card
+# is better served by where the player comes from: "Get the app" (27 with the
+# first) opens the repository, whose README starts with installing it.
 BUTTON_WATCH = "Watch on YouTube"
-BUTTON_DISCORD = "Discord Server"
+BUTTON_APP = "Get the app"
+APP_PAGE = "https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup"
 
-# Second line of the card. The first is the track title and the third is the
-# channel, so this is where the project name goes.
+# Discord already heads the card with the application's name ("Listening to
+# Ghost Engine"), so the name only fills a line nothing else can: the channel
+# of a local file, the list of a single video.
 BRAND = "Ghost Engine"
 
 # A media player should not report "Playing" — audio is "Listening to", video
@@ -197,8 +198,9 @@ def compose(state: dict, status: str, anchor: int = 0) -> dict:
     """Builds the presence card.
 
     Discord lays the card out as: details, then state, then large_text. So the
-    three lines are the track, the project, and the channel — and the artwork
-    is the video's own thumbnail rather than a static logo.
+    three lines are the track, its channel, and the playlist it plays from, as
+    Spotify shows track, artist and album — and the artwork is the video's own
+    thumbnail rather than a static logo.
 
     `status` is "playing", "paused" or "loading". Only "playing" carries
     timestamps: a timer next to a paused or still-loading track counts time the
@@ -207,11 +209,13 @@ def compose(state: dict, status: str, anchor: int = 0) -> dict:
     payload: dict = {
         "activity_type": activity_for(state["has_video"]),
         "details": state["title"],
-        "state": BRAND,
+        # Discord refuses a state or large_text shorter than two characters.
+        "state": state["channel"] if len(state["channel"]) >= 2 else BRAND,
     }
-
-    if state["channel"]:
-        payload["large_text"] = state["channel"]
+    if len(state["list"]) >= 2:
+        payload["large_text"] = f"Playlist: {state['list']}"
+    elif payload["state"] != BRAND:
+        payload["large_text"] = BRAND
 
     # No large_image falls back to the application's own icon, which is the
     # right look for a local file with no thumbnail to show.
@@ -224,7 +228,7 @@ def compose(state: dict, status: str, anchor: int = 0) -> dict:
             "label": BUTTON_WATCH,
             "url": f"https://www.youtube.com/watch?v={state['video_id']}",
         })
-    buttons.append({"label": BUTTON_DISCORD, "url": DISCORD_INVITE})
+    buttons.append({"label": BUTTON_APP, "url": APP_PAGE})
     payload["buttons"] = buttons
 
     if status == "paused":
@@ -307,6 +311,7 @@ def read_bridge():
         "channel": _line(lines, 7),
         # Turned off in Ghost Engine's settings for this kind of playback.
         "hidden": _line(lines, 8, "no").lower() in ("true", "yes"),
+        "list": _line(lines, 9)[:100],
     }
 
 
