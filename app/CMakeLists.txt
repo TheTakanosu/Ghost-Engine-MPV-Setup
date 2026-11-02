@@ -1,7 +1,7 @@
 # Ghost Engine - the desktop app: a playlist library, editor and settings for
 # the mpv setup next to it. Qt Widgets only, so it stays a small window.
 cmake_minimum_required(VERSION 3.21)
-project(GhostEngine VERSION 1.3.1 LANGUAGES CXX)
+project(GhostEngine VERSION 1.3.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

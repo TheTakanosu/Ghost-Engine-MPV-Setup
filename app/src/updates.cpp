@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "theme.h"
 
+#include <QVersionNumber>
 #include <QSettings>
 #include <QAbstractButton>
 #include <QCoreApplication>
@@ -347,19 +348,33 @@ void UpdateDialog::start()
 
 namespace {
 
-// What each version brings, as its window says it. A version with no lines
-// opens without one.
-QStringList notesFor(const QString &version)
+// What each version brings, as its window says it, oldest first. Someone
+// coming from further back sees every version's lines since theirs; a
+// version with nothing to tell (1.3.2 only mends the installer) adds none.
+const QList<QPair<QString, QStringList>> &allNotes()
 {
-    if (version == QLatin1String("1.3.1"))
-        return {
+    static const QList<QPair<QString, QStringList>> notes = {
+        {QStringLiteral("1.3.1"), {
             "Themes: Purple, Black, Light, or Match Windows. Settings > Appearance.",
             "History on your profile, and your top videos apart from your top songs.",
             "The playlist you play moves to the top of your library.",
             "Pick up where you left off: what played last waits in the player bar.",
             "Fixed: a video list opened after songs played as videos had no picture.",
-        };
-    return {};
+        }},
+    };
+    return notes;
+}
+
+QStringList notesSince(const QString &seen, const QString &now)
+{
+    const auto older = [](const QString &a, const QString &b) {
+        return QVersionNumber::fromString(a) < QVersionNumber::fromString(b);
+    };
+    QStringList lines;
+    for (const auto &[version, said] : allNotes())
+        if ((seen.isEmpty() || older(seen, version)) && !older(now, version))
+            lines += said;
+    return lines;
 }
 
 } // namespace
@@ -373,7 +388,7 @@ void WhatsNewDialog::showIfUpdated(QWidget *parent)
     // mean the app ran before, so this is an update, not an install.
     const bool ranBefore = !seen.isEmpty() || settings.contains("window/geometry");
     settings.setValue("whatsnew/seen", now);
-    const QStringList lines = notesFor(now);
+    const QStringList lines = notesSince(seen, now);
     if (seen == now || !ranBefore || lines.isEmpty())
         return;
     WhatsNewDialog dialog(now, lines, parent);

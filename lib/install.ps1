@@ -173,7 +173,11 @@ function Install-App([string]$Dir, [string]$Temp, [string]$Version) {
         $zip = $AppZip
         Say "from $AppZip (not checked: a local file you chose)" "Yellow"
     } else {
-        $releases = @(Get-Json $APP_RELEASES | Where-Object { -not $_.draft })
+        # Stored first: Windows PowerShell hands a JSON array down a pipeline
+        # as one object, and every release was filtered out together - the
+        # app was never installed ("No release has GhostEngine-win64.zip").
+        $all = Get-Json $APP_RELEASES
+        $releases = @($all | Where-Object { -not $_.draft })
         $release = $releases | Where-Object { ($_.tag_name -replace '^v', '') -eq $Version } | Select-Object -First 1
         if (-not $release) { $release = $releases | Where-Object { -not $_.prerelease } | Select-Object -First 1 }
         $asset = if ($release) { $release.assets | Where-Object { $_.name -eq "GhostEngine-win64.zip" } | Select-Object -First 1 }
