@@ -31,6 +31,7 @@ qt_add_executable(GhostEngine WIN32
     src/nowplayingpanel.h src/nowplayingpanel.cpp
     src/profile.h src/profile.cpp
     src/updates.h src/updates.cpp
+    src/traymenu.h src/traymenu.cpp
     ghostengine.rc
 )
 qt_add_resources(GhostEngine "assets" PREFIX "/" FILES assets/chevron-down.png)

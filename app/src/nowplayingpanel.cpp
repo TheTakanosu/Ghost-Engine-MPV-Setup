@@ -222,6 +222,32 @@ protected:
     }
 };
 
+// One line, cut short with "…" to the room it is given. A plain QLabel asks
+// for its whole text's width, so one long next title held the panel wider
+// than the window and pushed the cover and the photos off its right edge.
+class ElidedLabel : public QLabel {
+public:
+    void setFullText(const QString &text)
+    {
+        m_full = text;
+        setToolTip(text);
+        fit();
+    }
+    QSize minimumSizeHint() const override { return {0, QLabel::minimumSizeHint().height()}; }
+    QSize sizeHint() const override { return {0, QLabel::sizeHint().height()}; }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QLabel::resizeEvent(event);
+        fit();
+    }
+
+private:
+    void fit() { setText(fontMetrics().elidedText(m_full, Qt::ElideRight, width())); }
+    QString m_full;
+};
+
 // The artist's photo, wide, with "About the artist" written over it as
 // Spotify does.
 class ArtistPhoto : public QWidget {
@@ -400,9 +426,9 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_nextCard->clicked = [this] { if (onPlayNext) onPlayNext(); };
     m_nextCover = new QLabel;
     m_nextCover->setFixedSize(44, 44);
-    m_nextTitle = new QLabel;
+    m_nextTitle = new ElidedLabel;
     m_nextTitle->setStyleSheet("font-weight: 600; color: rgb(240,240,245);");
-    m_nextArtist = new QLabel;
+    m_nextArtist = new ElidedLabel;
     m_nextArtist->setStyleSheet("color: rgb(170,168,182);");
     auto *nextNames = new QVBoxLayout;
     nextNames->setSpacing(2);
@@ -656,8 +682,8 @@ void NowPlayingPanel::showCredits()
 void NowPlayingPanel::setNext(const QString &title, const QString &artist, const QPixmap &cover)
 {
     m_nextCard->setVisible(!title.isEmpty());
-    m_nextTitle->setText(title);
-    m_nextArtist->setText(artist);
+    static_cast<ElidedLabel *>(m_nextTitle)->setFullText(title);
+    static_cast<ElidedLabel *>(m_nextArtist)->setFullText(artist);
     m_nextArtist->setVisible(!artist.isEmpty());
     QPixmap square(88, 88);
     square.fill(Qt::transparent);

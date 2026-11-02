@@ -1,8 +1,9 @@
 #include "updates.h"
 
 #include "settings.h"
+#include "theme.h"
 
-#include <QCheckBox>
+#include <QAbstractButton>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
@@ -11,6 +12,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
@@ -87,87 +90,170 @@ void UpdateChecker::check()
 
 // -- dialog --------------------------------------------------------------------
 
+namespace {
+
+// The window's own colours: a card a step above the app's background, a
+// hairline round it, text in three weights of grey.
+const QColor kCard(30, 29, 37);
+const QColor kHairline(255, 255, 255, 26);
+const QColor kText(240, 240, 245);
+const QColor kSoft(196, 194, 206);
+const QColor kMuted(138, 136, 152);
+
+// A tick box drawn as the app draws its controls: a rounded square, filled
+// with the accent and a white tick when on, faint when it cannot be ticked.
+class TickBox : public QAbstractButton {
+public:
+    TickBox()
+    {
+        setCheckable(true);
+        setCursor(Qt::PointingHandCursor);
+        setFixedSize(18, 18);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF box = QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5);
+        if (isChecked()) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(theme::accent());
+            p.drawRoundedRect(box, 4, 4);
+            QPen tick(QColor(24, 18, 34), 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+            p.setPen(tick);
+            p.drawPolyline(QPolygonF{{box.left() + 3.6, box.center().y() + 0.2},
+                                     {box.left() + 6.4, box.bottom() - 3.6},
+                                     {box.right() - 3.2, box.top() + 4}});
+        } else {
+            p.setPen(QPen(isEnabled() ? QColor(120, 118, 136) : QColor(70, 68, 82), 1.2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(box, 4, 4);
+        }
+    }
+};
+
+QLabel *text(const QString &html, qreal points, const QColor &colour, int weight = QFont::Normal)
+{
+    auto *label = new QLabel(html);
+    QFont f = label->font();
+    f.setPointSizeF(points);
+    f.setWeight(QFont::Weight(weight));
+    label->setFont(f);
+    label->setStyleSheet(QStringLiteral("color: %1; background: transparent;").arg(colour.name()));
+    label->setWordWrap(true);
+    return label;
+}
+
+} // namespace
+
 UpdateDialog::UpdateDialog(const QList<updates::Part> &parts, QWidget *parent) : QDialog(parent)
 {
     setWindowTitle("Updates");
-    setMinimumWidth(460);
-    auto *title = new QLabel("Updates");
-    title->setObjectName("welcomeTitle");
-    auto *about = new QLabel("Pick what to update. Each download is checked against its SHA-256, "
-                             "and nothing is replaced when one does not match.");
-    about->setObjectName("statLabel");
-    about->setWordWrap(true);
+    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
+    setAttribute(Qt::WA_TranslucentBackground);
+    setFixedWidth(430);
+
+    bool anyNewer = false;
+    for (const updates::Part &p : parts)
+        anyNewer = anyNewer || p.newer;
+
+    auto *title = text("Updates", 13, kText, QFont::DemiBold);
+    auto *close = new QPushButton(QChar(0xE711));
+    close->setCursor(Qt::PointingHandCursor);
+    close->setFixedSize(28, 28);
+    close->setToolTip("Close");
+    close->setStyleSheet(QStringLiteral(
+        "QPushButton { font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 10pt; color: %1;"
+        " background: transparent; border: none; border-radius: 14px; }"
+        "QPushButton:hover { background: rgba(255,255,255,20); color: %2; }").arg(kMuted.name(), kText.name()));
+    connect(close, &QPushButton::clicked, this, &QDialog::reject);
+    auto *head = new QHBoxLayout;
+    head->addWidget(title, 1);
+    head->addWidget(close, 0, Qt::AlignTop);
+    auto *about = text(anyNewer ? "Pick what to update. Each download is checked against its SHA-256."
+                                : "Everything is up to date.", 10, kSoft);
 
     auto *box = new QVBoxLayout(this);
-    box->setContentsMargins(22, 18, 22, 18);
-    box->setSpacing(10);
-    box->addWidget(title);
+    box->setContentsMargins(24, 18, 18, 22);
+    box->setSpacing(0);
+    box->addLayout(head);
+    box->addSpacing(2);
     box->addWidget(about);
-    box->addSpacing(4);
+    box->addSpacing(16);
 
-    // What each part is for, so ticking one is an informed choice.
+    // A second line on what each part is for, so a tick is an informed one.
     const auto what = [](const QString &key) -> QString {
-        if (key == "ghost") return "The app and its mpv scripts. Ghost Engine closes and opens again.";
-        if (key == "ytdlp") return "What turns YouTube links into music. It breaks when YouTube changes.";
-        if (key == "mpv") return "The player. It stops while the update runs.";
-        return "Lets yt-dlp answer YouTube's JavaScript checks.";
+        if (key == "ghost") return "The app restarts";
+        if (key == "ytdlp") return "Keeps YouTube working · no restart";
+        if (key == "mpv") return "Optional · closes the player";
+        return "Answers YouTube's JavaScript checks · no restart";
     };
+    const QString link = QStringLiteral("color: %1; text-decoration: none;").arg(theme::accentText().name());
     for (const updates::Part &p : parts) {
-        auto *tick = new QCheckBox;
+        auto *tick = new TickBox;
         tick->setChecked(p.newer && (p.key == "ghost" || p.key == "ytdlp"));
         tick->setEnabled(p.newer);
-        QString versions;
-        if (p.newer)
-            versions = p.latest.isEmpty() ? p.installed + QStringLiteral("  ·  too old")
-                                          : p.installed + QStringLiteral("  →  ") + p.latest;
-        else if (p.latest.isEmpty() && p.key != "node")
-            versions = p.installed + QStringLiteral("  ·  couldn't check");
-        else
-            versions = p.installed + QStringLiteral("  ·  up to date");
-        auto *name = new QLabel(QStringLiteral("<b>%1</b>&nbsp;&nbsp;%2").arg(p.name, versions.toHtmlEscaped()));
-        name->setObjectName(p.newer ? "settingName" : "statLabel");
-        auto *line = new QLabel(what(p.key));
-        line->setObjectName("statLabel");
-        line->setWordWrap(true);
         auto *words = new QVBoxLayout;
-        words->setSpacing(1);
-        words->addWidget(name);
-        if (p.newer)
-            words->addWidget(line);
+        words->setSpacing(2);
+        if (p.newer) {
+            const QString versions = p.latest.isEmpty() ? p.installed + QStringLiteral(" · too old")
+                                                        : p.installed + QStringLiteral(" → ") + p.latest;
+            words->addWidget(text(QStringLiteral("<span style='color:%1; font-weight:700'>%2</span>"
+                                                 "&nbsp;&nbsp;<span style='color:%3'>%4</span>")
+                                      .arg(kText.name(), p.name.toHtmlEscaped(), kSoft.name(), versions.toHtmlEscaped()),
+                                  10.5, kText));
+            QString line = what(p.key);
+            if (!p.notes.isEmpty())
+                line += QStringLiteral(" · <a href='%1' style='%2'>What's new</a>").arg(p.notes, link);
+            auto *second = text(line, 9.5, kMuted);
+            second->setTextFormat(Qt::RichText);
+            second->setOpenExternalLinks(true);
+            words->addWidget(second);
+        } else {
+            const QString state = p.latest.isEmpty() && p.key != "node" ? QStringLiteral("couldn't check")
+                                                                        : QStringLiteral("up to date");
+            words->addWidget(text(QStringLiteral("%1 %2 · %3").arg(p.name, p.installed, state).toHtmlEscaped(), 10.5, kMuted));
+        }
         auto *row = new QHBoxLayout;
-        row->setSpacing(10);
+        row->setSpacing(12);
         row->addWidget(tick, 0, Qt::AlignTop);
         row->addLayout(words, 1);
-        if (p.newer && !p.notes.isEmpty()) {
-            auto *notes = new QPushButton("What's new");
-            notes->setObjectName("link");
-            notes->setCursor(Qt::PointingHandCursor);
-            const QString url = p.notes;
-            connect(notes, &QPushButton::clicked, this, [url] { QDesktopServices::openUrl(QUrl(url)); });
-            row->addWidget(notes, 0, Qt::AlignTop);
-        }
         box->addLayout(row);
+        box->addSpacing(12);
         m_rows.append({p, tick});
     }
 
-    m_status = new QLabel;
-    m_status->setObjectName("statLabel");
-    m_status->setWordWrap(true);
+    m_status = text(QString(), 9.5, kSoft);
     m_status->hide();
     m_log = new QPlainTextEdit;
     m_log->setReadOnly(true);
-    m_log->setMinimumHeight(120);
+    m_log->setMinimumHeight(110);
+    m_log->setStyleSheet(QStringLiteral("QPlainTextEdit { background: rgb(22,21,27); color: %1; border: 1px solid "
+                                        "rgba(255,255,255,20); border-radius: 8px; padding: 6px; font-size: 9pt; }")
+                             .arg(kSoft.name()));
     m_log->hide();
     box->addWidget(m_status);
     box->addWidget(m_log);
 
-    m_later = new QPushButton("Later");
-    m_later->setObjectName("videoAction");
+    // Later outlined, Update filled with the accent: one strong button.
+    m_later = new QPushButton(anyNewer ? "Later" : "Close");
     m_update = new QPushButton;
-    m_update->setObjectName("primary");
+    const QString shape = QStringLiteral("min-height: 36px; max-height: 36px; padding: 0 20px; border-radius: 9px;"
+                                         " font-size: 10.5pt; font-weight: 600;");
+    m_later->setStyleSheet(QStringLiteral(
+        "QPushButton { %1 color: %2; background: transparent; border: 1px solid rgb(84,82,98); }"
+        "QPushButton:hover { background: rgba(255,255,255,14); }").arg(shape, kText.name()));
+    m_update->setStyleSheet(QStringLiteral(
+        "QPushButton { %1 color: rgb(24,18,34); background: %2; border: none; }"
+        "QPushButton:hover { background: rgb(196,152,240); }"
+        "QPushButton:disabled { background: rgb(70,62,86); color: rgb(150,144,164); }").arg(shape, theme::accent().name()));
     for (QPushButton *b : {m_later, m_update})
         b->setCursor(Qt::PointingHandCursor);
+    m_update->setVisible(anyNewer);
     auto *buttons = new QHBoxLayout;
+    buttons->setSpacing(10);
     buttons->addStretch();
     buttons->addWidget(m_later);
     buttons->addWidget(m_update);
@@ -182,10 +268,32 @@ UpdateDialog::UpdateDialog(const QList<updates::Part> &parts, QWidget *parent) :
         m_update->setEnabled(n > 0);
     };
     for (const auto &[part, tick] : m_rows)
-        connect(tick, &QCheckBox::toggled, this, count);
+        connect(tick, &QAbstractButton::toggled, this, count);
     count();
     connect(m_later, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_update, &QPushButton::clicked, this, &UpdateDialog::start);
+}
+
+void UpdateDialog::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(kHairline, 1));
+    p.setBrush(kCard);
+    p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+}
+
+void UpdateDialog::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+        m_dragFrom = event->globalPosition().toPoint() - frameGeometry().topLeft();
+    QDialog::mousePressEvent(event);
+}
+
+void UpdateDialog::mouseMoveEvent(QMouseEvent *event)
+{
+    if ((event->buttons() & Qt::LeftButton) && !m_dragFrom.isNull())
+        move(event->globalPosition().toPoint() - m_dragFrom);
 }
 
 void UpdateDialog::start()

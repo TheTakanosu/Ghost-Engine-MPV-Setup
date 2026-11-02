@@ -3,6 +3,7 @@
 #include "covercrop.h"
 #include "settings.h"
 #include "songinfo.h"
+#include "traymenu.h"
 #include "updates.h"
 #include "videopage.h"
 #include "icons.h"
@@ -3558,13 +3559,7 @@ void MainWindow::showUpdates()
         checkForUpdates(true);
         return;
     }
-    if (m_updates->newerCount() == 0) {
-        QString lines;
-        for (const updates::Part &p : m_updates->parts())
-            lines += QStringLiteral("\n%1  %2").arg(p.name, p.installed);
-        QMessageBox::information(this, "Updates", "Everything is up to date." + lines);
-        return;
-    }
+    // Up to date or not, the same window: it lists what is installed.
     UpdateDialog dialog(m_updates->parts(), this);
     dialog.onStopPlayer = [this] {
         if (m_mpv.connected()) {
@@ -3601,32 +3596,28 @@ void MainWindow::buildTray()
     QApplication::setQuitOnLastWindowClosed(false);   // closeEvent quits instead
     m_tray = new QSystemTrayIcon(exeIcon(), this);
     m_tray->setToolTip("Ghost Engine");
-    auto *menu = new QMenu(this);
-    m_trayNow = menu->addAction(QString());
-    m_trayNow->setEnabled(false);
-    menu->addAction("Previous", this, [this] { m_mpv.command({"playlist-prev"}); });
-    m_trayPause = menu->addAction("Pause", this, [this] { m_mpv.command({"cycle", "pause"}); });
-    menu->addAction("Next", this, [this] { m_mpv.command({"playlist-next"}); });
-    menu->addSeparator();
-    menu->addAction("Open Ghost Engine", this, &MainWindow::bringToFront);
-    QAction *keep = menu->addAction("Keep running in the tray");
-    keep->setCheckable(true);
-    keep->setChecked(QSettings().value("tray/keepRunning", false).toBool());
-    keep->setToolTip("Closing the window keeps Ghost Engine and the music going here.");
-    connect(keep, &QAction::toggled, this, [](bool on) { QSettings().setValue("tray/keepRunning", on); });
-    menu->addSeparator();
-    menu->addAction("Check for updates...", this, [this] { checkForUpdates(true); });
-    menu->addAction("Thanks to...", this, &MainWindow::showThanks);
-    menu->addSeparator();
-    menu->addAction("Quit Ghost Engine", this, &MainWindow::quitForReal);
-    m_tray->setContextMenu(menu);
+    // Our own menu rather than setContextMenu's Windows one, so it looks like
+    // the app: opened on a right click (Context), a left click shows or hides.
+    m_trayMenu = new TrayMenu(this);
+    m_trayMenu->onPrevious = [this] { m_mpv.command({"playlist-prev"}); };
+    m_trayMenu->onPlayPause = [this] { m_mpv.command({"cycle", "pause"}); };
+    m_trayMenu->onNext = [this] { m_mpv.command({"playlist-next"}); };
+    m_trayMenu->onOpen = [this] { bringToFront(); };
+    m_trayMenu->onCheckUpdates = [this] { checkForUpdates(true); };
+    m_trayMenu->onThanks = [this] { showThanks(); };
+    m_trayMenu->onQuit = [this] { quitForReal(); };
+    m_trayMenu->onKeepRunning = [](bool on) { QSettings().setValue("tray/keepRunning", on); };
+    m_trayMenu->setKeepRunning(QSettings().value("tray/keepRunning", false).toBool());
     connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason why) {
-        if (why != QSystemTrayIcon::Trigger)
-            return;
-        if (isVisible() && !isMinimized())
-            hide();
-        else
-            bringToFront();
+        if (why == QSystemTrayIcon::Context) {
+            updateTray();
+            m_trayMenu->popupAt(QCursor::pos());
+        } else if (why == QSystemTrayIcon::Trigger) {
+            if (isVisible() && !isMinimized())
+                hide();
+            else
+                bringToFront();
+        }
     });
     updateTray();
     m_tray->show();
@@ -3637,9 +3628,8 @@ void MainWindow::updateTray()
     if (!m_tray)
         return;
     const QString title = m_mpv.connected() ? m_mpv.property("media-title").toString() : QString();
-    const QString shown = title.isEmpty() ? QStringLiteral("Nothing playing") : title;
-    m_trayNow->setText(fontMetrics().elidedText(shown, Qt::ElideRight, 280));
-    m_trayPause->setText(m_mpv.property("pause").toBool() ? "Play" : "Pause");
+    const QString artist = m_mpv.connected() ? m_mpv.property("metadata/by-key/uploader").toString() : QString();
+    m_trayMenu->setNowPlaying(title, artist, !m_mpv.connected() || m_mpv.property("pause").toBool());
     m_tray->setToolTip(title.isEmpty() ? QStringLiteral("Ghost Engine")
                                        : QStringLiteral("Ghost Engine\n") + title.left(100));
 }

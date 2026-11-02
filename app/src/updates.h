@@ -3,10 +3,11 @@
 #include <QDialog>
 #include <QList>
 #include <QObject>
+#include <QPoint>
 #include <QString>
 #include <functional>
 
-class QCheckBox;
+class QAbstractButton;
 class QLabel;
 class QPlainTextEdit;
 class QProcess;
@@ -64,9 +65,17 @@ public:
     std::function<void()> onQuitForUpdate;
     std::function<void()> onStopPlayer;
 
+protected:
+    // Frameless and rounded like the rest of the app, dragged by any spot
+    // that is not a control.
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+
 private:
     void start();
-    QList<QPair<updates::Part, QCheckBox *>> m_rows;
+    QPoint m_dragFrom;
+    QList<QPair<updates::Part, QAbstractButton *>> m_rows;
     QLabel *m_status;
     QPlainTextEdit *m_log;
     QPushButton *m_update;

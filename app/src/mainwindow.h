@@ -345,8 +345,7 @@ private:
     bool m_updateAsked = false;     // the check was asked for, so say "up to date" too
     QPushButton *m_updateButton = nullptr;   // the top bar's, while something is behind
     class QSystemTrayIcon *m_tray = nullptr;
-    class QAction *m_trayNow = nullptr;
-    class QAction *m_trayPause = nullptr;
+    class TrayMenu *m_trayMenu = nullptr;
     bool m_quitting = false;        // Quit, not the window's close button kept in the tray
     QSet<int> m_failedSongs;        // entries that failed since a song last opened
     bool m_failNoticeShown = false;
