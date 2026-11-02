@@ -618,6 +618,25 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_presenceVideos = new ToggleSwitch;
     addRow(discord, "Show videos on Discord", "What you watch, on your Discord profile (Ghost RPC).", m_presenceVideos);
 
+    // The listening history, kept on this PC only (PRIVACY.md).
+    QVBoxLayout *privacyRows;
+    auto *privacyCard = card("Privacy", privacyRows);
+    m_history = new ToggleSwitch;
+    addRow(privacyRows, "Keep a listening history",
+           "The last songs and videos you played, on your profile. Turning it off deletes it.", m_history);
+    auto *clearHistory = new QPushButton("Clear history");
+    connect(clearHistory, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(this, "Clear history", "Delete your listening history? Your top songs and artists stay.",
+                                  QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Yes &&
+            onClearHistory)
+            onClearHistory();
+    });
+    addRow(privacyRows, "Your history", QString(), clearHistory);
+    connect(m_history, &QAbstractButton::toggled, this, [this](bool on) {
+        if (!m_loading && onHistoryChanged)
+            onHistoryChanged(on);
+    });
+
     m_confPath = new QLabel;
     m_confPath->setObjectName("statLabel");
     m_confPath->setWordWrap(true);
@@ -654,6 +673,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     box->addWidget(lookCard);
     box->addWidget(speedCard);
     box->addWidget(discordCard);
+    box->addWidget(privacyCard);
     box->addLayout(footer);
     box->addStretch();
     auto *scroll = new QScrollArea;
@@ -782,6 +802,7 @@ void SettingsPage::load()
     m_covers->setCurrentIndex(settings.value("look/circleCovers").toBool() ? 1 : 0);
     m_volumeNumber->setChecked(settings.value("look/volumeNumber", false).toBool());
     m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());
+    m_history->setChecked(settings.value("history/keep", true).toBool());
     m_presenceVideos->setChecked(settings.value("presence/videos", true).toBool());
     m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));
     m_zoom->setZoom(theme::zoom());

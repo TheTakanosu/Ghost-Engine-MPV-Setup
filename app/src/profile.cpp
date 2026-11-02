@@ -13,6 +13,7 @@
 #include <QNetworkReply>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -219,11 +220,12 @@ void ListeningStats::save() const
         file.write(QJsonDocument(m_data).toJson(QJsonDocument::Compact));
 }
 
-void ListeningStats::played(const QString &title, const QString &artist, const QString &id, const QString &list)
+void ListeningStats::played(const QString &title, const QString &artist, const QString &id, const QString &list, bool video)
 {
     // A song is the same whether its file or its video played.
     const QString key = (artist + QStringLiteral(" - ") + title).toLower();
-    QJsonObject songs = m_data.value("songs").toObject();
+    const QString kind = video ? QStringLiteral("videos") : QStringLiteral("songs");
+    QJsonObject songs = m_data.value(kind).toObject();
     QJsonObject song = songs.value(key).toObject();
     song["title"] = title;
     song["artist"] = artist;
@@ -231,8 +233,23 @@ void ListeningStats::played(const QString &title, const QString &artist, const Q
         song["id"] = id;
     song["plays"] = song.value("plays").toInt() + 1;
     songs[key] = song;
-    m_data["songs"] = songs;
-    if (!artist.isEmpty()) {
+    m_data[kind] = songs;
+    if (keepsHistory()) {
+        QJsonArray history = m_data.value("history").toArray();
+        QJsonObject entry{{"at", QDateTime::currentDateTime().toString(Qt::ISODate)}, {"title", title},
+                          {"artist", artist}, {"id", id}, {"list", list}};
+        if (video)
+            entry["video"] = true;
+        history.prepend(entry);
+        // The last kHistoryMax plays of the last kHistoryDays days.
+        const QDateTime oldest = QDateTime::currentDateTime().addDays(-kHistoryDays);
+        while (!history.isEmpty() && (history.size() > kHistoryMax ||
+               QDateTime::fromString(history.last().toObject().value("at").toString(), Qt::ISODate) < oldest))
+            history.removeLast();
+        m_data["history"] = history;
+    }
+    // A video's channel is not an artist one listens to.
+    if (!artist.isEmpty() && !video) {
         QJsonObject artists = m_data.value("artists").toObject();
         const QString who = artist.toLower();
         QJsonObject one = artists.value(who).toObject();
@@ -247,6 +264,85 @@ void ListeningStats::played(const QString &title, const QString &artist, const Q
         m_data["lists"] = lists;
     }
     save();
+}
+
+bool ListeningStats::keepsHistory()
+{
+    return QSettings().value("history/keep", true).toBool();
+}
+
+void ListeningStats::setKeepHistory(bool on)
+{
+    QSettings().setValue("history/keep", on);
+    if (!on)
+        clearHistory();
+}
+
+void ListeningStats::clearHistory()
+{
+    m_data.remove("history");
+    save();
+}
+
+QList<ListeningStats::Entry> ListeningStats::history() const
+{
+    QList<Entry> out;
+    for (const QJsonValue &v : m_data.value("history").toArray()) {
+        const QJsonObject o = v.toObject();
+        out.append({QDateTime::fromString(o.value("at").toString(), Qt::ISODate), o.value("title").toString(),
+                    o.value("artist").toString(), o.value("id").toString(), o.value("list").toString(),
+                    o.value("video").toBool()});
+    }
+    return out;
+}
+
+void ListeningStats::sortOutVideos(const QSet<QString> &videoIds)
+{
+    if (m_data.value("videosApart").toBool() || videoIds.isEmpty())
+        return;
+    QJsonObject songs = m_data.value("songs").toObject();
+    QJsonObject videos = m_data.value("videos").toObject();
+    QJsonObject artists = m_data.value("artists").toObject();
+    for (const QString &key : songs.keys()) {
+        const QJsonObject s = songs.value(key).toObject();
+        if (!videoIds.contains(s.value("id").toString()))
+            continue;
+        QJsonObject v = videos.value(key).toObject(s);
+        if (videos.contains(key))
+            v["plays"] = v.value("plays").toInt() + s.value("plays").toInt();
+        videos[key] = v;
+        songs.remove(key);
+        // Its plays came off the channel's count as an artist too.
+        const QString who = s.value("artist").toString().toLower();
+        if (artists.contains(who)) {
+            QJsonObject a = artists.value(who).toObject();
+            const int left = a.value("plays").toInt() - s.value("plays").toInt();
+            if (left > 0) {
+                a["plays"] = left;
+                artists[who] = a;
+            } else {
+                artists.remove(who);
+            }
+        }
+    }
+    m_data["songs"] = songs;
+    m_data["videos"] = videos;
+    m_data["artists"] = artists;
+    m_data["videosApart"] = true;
+    save();
+}
+
+QList<ListeningStats::Song> ListeningStats::topVideos(int count) const
+{
+    QList<Song> all;
+    const QJsonObject videos = m_data.value("videos").toObject();
+    for (auto it = videos.begin(); it != videos.end(); ++it) {
+        const QJsonObject s = it.value().toObject();
+        all.append({it.key(), s.value("title").toString(), s.value("artist").toString(),
+                    s.value("id").toString(), s.value("plays").toInt()});
+    }
+    std::stable_sort(all.begin(), all.end(), [](const Song &a, const Song &b) { return a.plays > b.plays; });
+    return all.mid(0, count);
 }
 
 QList<ListeningStats::Song> ListeningStats::topSongs(int count) const
@@ -289,7 +385,7 @@ QDateTime ListeningStats::since() const
 
 bool ListeningStats::empty() const
 {
-    return m_data.value("songs").toObject().isEmpty();
+    return m_data.value("songs").toObject().isEmpty() && m_data.value("videos").toObject().isEmpty();
 }
 
 // -- page ----------------------------------------------------------------------
@@ -358,7 +454,24 @@ ProfilePage::ProfilePage(QWidget *parent) : QWidget(parent)
     m_songsTitle = section("Top songs");
     m_songs = new QVBoxLayout;
     m_songs->setSpacing(4);
+    m_videosTitle = section("Top videos");
+    m_videos = new QVBoxLayout;
+    m_videos->setSpacing(4);
     m_listsTitle = section("Most played playlists");
+    // The last plays, songs and videos together, newest first.
+    m_historyTitle = section("History");
+    m_history = new QVBoxLayout;
+    m_history->setSpacing(2);
+    m_historyNote = new QLabel;
+    m_historyNote->setObjectName("statLabel");
+    m_historyNote->setWordWrap(true);
+    m_historyMore = new QPushButton("Show more");
+    m_historyMore->setObjectName("link");
+    m_historyMore->setCursor(Qt::PointingHandCursor);
+    connect(m_historyMore, &QPushButton::clicked, this, [this] {
+        if (onMoreHistory)
+            onMoreHistory();
+    });
     m_listsBox = new QVBoxLayout;
     m_listsBox->setContentsMargins(0, 0, 0, 0);
     m_since = new QLabel;
@@ -376,8 +489,14 @@ ProfilePage::ProfilePage(QWidget *parent) : QWidget(parent)
     box->addLayout(m_artists);
     box->addWidget(m_songsTitle);
     box->addLayout(m_songs);
+    box->addWidget(m_videosTitle);
+    box->addLayout(m_videos);
     box->addWidget(m_listsTitle);
     box->addLayout(m_listsBox);
+    box->addWidget(m_historyTitle);
+    box->addWidget(m_historyNote);
+    box->addLayout(m_history);
+    box->addWidget(m_historyMore, 0, Qt::AlignLeft);
     box->addWidget(m_since);
     box->addStretch();
     setIdle();
@@ -455,12 +574,70 @@ void ProfilePage::setTopArtists(const QList<Artist> &artists)
     m_artistsTitle->setVisible(!artists.isEmpty());
 }
 
-void ProfilePage::setTopSongs(const QList<Song> &songs)
+namespace {
+
+void clearLayout(QLayout *layout)
 {
-    while (QLayoutItem *item = m_songs->takeAt(0)) {
+    while (QLayoutItem *item = layout->takeAt(0)) {
         delete item->widget();
         delete item;
     }
+}
+
+} // namespace
+
+void ProfilePage::setTopSongs(const QList<Song> &songs)
+{
+    fillRanked(m_songs, songs);
+    m_songsTitle->setVisible(!songs.isEmpty());
+}
+
+void ProfilePage::setTopVideos(const QList<Song> &videos)
+{
+    fillRanked(m_videos, videos);
+    m_videosTitle->setVisible(!videos.isEmpty());
+}
+
+void ProfilePage::setHistory(const QList<Played> &plays, bool more, bool keeping)
+{
+    clearLayout(m_history);
+    const qreal dpr = devicePixelRatioF();
+    for (const Played &p : plays) {
+        auto *row = new QWidget;
+        auto *cover = new QLabel;
+        cover->setFixedSize(40, 40);
+        cover->setPixmap(rounded(p.cover, 40, 5, dpr));
+        auto *title = new QLabel(p.title);
+        auto *sub = new QLabel(p.subtitle);
+        sub->setObjectName("statLabel");
+        auto *text = new QVBoxLayout;
+        text->setSpacing(0);
+        text->addWidget(title);
+        text->addWidget(sub);
+        auto *when = new QLabel(p.when);
+        when->setObjectName("statLabel");
+        auto *line = new QHBoxLayout(row);
+        line->setContentsMargins(4, 2, 12, 2);
+        line->setSpacing(12);
+        line->addWidget(cover);
+        line->addLayout(text, 1);
+        if (p.video) {
+            auto *kind = new QLabel(QStringLiteral("Video"));
+            kind->setObjectName("statLabel");
+            line->addWidget(kind);
+        }
+        line->addWidget(when);
+        m_history->addWidget(row);
+    }
+    m_historyNote->setText(keeping ? (plays.isEmpty() ? QStringLiteral("What you play shows up here.") : QString())
+                                   : QStringLiteral("History is off. Turn it on in Settings > Privacy."));
+    m_historyNote->setVisible(!m_historyNote->text().isEmpty());
+    m_historyMore->setVisible(more);
+}
+
+void ProfilePage::fillRanked(QVBoxLayout *into, const QList<Song> &songs)
+{
+    clearLayout(into);
     const qreal dpr = devicePixelRatioF();
     int number = 0;
     for (const Song &s : songs) {
@@ -488,9 +665,8 @@ void ProfilePage::setTopSongs(const QList<Song> &songs)
         line->addWidget(cover);
         line->addLayout(text, 1);
         line->addWidget(plays);
-        m_songs->addWidget(row);
+        into->addWidget(row);
     }
-    m_songsTitle->setVisible(!songs.isEmpty());
 }
 
 void ProfilePage::setListsShelf(QListWidget *shelf)

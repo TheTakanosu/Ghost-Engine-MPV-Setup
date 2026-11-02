@@ -15,15 +15,16 @@ Discord bot is a separate project.
 | Your playlists | `Music\Ghost Engine` (and any folder you add) |
 | Songs you download | `%LOCALAPPDATA%\TheTakanosu\Ghost Engine\offline` |
 | Covers, lyrics and song details, kept so they load fast | `%LOCALAPPDATA%\TheTakanosu\Ghost Engine\cache` |
-| What you have listened to, for the numbers on Home | `%LOCALAPPDATA%\TheTakanosu\Ghost Engine\listening.json` |
+| What you have listened to (play counts, and your history: the last 1,000 plays of the last 90 days) | `%LOCALAPPDATA%\TheTakanosu\Ghost Engine\listening.json` |
 | Your Discord name and avatar, for the profile card | `%LOCALAPPDATA%\TheTakanosu\Ghost Engine` |
 | Settings | the registry, `HKEY_CURRENT_USER\Software\TheTakanosu\Ghost Engine` |
 | Player settings and `cookies.txt`, if you add one | the mpv folder (`C:\mpv` by default) |
 | A crash report, if the app ever crashes | `%TEMP%\GhostEngine-crash.txt`; it is never sent anywhere |
 
-Deleting these removes everything Ghost Engine knows. `uninstall.bat` removes
-the mpv folder and the shortcuts only; the rest stays until you delete it, so
-your playlists and downloads survive a reinstall.
+The history can be turned off or cleared in Settings > Privacy; turning it
+off deletes it. Deleting these removes everything Ghost Engine knows.
+`uninstall.bat` removes the mpv folder and the shortcuts only; the rest stays
+until you delete it, so your playlists and downloads survive a reinstall.
 
 ## Who Ghost Engine talks to
 

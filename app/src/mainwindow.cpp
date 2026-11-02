@@ -364,6 +364,10 @@ MainWindow::MainWindow()
     m_videoPage = new VideoPage;
     m_pages->addWidget(m_videoPage);
     m_profilePage = new ProfilePage;
+    m_profilePage->onMoreHistory = [this] {
+        m_historyShown += 50;
+        refreshProfile();
+    };
     m_topLists = makeShelf();
     m_profilePage->setListsShelf(m_topLists);
     m_profilePage->onOpenPlaying = [this] { if (m_mpv.connected()) openPlayingList(); };
@@ -616,6 +620,15 @@ MainWindow::MainWindow()
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
     m_settings->onLookChanged = [this] { applyLook(); };
+    m_settings->onHistoryChanged = [this](bool on) {
+        m_stats.setKeepHistory(on);
+        refreshProfile();
+    };
+    m_settings->onClearHistory = [this] {
+        m_stats.clearHistory();
+        refreshProfile();
+        toast("History cleared");
+    };
     m_settings->onZoomChanged = [this](qreal zoom) { changeZoom(zoom - theme::zoom()); };
     // Settings > Performance: mpv takes the new cache at once (the file
     // playing keeps what it has loaded), the covers' budget too.
@@ -3140,6 +3153,18 @@ void MainWindow::refreshProfileUser()
 void MainWindow::refreshProfile()
 {
     refreshProfileUser();
+    if (!m_videosSorted) {
+        // Before 1.3.1 every play counted as a song: the ones whose video is
+        // in a video list were videos, and go over to Top videos.
+        m_videosSorted = true;
+        QSet<QString> ids;
+        for (const Playlist &p : m_library.playlists())
+            if (!p.audio)
+                for (const PlaylistEntry &e : p.readEntries())
+                    if (const QString id = youtube::videoId(e.target); !id.isEmpty())
+                        ids.insert(id);
+        m_stats.sortOutVideos(ids);
+    }
 
     // What friends see on Discord.
     const QString path = m_mpv.connected() ? m_mpv.property("path").toString() : QString();
@@ -3171,6 +3196,27 @@ void MainWindow::refreshProfile()
     for (const auto &s : m_stats.topSongs(5))
         songs.append({s.title, s.artist, m_covers.get(s.id, ThumbnailCache::Size::Card), s.plays});
     m_profilePage->setTopSongs(songs);
+    QList<ProfilePage::Song> videos;
+    for (const auto &s : m_stats.topVideos(5))
+        videos.append({s.title, s.artist, m_covers.get(s.id, ThumbnailCache::Size::Card), s.plays});
+    m_profilePage->setTopVideos(videos);
+
+    QList<ProfilePage::Played> plays;
+    const QList<ListeningStats::Entry> history = m_stats.history();
+    const QDateTime now = QDateTime::currentDateTime();
+    for (const auto &e : history.mid(0, m_historyShown)) {
+        const qint64 ago = e.at.secsTo(now);
+        const QString when = ago < 60 ? QStringLiteral("just now")
+                           : ago < 3600 ? QStringLiteral("%1 min ago").arg(ago / 60)
+                           : ago < 86400 ? QStringLiteral("%1 h ago").arg(ago / 3600)
+                           : ago < 2 * 86400 ? QStringLiteral("yesterday")
+                           : QLocale().toString(e.at.date(), QLocale::ShortFormat);
+        const QString list = e.list.isEmpty() ? QString() : Playlist::peek(e.list).name;
+        const QString sub = e.artist.isEmpty() ? list
+                          : list.isEmpty() ? e.artist : e.artist + QStringLiteral("  ·  ") + list;
+        plays.append({e.title, sub, when, m_covers.get(e.id, ThumbnailCache::Size::Card), e.video});
+    }
+    m_profilePage->setHistory(plays, history.size() > m_historyShown, ListeningStats::keepsHistory());
 
     const auto &all = m_library.playlists();
     QVector<int> lists;
@@ -3205,7 +3251,9 @@ void MainWindow::trackListening()
     QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
     if (id.isEmpty())
         id = idForTarget(path);
-    m_stats.played(track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist, id, playingListPath());
+    // On the video page it is a video; a song in the mini video is a song.
+    const bool video = !m_mpv.property("user-data/ghost/audio").toBool() || (songVideo() && !panelVideo());
+    m_stats.played(track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist, id, playingListPath(), video);
     if (m_pages->currentWidget() == m_profileScroll)
         m_profileSoon.start();
 }
@@ -4860,6 +4908,42 @@ void MainWindow::rememberPlayed(const QString &path)
     played.removeAll(path);
     played.prepend(path);
     settings.setValue("recent/played", played.mid(0, 20));
+
+    // The list just played goes to the top of the library, as Spotify's
+    // Recents does, and its folder to the top with it; pinned ones stay
+    // above. The level's whole order is written, so a list never placed
+    // (just added) no longer sits above it.
+    const QString key = QFileInfo(path).fileName();
+    QString folder;
+    for (const Playlist &p : m_library.playlists())
+        if (QFileInfo(p.path).fileName() == key)
+            folder = p.folder;
+    const auto toFront = [this, &settings](const QString &level, const QString &front) {
+        QStringList keys;
+        if (level.isEmpty()) {
+            for (const QString &f : m_library.subfolders())
+                keys << QStringLiteral("folder:") + f;
+            for (const Playlist &p : m_library.playlists())
+                if (p.folder.isEmpty())
+                    keys << QFileInfo(p.path).fileName();
+        } else {
+            for (const Playlist &p : m_library.playlists())
+                if (p.folder == level)
+                    keys << QFileInfo(p.path).fileName();
+        }
+        if (!keys.contains(front))
+            return;
+        const QStringList pinned = settings.value("library/pinned").toStringList();
+        QStringList order;
+        for (const QString &k : arranged(keys, level))
+            if (!pinned.contains(k) && k != front)
+                order << k;
+        order.prepend(front);
+        settings.setValue("library/order/" + (level.isEmpty() ? QStringLiteral("_top") : level), order);
+    };
+    toFront(folder, key);
+    if (!folder.isEmpty())
+        toFront(QString(), QStringLiteral("folder:") + folder);
     QTimer::singleShot(0, this, &MainWindow::refill);
 }
 

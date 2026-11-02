@@ -251,6 +251,8 @@ private:
     QString m_sharedAvatarUrl;
     void showSharedBy(const QString &tag);
     ListeningStats m_stats;
+    int m_historyShown = 20;      // rows of History on the profile; "Show more" adds 50
+    bool m_videosSorted = false;  // old song counts that were videos, moved over once
     ProfilePage *m_profilePage = nullptr;
     QWidget *m_profileScroll = nullptr;
     QListWidget *m_topLists = nullptr;

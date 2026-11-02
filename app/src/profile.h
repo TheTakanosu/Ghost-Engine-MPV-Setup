@@ -8,10 +8,12 @@
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QPixmap>
+#include <QSet>
 #include <QWidget>
 #include <functional>
 
 class QLabel;
+class QPushButton;
 class QListWidget;
 class QVBoxLayout;
 class QHBoxLayout;
@@ -70,15 +72,33 @@ private:
 
 // What has been listened to: a song counts as played after 30 seconds of it,
 // as Spotify counts. Kept in one small file next to the app's other data.
+// Songs and videos are counted apart: what played on the video page is a
+// video, a song in the mini video is still a song. The history is the last
+// plays in order, both kinds, kept short (kHistoryMax, kHistoryDays); it is
+// text only, the covers come from the cover cache.
 class ListeningStats {
 public:
     struct Song { QString key, title, artist, id; int plays = 0; };
     struct Count { QString name; int plays = 0; };
+    struct Entry { QDateTime at; QString title, artist, id, list; bool video = false; };
+    static constexpr int kHistoryMax = 1000;
+    static constexpr int kHistoryDays = 90;
 
     ListeningStats();
-    void played(const QString &title, const QString &artist, const QString &id, const QString &list);
+    void played(const QString &title, const QString &artist, const QString &id, const QString &list, bool video);
+
+    // Settings > Privacy: off stops the history and deletes it.
+    static bool keepsHistory();
+    void setKeepHistory(bool on);
+    void clearHistory();
+    QList<Entry> history() const;
+
+    // Plays counted as songs before videos were counted apart, moved over
+    // once: those whose video is in a video list.
+    void sortOutVideos(const QSet<QString> &videoIds);
 
     QList<Song> topSongs(int count) const;
+    QList<Song> topVideos(int count) const;
     QList<Count> topArtists(int count) const;
     QList<Count> topLists(int count) const;   // names are the lists' paths
     QDateTime since() const;
@@ -104,6 +124,10 @@ public:
     struct Song { QString title, artist; QPixmap cover; int plays = 0; };
     void setTopArtists(const QList<Artist> &artists);
     void setTopSongs(const QList<Song> &songs);
+    void setTopVideos(const QList<Song> &videos);
+    struct Played { QString title, subtitle, when; QPixmap cover; bool video = false; };
+    void setHistory(const QList<Played> &plays, bool more, bool keeping);
+    std::function<void()> onMoreHistory;
     void setListsShelf(QListWidget *shelf);
     void setListsVisible(bool visible);
     void setSince(const QDateTime &since, bool empty);
@@ -114,6 +138,8 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    void fillRanked(QVBoxLayout *into, const QList<Song> &songs);
+
     QLabel *m_avatar;
     QLabel *m_name;
     QLabel *m_info;
@@ -129,6 +155,12 @@ private:
     QHBoxLayout *m_artists;
     QLabel *m_songsTitle;
     QVBoxLayout *m_songs;
+    QLabel *m_videosTitle;
+    QVBoxLayout *m_videos;
+    QLabel *m_historyTitle;
+    QVBoxLayout *m_history;
+    QLabel *m_historyNote;
+    QPushButton *m_historyMore;
     QLabel *m_listsTitle;
     QVBoxLayout *m_listsBox;
     QLabel *m_since;
