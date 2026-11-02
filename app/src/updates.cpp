@@ -353,7 +353,7 @@ QStringList notesFor(const QString &version)
 {
     if (version == QLatin1String("1.3.1"))
         return {
-            "Themes: Default, Black, Light, or System to follow Windows. Settings > Appearance.",
+            "Themes: Purple, Black, Light, or Match Windows. Settings > Appearance.",
             "History on your profile, and your top videos apart from your top songs.",
             "The playlist you play moves to the top of your library.",
             "Pick up where you left off: what played last waits in the player bar.",

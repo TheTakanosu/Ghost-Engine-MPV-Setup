@@ -498,12 +498,12 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     }
     // The built-in themes; more come with the marketplace.
     m_theme = new QComboBox;
-    m_theme->addItem("Default", int(theme::Kind::Default));
+    m_theme->addItem("Purple (default)", int(theme::Kind::Default));
     m_theme->addItem("Black", int(theme::Kind::Black));
     m_theme->addItem("Light", int(theme::Kind::Light));
-    m_theme->addItem("System", int(theme::Kind::System));
+    m_theme->addItem("Match Windows", int(theme::Kind::System));
     m_theme->setMinimumWidth(190);
-    addRow(look, "Theme", "Default is Ghost Engine's violet, Black is all greys, System follows Windows' light or dark mode.", m_theme);
+    addRow(look, "Theme", "Black is all greys. Match Windows is Light when Windows is light and Purple when it is dark.", m_theme);
     m_covers = new QComboBox;
     m_covers->addItem("Rounded corners", false);
     m_covers->addItem("Circles", true);
