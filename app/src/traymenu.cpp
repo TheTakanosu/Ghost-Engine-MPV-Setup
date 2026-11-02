@@ -32,8 +32,8 @@ QPushButton *row(const QString &label)
     auto *button = new QPushButton(label);
     button->setCursor(Qt::PointingHandCursor);
     button->setStyleSheet(
-        "QPushButton { text-align: left; padding: 0 14px; min-height: 34px; max-height: 34px; border: none;"
-        " border-radius: 7px; background: transparent; color: rgb(240,240,245); font-size: 10.5pt; font-weight: 600; }"
+        "QPushButton { text-align: left; padding: 0 12px; min-height: 28px; max-height: 28px; border: none;"
+        " border-radius: 5px; background: transparent; color: rgb(232,232,238); font-size: 9pt; font-weight: 400; }"
         "QPushButton:hover { background: rgba(255,255,255,18); }");
     return button;
 }
@@ -42,7 +42,7 @@ QPushButton *row(const QString &label)
 // icon font came out as dots in this popup.
 icons::IconButton *glyph(icons::Icon icon, const QString &tip)
 {
-    auto *button = new icons::IconButton(icon, 32, tip);
+    auto *button = new icons::IconButton(icon, 26, tip);
     button->setColors(QColor(220, 218, 230), Qt::white);
     button->setCursor(Qt::PointingHandCursor);
     return button;
@@ -51,13 +51,13 @@ icons::IconButton *glyph(icons::Icon icon, const QString &tip)
 // The tick by "Keep running in the tray", drawn for the same reason.
 QPixmap tickMark(qreal dpr)
 {
-    QPixmap mark(QSize(14, 14) * dpr);
+    QPixmap mark(QSize(12, 12) * dpr);
     mark.setDevicePixelRatio(dpr);
     mark.fill(Qt::transparent);
     QPainter p(&mark);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QColor(240, 240, 245), 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.drawPolyline(QPolygonF{{2.5, 7.4}, {5.6, 10.4}, {11.6, 3.8}});
+    p.setPen(QPen(QColor(232, 232, 238), 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawPolyline(QPolygonF{{2.0, 6.4}, {4.8, 9.0}, {10.0, 3.2}});
     return mark;
 }
 
@@ -66,18 +66,18 @@ QPixmap tickMark(qreal dpr)
 TrayMenu::TrayMenu(QWidget *parent) : QWidget(parent, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint)
 {
     setAttribute(Qt::WA_TranslucentBackground);
-    setFixedWidth(270);
+    setFixedWidth(232);
 
     m_now = new QLabel;
-    m_now->setStyleSheet("color: rgb(176,174,188); font-size: 9.5pt; background: transparent; padding: 0 14px;");
+    m_now->setStyleSheet("color: rgb(176,174,188); font-size: 8.5pt; background: transparent; padding: 0 12px;");
     m_now->setMinimumWidth(0);
 
     auto *previous = glyph(icons::Icon::Previous, "Previous");
     m_pause = glyph(icons::Icon::Pause, "Pause");
     auto *next = glyph(icons::Icon::Next, "Next");
     auto *controls = new QHBoxLayout;
-    controls->setContentsMargins(8, 0, 8, 0);
-    controls->setSpacing(2);
+    controls->setContentsMargins(7, 0, 7, 0);
+    controls->setSpacing(0);
     controls->addWidget(previous);
     controls->addWidget(m_pause);
     controls->addWidget(next);
@@ -91,7 +91,7 @@ TrayMenu::TrayMenu(QWidget *parent) : QWidget(parent, Qt::Popup | Qt::FramelessW
     m_keepTick->setStyleSheet("background: transparent;");
     m_keepTick->setAttribute(Qt::WA_TransparentForMouseEvents);
     auto *tickRow = new QHBoxLayout(keep);
-    tickRow->setContentsMargins(0, 0, 14, 0);
+    tickRow->setContentsMargins(0, 0, 12, 0);
     tickRow->addStretch();
     tickRow->addWidget(m_keepTick);
     auto *updates = row("Check for updates...");
@@ -99,17 +99,17 @@ TrayMenu::TrayMenu(QWidget *parent) : QWidget(parent, Qt::Popup | Qt::FramelessW
     auto *quit = row("Quit Ghost Engine");
 
     auto *box = new QVBoxLayout(this);
-    box->setContentsMargins(6, 10, 6, 6);
-    box->setSpacing(2);
+    box->setContentsMargins(5, 8, 5, 5);
+    box->setSpacing(0);
     box->addWidget(m_now);
-    box->addSpacing(4);
+    box->addSpacing(3);
     box->addLayout(controls);
-    box->addSpacing(6);
+    box->addSpacing(4);
     for (QWidget *w : std::initializer_list<QWidget *>{line(), open, keep, line(), updates, thanks, line(), quit}) {
         if (qobject_cast<QFrame *>(w)) {   // a rule, with air either side
-            box->addSpacing(4);
+            box->addSpacing(5);
             box->addWidget(w);
-            box->addSpacing(4);
+            box->addSpacing(5);
         } else {
             box->addWidget(w);
         }
@@ -144,7 +144,7 @@ void TrayMenu::setNowPlaying(const QString &title, const QString &artist, bool p
     const QString shown = title.isEmpty() ? QStringLiteral("Nothing playing")
                                           : (artist.isEmpty() ? title : title + QStringLiteral(" · ") + artist);
     m_now->setToolTip(title.isEmpty() ? QString() : shown);
-    m_now->setText(m_now->fontMetrics().elidedText(shown, Qt::ElideRight, width() - 12 - 28));
+    m_now->setText(m_now->fontMetrics().elidedText(shown, Qt::ElideRight, width() - 10 - 24));
     m_pause->setIcon(paused ? icons::Icon::Play : icons::Icon::Pause);
     m_pause->setToolTip(paused ? "Play" : "Pause");
 }
@@ -181,5 +181,5 @@ void TrayMenu::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(QPen(kHairline, 1));
     p.setBrush(kCard);
-    p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12);
+    p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 9, 9);
 }
