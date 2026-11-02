@@ -133,7 +133,6 @@ protected:
 // double click goes full screen, the wheel scrolls the page, as on YouTube.
 class CornerMask : public Floating {
 public:
-    QColor fill{22, 21, 27};   // the panel the page sits on
     QRect picture;             // the whole picture, in this window's coordinates
     std::function<void()> clicked;
     std::function<void()> doubleClicked;
@@ -159,7 +158,7 @@ protected:
         QPainterPath shape;
         shape.addRoundedRect(QRectF(picture.isEmpty() ? rect() : picture), corner, corner);
         p.setCompositionMode(QPainter::CompositionMode_Source);
-        p.fillPath(outside.subtracted(shape), fill);
+        p.fillPath(outside.subtracted(shape), theme::window());   // the panel the page sits on
     }
     void mouseReleaseEvent(QMouseEvent *event) override
     {
@@ -625,10 +624,12 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
         const QRectF box = QRectF(rect()).adjusted(1, 1, -1, -1);
-        if (underMouse() || isDown()) {
+        // On is lit as well as coloured: Black's accent is as white as the
+        // icon, and the colour alone said nothing there.
+        if (underMouse() || isDown() || m_on) {
             QPainterPath round;
             round.addRoundedRect(box, box.height() / 2, box.height() / 2);
-            p.fillPath(round, QColor(255, 255, 255, isDown() ? 46 : 30));
+            p.fillPath(round, QColor(255, 255, 255, isDown() ? 46 : m_on ? 56 : 30));
         }
         QFont f = font();
         if (m_glyph)
@@ -705,13 +706,28 @@ NativeSurface::NativeSurface(QWidget *window)
         wc.lpszClassName = kClass;
         // The panels' colour: while the picture is being made larger, mpv
         // draws the new part a moment later, and black there stood out.
-        wc.hbrBackground = CreateSolidBrush(RGB(22, 21, 27));
+        wc.hbrBackground = nullptr;   // painted with the theme's colour below
         RegisterClassW(&wc);
         registered = true;
     }
     m_hwnd = CreateWindowExW(0, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1,
                              reinterpret_cast<HWND>(window->winId()), nullptr, GetModuleHandleW(nullptr), nullptr);
     m_dpr = window->devicePixelRatioF();
+    // The panels' colour, the theme's: while the picture is made larger, or
+    // before its first frame, this shows, and a fixed dark violet stood out
+    // in Black and Light.
+    const auto paint = [hwnd = static_cast<HWND>(m_hwnd)] {
+        static HBRUSH brush = nullptr;
+        const QColor c = theme::window();
+        HBRUSH next = CreateSolidBrush(RGB(c.red(), c.green(), c.blue()));
+        SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, reinterpret_cast<LONG_PTR>(next));
+        if (brush)
+            DeleteObject(brush);
+        brush = next;
+        InvalidateRect(hwnd, nullptr, TRUE);
+    };
+    paint();
+    theme::whenChanged(window, paint);
 }
 
 void VideoPage::ignorePictureClicks()

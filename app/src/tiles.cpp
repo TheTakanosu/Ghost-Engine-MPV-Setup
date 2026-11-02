@@ -335,17 +335,19 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
     const bool selected = option.state & QStyle::State_Selected;
     const bool hover = option.state & QStyle::State_MouseOver;
     const bool playing = index.data(kPlayingRole).toBool();
-    if (selected || hover) {
+    // What is playing stands on a card of its own too, so it is found at a
+    // glance whatever the theme's accent (Black's is near white).
+    if (selected || hover || playing) {
         QPainterPath bg;
         bg.addRoundedRect(card.adjusted(-6, -6, 6, 2), 14, 14);
-        painter->fillPath(bg, selected ? theme::cardSelected() : theme::cardHover());
+        painter->fillPath(bg, selected || playing ? theme::cardSelected() : theme::cardHover());
     }
     const QRectF thumb(card.left(), card.top(), card.width(), card.width() * 9 / 16);
     paintCover(*painter, thumb, m_coverFor ? m_coverFor(index) : QPixmap(), index.data(Qt::DisplayRole).toString(), 12);
     if (playing) {
         QPainterPath ring;
-        ring.addRoundedRect(thumb.adjusted(1, 1, -1, -1), 12, 12);
-        painter->setPen(QPen(theme::accent(), 3));
+        ring.addRoundedRect(thumb.adjusted(1.5, 1.5, -1.5, -1.5), 12, 12);
+        painter->setPen(QPen(theme::accent(), 3.5));
         painter->drawPath(ring);
     }
 
@@ -362,7 +364,8 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
         b.addRoundedRect(badge, 5, 5);
         painter->fillPath(b, playing ? theme::accent() : QColor(0, 0, 0, 200));
         painter->setFont(small);
-        painter->setPen(playing ? theme::accentText() : Qt::white);
+        // On the accent: the theme's text for it, dark on violet or white.
+        painter->setPen(playing ? theme::c().onAccent : Qt::white);
         painter->drawText(badge, Qt::AlignCenter, badgeText);
     }
 
