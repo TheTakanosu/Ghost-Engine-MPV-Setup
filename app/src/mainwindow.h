@@ -258,7 +258,13 @@ private:
     QListWidget *m_topLists = nullptr;
     class QPushButton *m_profileButton = nullptr;
     QTimer m_profileSoon;
+    QTimer m_resumeSave;
     void refreshProfile();
+    // "Pick up where you left off": where mpv is, kept every few seconds and
+    // on quitting, then shown in the bar while nothing plays.
+    void saveResume();
+    void showResume();
+    void resume();
     void refreshProfileUser();
     // A song counts as played after 30 seconds of it.
     void trackListening();

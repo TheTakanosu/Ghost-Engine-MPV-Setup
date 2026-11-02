@@ -30,6 +30,11 @@ public:
     void setVolumeNumber(bool shown);
     void setLyricsOpen(bool open);
     void setPanelOpen(bool open);
+    // "Pick up where you left off": while nothing plays, the last song stands
+    // here, paused at its second, and play starts it again (onResume). An
+    // empty title takes it away.
+    void setResume(const QString &title, const QString &subtitle, const QString &coverId, double at, double duration);
+    std::function<void()> onResume;
 
 signals:
     // The cover was clicked: show the list mpv is playing.
@@ -69,4 +74,5 @@ private:
     class QPushButton *m_lyrics;
     class QPushButton *m_panel;
     bool m_dragging = false;
+    struct Resume { QString title, subtitle, coverId; double at = 0, duration = 0; } m_resume;
 };

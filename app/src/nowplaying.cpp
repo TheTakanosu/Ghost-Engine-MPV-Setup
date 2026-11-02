@@ -229,7 +229,12 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
 
     connect(prev, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-prev"}); });
     connect(next, &QAbstractButton::clicked, this, [this] { m_mpv->command({"playlist-next"}); });
-    connect(m_playPause, &QAbstractButton::clicked, this, [this] { m_mpv->command({"cycle", "pause"}); });
+    connect(m_playPause, &QAbstractButton::clicked, this, [this] {
+        if (!m_mpv->connected() && !m_resume.title.isEmpty() && onResume)
+            onResume();
+        else
+            m_mpv->command({"cycle", "pause"});
+    });
     connect(m_shuffle, &QAbstractButton::clicked, this, [this] {
         if (!m_mpv->connected())
             return;
@@ -290,14 +295,35 @@ bool NowPlayingBar::eventFilter(QObject *watched, QEvent *event)
     return true;
 }
 
+void NowPlayingBar::setResume(const QString &title, const QString &subtitle, const QString &coverId, double at,
+                              double duration)
+{
+    m_resume = {title, subtitle, coverId, at, duration};
+    if (!m_mpv->connected())
+        showIdle();
+}
+
 void NowPlayingBar::showIdle()
 {
+    m_playPause->setIcon(icons::Icon::Play);
+    if (!m_resume.title.isEmpty()) {
+        // Where the last session stopped, waiting for play.
+        m_title->setText(m_resume.title);
+        m_subtitle->setText(m_resume.subtitle);
+        m_elapsed->setText(clock(m_resume.at));
+        m_total->setText(m_resume.duration > 0 ? clock(m_resume.duration) : QStringLiteral("--:--"));
+        m_position->setValue(m_resume.duration > 0 ? int(1000 * m_resume.at / m_resume.duration) : 0);
+        m_cover->setPixmap(rounded(m_covers->get(m_resume.coverId, ThumbnailCache::Size::Card), m_resume.title, 58));
+        m_shuffled = false;
+        showShuffle();
+        showRepeat();
+        return;
+    }
     m_title->setText("Nothing playing");
     m_subtitle->setText("Pick a playlist and press play");
     m_elapsed->setText("--:--");
     m_total->setText("--:--");
     m_position->setValue(0);
-    m_playPause->setIcon(icons::Icon::Play);
     m_cover->setPixmap(rounded({}, "G", 58));
     m_shuffled = false;
     showShuffle();
@@ -354,7 +380,7 @@ void NowPlayingBar::showRepeat()
 void NowPlayingBar::refreshCover()
 {
     if (!m_mpv->connected()) {
-        m_cover->setPixmap(rounded({}, "G", 58));   // in the shape the settings ask for
+        showIdle();   // the last song's cover, or the G, in the shape the settings ask for
         return;
     }
     QString id = youtube::videoId(m_mpv->property("user-data/ghost/source").toString());

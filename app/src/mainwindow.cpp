@@ -619,7 +619,17 @@ MainWindow::MainWindow()
     });
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
+    m_nowPlaying->onResume = [this] { resume(); };
+    m_resumeSave.setInterval(10000);
+    connect(&m_resumeSave, &QTimer::timeout, this, &MainWindow::saveResume);
+    m_resumeSave.start();
+    connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
+        if (!on)
+            showResume();
+    });
+    QTimer::singleShot(0, this, &MainWindow::showResume);
     m_settings->onLookChanged = [this] { applyLook(); };
+    m_settings->onResumeChanged = [this] { showResume(); };
     m_settings->onHistoryChanged = [this](bool on) {
         m_stats.setKeepHistory(on);
         refreshProfile();
@@ -1031,6 +1041,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         event->ignore();
         return;
     }
+    saveResume();   // before mpv goes
     if (m_mpvEmbedded && m_mpv.connected()) {
         m_mpv.command({"quit"});
         m_mpv.flush();
@@ -3148,6 +3159,55 @@ void MainWindow::refreshProfileUser()
     p.end();
     m_profileButton->setIcon(QIcon(icon));
     m_profileButton->setToolTip(name.isEmpty() ? QStringLiteral("Profile") : name);
+}
+
+void MainWindow::saveResume()
+{
+    if (!m_mpv.connected())
+        return;
+    const QString list = playingListPath();
+    const QString path = m_mpv.property("path").toString();
+    if (list.isEmpty() || path.isEmpty() || !QFileInfo::exists(list))
+        return;
+    const auto [artist, track] = playingSong();
+    QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+    if (id.isEmpty())
+        id = idForTarget(path);
+    QSettings settings;
+    settings.setValue("resume/list", list);
+    settings.setValue("resume/pos", m_mpv.property("playlist-pos").toInt());
+    settings.setValue("resume/at", m_mpv.property("time-pos").toDouble());
+    settings.setValue("resume/duration", m_mpv.property("duration").toDouble());
+    settings.setValue("resume/title", track.isEmpty() ? m_mpv.property("media-title").toString() : track);
+    settings.setValue("resume/artist", artist);
+    settings.setValue("resume/id", id);
+}
+
+void MainWindow::showResume()
+{
+    QSettings settings;
+    const QString list = settings.value("resume/list").toString();
+    if (!settings.value("playback/resume", true).toBool() || list.isEmpty() || !QFileInfo::exists(list)) {
+        m_nowPlaying->setResume({}, {}, {}, 0, 0);
+        return;
+    }
+    const QString artist = settings.value("resume/artist").toString();
+    const QString name = Playlist::peek(list).name;
+    m_nowPlaying->setResume(settings.value("resume/title").toString(),
+                            artist.isEmpty() ? name : artist + QStringLiteral("  ·  ") + name,
+                            settings.value("resume/id").toString(), settings.value("resume/at").toDouble(),
+                            settings.value("resume/duration").toDouble());
+}
+
+void MainWindow::resume()
+{
+    // The same list, from the same song and second; shuffle starts afresh.
+    QSettings settings;
+    const QString list = settings.value("resume/list").toString();
+    if (list.isEmpty() || !QFileInfo::exists(list))
+        return;
+    m_startSeconds = settings.value("resume/at").toDouble();
+    play(list, false, settings.value("resume/pos").toInt());
 }
 
 void MainWindow::refreshProfile()

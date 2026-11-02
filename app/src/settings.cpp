@@ -404,6 +404,17 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     volumeRow->addWidget(m_volume);
     volumeRow->addWidget(m_volumeValue);
     addRow(playback, "Starting volume", "The volume mpv opens at.", volumeBox);
+    m_resume = new ToggleSwitch;
+    addRow(playback, "Pick up where you left off",
+           "When the app opens, the last song waits in the player bar at the second it stopped; play goes on from there.",
+           m_resume);
+    connect(m_resume, &QAbstractButton::toggled, this, [this](bool on) {
+        if (m_loading)
+            return;
+        QSettings().setValue("playback/resume", on);
+        if (onResumeChanged)
+            onResumeChanged();
+    });
 
     // The player window (Batın's "app only / mpv only").
     QVBoxLayout *window;
@@ -803,6 +814,7 @@ void SettingsPage::load()
     m_volumeNumber->setChecked(settings.value("look/volumeNumber", false).toBool());
     m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());
     m_history->setChecked(settings.value("history/keep", true).toBool());
+    m_resume->setChecked(settings.value("playback/resume", true).toBool());
     m_presenceVideos->setChecked(settings.value("presence/videos", true).toBool());
     m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));
     m_zoom->setZoom(theme::zoom());
