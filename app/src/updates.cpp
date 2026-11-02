@@ -92,14 +92,6 @@ void UpdateChecker::check()
 
 namespace {
 
-// The window's own colours: a card a step above the app's background, a
-// hairline round it, text in three weights of grey.
-const QColor kCard(30, 29, 37);
-const QColor kHairline(255, 255, 255, 26);
-const QColor kText(240, 240, 245);
-const QColor kSoft(196, 194, 206);
-const QColor kMuted(138, 136, 152);
-
 // A tick box drawn as the app draws its controls: a rounded square, filled
 // with the accent and a white tick when on, faint when it cannot be ticked.
 class TickBox : public QAbstractButton {
@@ -121,13 +113,13 @@ protected:
             p.setPen(Qt::NoPen);
             p.setBrush(theme::accent());
             p.drawRoundedRect(box, 4, 4);
-            QPen tick(QColor(24, 18, 34), 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+            QPen tick(theme::c().onAccent, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
             p.setPen(tick);
             p.drawPolyline(QPolygonF{{box.left() + 3.6, box.center().y() + 0.2},
                                      {box.left() + 6.4, box.bottom() - 3.6},
                                      {box.right() - 3.2, box.top() + 4}});
         } else {
-            p.setPen(QPen(isEnabled() ? QColor(120, 118, 136) : QColor(70, 68, 82), 1.2));
+            p.setPen(QPen(isEnabled() ? theme::c().faint : theme::c().track, 1.2));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(box, 4, 4);
         }
@@ -159,21 +151,21 @@ UpdateDialog::UpdateDialog(const QList<updates::Part> &parts, QWidget *parent) :
     for (const updates::Part &p : parts)
         anyNewer = anyNewer || p.newer;
 
-    auto *title = text("Updates", 13, kText, QFont::DemiBold);
+    auto *title = text("Updates", 13, theme::c().textBright, QFont::DemiBold);
     auto *close = new QPushButton(QChar(0xE711));
     close->setCursor(Qt::PointingHandCursor);
     close->setFixedSize(28, 28);
     close->setToolTip("Close");
-    close->setStyleSheet(QStringLiteral(
+    close->setStyleSheet(theme::css(QStringLiteral(
         "QPushButton { font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 10pt; color: %1;"
         " background: transparent; border: none; border-radius: 14px; }"
-        "QPushButton:hover { background: rgba(255,255,255,20); color: %2; }").arg(kMuted.name(), kText.name()));
+        "QPushButton:hover { background: @raised; color: %2; }").arg(theme::c().muted.name(), theme::c().textBright.name())));
     connect(close, &QPushButton::clicked, this, &QDialog::reject);
     auto *head = new QHBoxLayout;
     head->addWidget(title, 1);
     head->addWidget(close, 0, Qt::AlignTop);
     auto *about = text(anyNewer ? "Pick what to update. Each download is checked against its SHA-256."
-                                : "Everything is up to date.", 10, kSoft);
+                                : "Everything is up to date.", 10, theme::c().textBody);
 
     auto *box = new QVBoxLayout(this);
     box->setContentsMargins(24, 18, 18, 22);
@@ -202,19 +194,19 @@ UpdateDialog::UpdateDialog(const QList<updates::Part> &parts, QWidget *parent) :
                                                         : p.installed + QStringLiteral(" → ") + p.latest;
             words->addWidget(text(QStringLiteral("<span style='color:%1; font-weight:700'>%2</span>"
                                                  "&nbsp;&nbsp;<span style='color:%3'>%4</span>")
-                                      .arg(kText.name(), p.name.toHtmlEscaped(), kSoft.name(), versions.toHtmlEscaped()),
-                                  10.5, kText));
+                                      .arg(theme::c().textBright.name(), p.name.toHtmlEscaped(), theme::c().textBody.name(), versions.toHtmlEscaped()),
+                                  10.5, theme::c().textBright));
             QString line = what(p.key);
             if (!p.notes.isEmpty())
                 line += QStringLiteral(" · <a href='%1' style='%2'>What's new</a>").arg(p.notes, link);
-            auto *second = text(line, 9.5, kMuted);
+            auto *second = text(line, 9.5, theme::c().muted);
             second->setTextFormat(Qt::RichText);
             second->setOpenExternalLinks(true);
             words->addWidget(second);
         } else {
             const QString state = p.latest.isEmpty() && p.key != "node" ? QStringLiteral("couldn't check")
                                                                         : QStringLiteral("up to date");
-            words->addWidget(text(QStringLiteral("%1 %2 · %3").arg(p.name, p.installed, state).toHtmlEscaped(), 10.5, kMuted));
+            words->addWidget(text(QStringLiteral("%1 %2 · %3").arg(p.name, p.installed, state).toHtmlEscaped(), 10.5, theme::c().muted));
         }
         auto *row = new QHBoxLayout;
         row->setSpacing(12);
@@ -225,14 +217,14 @@ UpdateDialog::UpdateDialog(const QList<updates::Part> &parts, QWidget *parent) :
         m_rows.append({p, tick});
     }
 
-    m_status = text(QString(), 9.5, kSoft);
+    m_status = text(QString(), 9.5, theme::c().textBody);
     m_status->hide();
     m_log = new QPlainTextEdit;
     m_log->setReadOnly(true);
     m_log->setMinimumHeight(110);
-    m_log->setStyleSheet(QStringLiteral("QPlainTextEdit { background: rgb(22,21,27); color: %1; border: 1px solid "
-                                        "rgba(255,255,255,20); border-radius: 8px; padding: 6px; font-size: 9pt; }")
-                             .arg(kSoft.name()));
+    theme::style(m_log, QStringLiteral("QPlainTextEdit { background: @window; color: %1; border: 1px solid "
+                                        "@line; border-radius: 8px; padding: 6px; font-size: 9pt; }")
+                             .arg(theme::c().textBody.name()));
     m_log->hide();
     box->addWidget(m_status);
     box->addWidget(m_log);
@@ -242,13 +234,13 @@ UpdateDialog::UpdateDialog(const QList<updates::Part> &parts, QWidget *parent) :
     m_update = new QPushButton;
     const QString shape = QStringLiteral("min-height: 36px; max-height: 36px; padding: 0 20px; border-radius: 9px;"
                                          " font-size: 10.5pt; font-weight: 600;");
-    m_later->setStyleSheet(QStringLiteral(
-        "QPushButton { %1 color: %2; background: transparent; border: 1px solid rgb(84,82,98); }"
-        "QPushButton:hover { background: rgba(255,255,255,14); }").arg(shape, kText.name()));
-    m_update->setStyleSheet(QStringLiteral(
-        "QPushButton { %1 color: rgb(24,18,34); background: %2; border: none; }"
-        "QPushButton:hover { background: rgb(196,152,240); }"
-        "QPushButton:disabled { background: rgb(70,62,86); color: rgb(150,144,164); }").arg(shape, theme::accent().name()));
+    theme::style(m_later, QStringLiteral(
+        "QPushButton { %1 color: %2; background: transparent; border: 1px solid @tick; }"
+        "QPushButton:hover { background: @raised; }").arg(shape, theme::c().textBright.name()));
+    theme::style(m_update, QStringLiteral(
+        "QPushButton { %1 color: @onAccent; background: %2; border: none; }"
+        "QPushButton:hover { background: @accentHover; }"
+        "QPushButton:disabled { background: @track; color: @muted; }").arg(shape, theme::accent().name()));
     for (QPushButton *b : {m_later, m_update})
         b->setCursor(Qt::PointingHandCursor);
     m_update->setVisible(anyNewer);
@@ -278,8 +270,8 @@ void UpdateDialog::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(kHairline, 1));
-    p.setBrush(kCard);
+    p.setPen(QPen(theme::c().line, 1));
+    p.setBrush(theme::c().popup);
     p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
 }
 

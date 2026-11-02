@@ -100,6 +100,7 @@ private:
     QLabel *m_volumeValue;
     ToggleSwitch *m_window;
     ToggleSwitch *m_embedVideo;
+    QComboBox *m_theme;
     QComboBox *m_covers;
     ToggleSwitch *m_volumeNumber;
     ToggleSwitch *m_presenceSongs;

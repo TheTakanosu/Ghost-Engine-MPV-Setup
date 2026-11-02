@@ -1,5 +1,7 @@
 #include "icons.h"
 
+#include "theme.h"
+
 #include <QPainter>
 #include <QPainterPath>
 
@@ -123,14 +125,14 @@ void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color
             // it in the bar's dark, big enough to read at the bar's size.
             const qreal d = s * 0.64;
             const QRectF badge(r.right() - d * 0.92, r.top() - d * 0.12, d, d);
-            painter.setPen(QPen(QColor(12, 11, 15), s * 0.08));
+            painter.setPen(QPen(theme::c().base, s * 0.08));
             painter.setBrush(color);
             painter.drawEllipse(badge);
             QFont f = painter.font();
             f.setPixelSize(qMax(8, int(d * 0.82)));
             f.setWeight(QFont::Black);
             painter.setFont(f);
-            painter.setPen(QColor(12, 11, 15));
+            painter.setPen(theme::c().base);
             painter.drawText(badge.adjusted(0, -d * 0.04, 0, 0), Qt::AlignCenter, QStringLiteral("1"));
         }
         break;
@@ -234,11 +236,14 @@ void IconButton::paintEvent(QPaintEvent *)
     const qreal glyph = (m_round ? 0.4 : 0.62) * box.width() * scale;
     // With a dot, the icon moves up a little to make room under it.
     const qreal lift = m_dot ? box.height() * 0.1 : 0;
+    // Left unset, the colours are the theme's, read now so a theme change shows.
+    const QColor normal = m_normal.isValid() ? m_normal : theme::c().dim;
+    const QColor hover = m_hover.isValid() ? m_hover : theme::c().strong;
     paint(p, m_icon, QRectF(box.center().x() - glyph / 2, box.center().y() - glyph / 2 - lift, glyph, glyph),
-          hot ? m_hover : m_normal);
+          hot ? hover : normal);
     if (m_dot) {
         p.setPen(Qt::NoPen);
-        p.setBrush(m_normal);
+        p.setBrush(normal);
         const qreal d = qMax(3.0, box.width() * 0.13);
         p.drawEllipse(QRectF(box.center().x() - d / 2, box.bottom() - d - 0.5, d, d));
     }

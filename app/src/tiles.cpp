@@ -168,7 +168,7 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         // One line: a folder's mark or nothing, the name, then what it is.
         // A thin line down the left of a folder's lists ties them to it.
         if (indent > 0) {
-            painter->setPen(QPen(QColor(70, 68, 84), 1.5));
+            painter->setPen(QPen(theme::c().tick, 1.5));
             painter->drawLine(QPointF(row.left() + 18, row.top() - 2), QPointF(row.left() + 18, row.bottom() + 2));
         }
         qreal x = row.left() + 10 + indent;
@@ -203,7 +203,7 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (folder) {
         QPainterPath tile;
         tile.addRoundedRect(cover, playlistRadius(cover, 6), playlistRadius(cover, 6));
-        painter->fillPath(tile, QColor(40, 39, 50));
+        painter->fillPath(tile, theme::c().raised);
         const qreal mark = side * 0.42;
         icons::paint(*painter, icons::Icon::Folder,
                      QRectF(cover.center().x() - mark / 2, cover.center().y() - mark / 2, mark, mark),
@@ -392,7 +392,7 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
                           tm.elidedText(text.mid(cut).trimmed(), Qt::ElideRight, titleBox.width()));
 
     painter->setFont(small);
-    painter->setPen(QColor(154, 152, 166));
+    painter->setPen(theme::c().muted);
     // The channel, then when it was added, as YouTube's cards have them.
     QStringList parts;
     const QString byline = channelFor ? channelFor(index) : QString();

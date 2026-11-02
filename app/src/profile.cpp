@@ -1,4 +1,5 @@
 #include "profile.h"
+#include "theme.h"
 
 #include <QDir>
 #include <QEvent>
@@ -44,7 +45,7 @@ QPixmap rounded(const QPixmap &source, int side, qreal radius, qreal dpr)
     shape.addRoundedRect(QRectF(0, 0, side, side), radius, radius);
     p.setClipPath(shape);
     if (source.isNull()) {
-        p.fillRect(QRectF(0, 0, side, side), QColor(40, 38, 48));
+        p.fillRect(QRectF(0, 0, side, side), theme::c().raised);
     } else {
         const int edge = qMin(source.width(), source.height());
         p.drawPixmap(QRectF(0, 0, side, side), source,
@@ -63,7 +64,7 @@ QPixmap initials(const QString &name, int side, qreal dpr)
     font.setPixelSize(side * 2 / 5);
     font.setWeight(QFont::Bold);
     p.setFont(font);
-    p.setPen(QColor(160, 156, 175));
+    p.setPen(theme::c().dim);
     p.drawText(QRectF(0, 0, side, side), Qt::AlignCenter, name.left(1).toUpper());
     return out;
 }

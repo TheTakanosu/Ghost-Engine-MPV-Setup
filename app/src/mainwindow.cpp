@@ -308,9 +308,15 @@ protected:
                 .scaled(1, 1, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).pixelColor(0, 0);
             tint = QColor::fromHsv(avg.hsvHue(), qMin(avg.hsvSaturation(), 150), qBound(70, avg.value(), 120));
         }
+        // On a light theme the title is dark, so the wash is a pale tint of
+        // the same colour instead.
+        if (theme::c().light)
+            tint = QColor::fromHsv(tint.hsvHue(), qMin(tint.hsvSaturation(), 70), 232);
+        QColor clear = theme::window();
+        clear.setAlpha(0);
         QLinearGradient wash(0, 0, 0, height());
         wash.setColorAt(0, tint);
-        wash.setColorAt(1, QColor(22, 21, 27, 0));
+        wash.setColorAt(1, clear);
         QPainterPath top;
         top.addRoundedRect(QRectF(rect()).adjusted(0, 0, 0, 20), 12, 12);
         p.fillPath(top, wash);
@@ -1136,7 +1142,7 @@ QWidget *MainWindow::buildTopBar()
     // Only there while something is behind, in the accent colour: noticed,
     // never in the way, and nothing opens by itself.
     m_updateButton = glyphButton(QChar(0xE896), "Updates are available", "pill");
-    m_updateButton->setStyleSheet(QStringLiteral("color: %1;").arg(theme::accent().name()));
+    theme::style(m_updateButton, QStringLiteral("color: @accent;"));
     m_updateButton->hide();
     connect(m_updateButton, &QPushButton::clicked, this, &MainWindow::showUpdates);
     connect(minimize, &QPushButton::clicked, this, &MainWindow::showMinimized);
@@ -1869,12 +1875,19 @@ QWidget *MainWindow::buildPlaylistPage()
     m_headRow->addLayout(text, 1);
 
     auto *playButton = new icons::IconButton(icons::Icon::Play, 56, "Play");
-    playButton->setRound(theme::accent(), theme::accentText(), QColor(24, 18, 34));
+    playButton->setRound(theme::accent(), theme::accentText(), theme::c().onAccent);
+    theme::whenChanged(playButton, [playButton] {
+        playButton->setRound(theme::accent(), theme::accentText(), theme::c().onAccent);
+    });
     auto *shuffleButton = new icons::IconButton(icons::Icon::Shuffle, 40, "Shuffle");
     auto *folderButton = new icons::IconButton(icons::Icon::Folder, 40, "Show in folder");
     connect(playButton, &QAbstractButton::clicked, this, [this] { playOpen(0); });
     shuffleButton->setToolTip("Shuffle the order of this list");
     m_pageShuffle = shuffleButton;
+    theme::whenChanged(shuffleButton, [this, shuffleButton] {
+        const bool on = m_sortKey == SortKey::Shuffled;
+        shuffleButton->setColors(on ? theme::accent() : theme::c().dim, on ? theme::accent().lighter(120) : theme::c().strong);
+    });
     connect(shuffleButton, &QAbstractButton::clicked, this, [this] {
         // On: the songs in a new random order. Off: back to the list's own.
         // Nothing starts playing; Play then follows the order shown.
@@ -2143,7 +2156,7 @@ QString MainWindow::titleSheet(qreal points, bool hidden)
 {
     // The size is the title's own; its tooltip ("Double-click to rename")
     // would otherwise take it too and show at 40 points.
-    return QStringLiteral("QLabel { font-size: %1pt; %2 } QToolTip { font-size: 9pt; font-weight: 400; color: rgb(236,236,241); }")
+    return theme::css(QStringLiteral("QLabel { font-size: %1pt; %2 } QToolTip { font-size: 9pt; font-weight: 400; color: @text; }"))
         .arg(points).arg(hidden ? QStringLiteral("color: transparent;") : QString());
 }
 
@@ -2434,7 +2447,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         auto *w = static_cast<QPushButton *>(watched);
         QPainter p(w);
         const bool active = m_sortKey == SortKey::Duration;
-        const QColor ink = active || w->underMouse() ? QColor(236, 236, 241) : theme::muted();
+        const QColor ink = active || w->underMouse() ? theme::c().text : theme::muted();
         // The lengths are right-aligned a little in from this edge; the
         // clock sits over the middle of a "3:16".
         icons::paint(p, icons::Icon::Clock, QRectF(w->width() - 25, 1, 16, 16), ink);
@@ -2759,7 +2772,7 @@ void MainWindow::showSharedBy(const QString &tag)
     circle.addEllipse(QRectF(0, 0, 22, 22));
     p.setClipPath(circle);
     if (avatar.isNull())
-        p.fillRect(QRectF(0, 0, 22, 22), QColor(46, 44, 58));
+        p.fillRect(QRectF(0, 0, 22, 22), theme::c().raisedHover);
     else
         p.drawPixmap(QRectF(0, 0, 22, 22), avatar, QRectF(avatar.rect()));
     p.end();
@@ -3108,11 +3121,11 @@ void MainWindow::refreshProfileUser()
     p.setClipPath(circle);
     const QPixmap avatar = m_profile.avatar();
     if (avatar.isNull()) {
-        p.fillRect(QRectF(0, 0, 28, 28), QColor(46, 44, 58));
+        p.fillRect(QRectF(0, 0, 28, 28), theme::c().raisedHover);
         QFont icons(QStringLiteral("Segoe Fluent Icons"));
         icons.setPixelSize(14);
         p.setFont(icons);
-        p.setPen(QColor(220, 218, 230));
+        p.setPen(theme::c().textSoft);
         p.drawText(QRectF(0, 0, 28, 28), Qt::AlignCenter, QString(QChar(0xE77B)));
     } else {
         const int edge = qMin(avatar.width(), avatar.height());
@@ -3364,7 +3377,7 @@ void MainWindow::applySort()
     if (m_pageShuffle) {
         auto *b = static_cast<icons::IconButton *>(m_pageShuffle);
         const bool on = m_sortKey == SortKey::Shuffled;
-        b->setColors(on ? theme::accent() : QColor(170, 168, 182), on ? theme::accent().lighter(120) : Qt::white);
+        b->setColors(on ? theme::accent() : theme::c().dim, on ? theme::accent().lighter(120) : theme::c().strong);
         b->setDot(on);
     }
     filterSongs();
@@ -3765,7 +3778,7 @@ void MainWindow::showDownloadState()
     const QString path = m_library.playlists()[m_open].path;
     const bool marked = m_offline.isMarked(path);
     const int left = m_offline.pending(path);
-    m_downloadButton->setStyleSheet(marked ? QStringLiteral("color: rgb(176,127,224);") : QString());
+    theme::style(m_downloadButton, marked ? QStringLiteral("color: @accent;") : QString());
     m_downloadButton->setToolTip(!marked ? QStringLiteral("Download for offline listening")
                                  : left > 0 ? QStringLiteral("Downloading, %1 to go. Click to remove the download.").arg(left)
                                             : QStringLiteral("Downloaded. Click to remove the download."));

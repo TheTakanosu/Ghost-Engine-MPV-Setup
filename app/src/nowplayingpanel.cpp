@@ -193,7 +193,7 @@ protected:
         shape.addRoundedRect(box, 8, 8);
         p.setClipPath(shape);
         if (picture.isNull()) {
-            p.fillRect(box, QColor(40, 38, 48));
+            p.fillRect(box, theme::c().raised);
             return;
         }
         // The middle of the cover at this shape: square, or the video's while
@@ -293,7 +293,7 @@ protected:
 static QLabel *heading(const QString &text)
 {
     auto *label = new QLabel(text);
-    label->setStyleSheet("font-size: 10.5pt; font-weight: 700; color: rgb(240,240,245); background: transparent;");
+    theme::style(label, "font-size: 10.5pt; font-weight: 700; color: @textBright; background: transparent;");
     return label;
 }
 
@@ -304,17 +304,20 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     // Wide enough for the two video buttons side by side, which were cut
     // off at the right when the panel was dragged narrower.
     setMinimumWidth(qRound(340 * theme::zoom()));
-    setStyleSheet(
-        "QFrame#npCard { background: rgb(36,34,44); border-radius: 10px; }"
+    theme::whenChanged(this, [this] {
+        if (m_redrawVideoButtons)
+            m_redrawVideoButtons();
+    });
+    theme::style(this, "QFrame#npCard { background: @cardAlt; border-radius: 10px; }"
         "QLabel { background: transparent; }"
-        "QPushButton#npSwitch { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);"
-        "  border-radius: 16px; min-height: 30px; max-height: 30px; padding: 0 16px; color: rgb(240,240,245);"
+        "QPushButton#npSwitch { background: @raised; border: 1px solid @line;"
+        "  border-radius: 16px; min-height: 30px; max-height: 30px; padding: 0 16px; color: @textBright;"
         "  font-weight: 600; }"
-        "QPushButton#npSwitch:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.3); }"
-        "QPushButton#npSwitch:disabled { color: rgb(154,152,166); }");
+        "QPushButton#npSwitch:hover { background: @raisedHover; border-color: @tick; }"
+        "QPushButton#npSwitch:disabled { color: @muted; }");
 
     m_list = new QLabel;
-    m_list->setStyleSheet("font-size: 11pt; font-weight: 700; color: rgb(240,240,245);");
+    theme::style(m_list, "font-size: 11pt; font-weight: 700; color: @textBright;");
     auto *close = new QPushButton(QString(QChar(0xE8BB)));
     close->setObjectName("glyph");
     close->setToolTip("Hide the now playing view");
@@ -340,10 +343,10 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_title->setWordWrap(true);
     m_title->setCursor(Qt::PointingHandCursor);
     m_title->setToolTip("About this song");
-    m_title->setStyleSheet("font-size: 16pt; font-weight: 800; color: rgb(240,240,245);");
+    theme::style(m_title, "font-size: 16pt; font-weight: 800; color: @textBright;");
     m_title->installEventFilter(this);
     m_artist = new QLabel;
-    m_artist->setStyleSheet("color: rgb(170,168,182); font-weight: 600;");
+    theme::style(m_artist, "color: @dim; font-weight: 600;");
     auto *about = new QPushButton(QString(QChar(0xE946)));   // an "i" in a circle
     about->setObjectName("glyph");
     about->setToolTip("About this song");
@@ -377,14 +380,14 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_artistCard->setObjectName("npCard");
     m_artistPhoto = new ArtistPhoto;
     m_artistName = new QLabel;
-    m_artistName->setStyleSheet("font-size: 11.5pt; font-weight: 700; color: rgb(240,240,245);");
+    theme::style(m_artistName, "font-size: 11.5pt; font-weight: 700; color: @textBright;");
     m_artistAudience = new QLabel;
-    m_artistAudience->setStyleSheet("color: rgb(170,168,182);");
+    theme::style(m_artistAudience, "color: @dim;");
     m_artistAbout = new QLabel;
     m_artistAbout->setWordWrap(true);
-    m_artistAbout->setStyleSheet("color: rgb(200,198,210);");
+    theme::style(m_artistAbout, "color: @textBody;");
     m_artistSource = new QLabel;
-    m_artistSource->setStyleSheet("color: rgb(120,118,132); font-size: 8.5pt;");
+    theme::style(m_artistSource, "color: @faint; font-size: 8.5pt;");
     auto *artistText = new QVBoxLayout;
     artistText->setContentsMargins(14, 10, 14, 14);
     artistText->setSpacing(4);
@@ -427,9 +430,9 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_nextCover = new QLabel;
     m_nextCover->setFixedSize(44, 44);
     m_nextTitle = new ElidedLabel;
-    m_nextTitle->setStyleSheet("font-weight: 600; color: rgb(240,240,245);");
+    theme::style(m_nextTitle, "font-weight: 600; color: @textBright;");
     m_nextArtist = new ElidedLabel;
-    m_nextArtist->setStyleSheet("color: rgb(170,168,182);");
+    theme::style(m_nextArtist, "color: @dim;");
     auto *nextNames = new QVBoxLayout;
     nextNames->setSpacing(2);
     nextNames->addWidget(m_nextTitle);
@@ -533,7 +536,7 @@ void NowPlayingPanel::setVideoState(bool available, bool video, bool busy, bool 
             QFont icons(QStringLiteral("Segoe Fluent Icons"));
             icons.setPixelSize(14);
             p.setFont(icons);
-            p.setPen(QColor(240, 240, 245));
+            p.setPen(theme::c().textBright);
             p.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, QString(glyph));
         }
         button->setIcon(QIcon(icon));
@@ -547,6 +550,7 @@ void NowPlayingPanel::setVideoState(bool available, bool video, bool busy, bool 
     m_mini->setVisible(available && !video && !busy);
     label(m_mini, mini ? QStringLiteral("Back to cover") : QStringLiteral("Mini video"),
           QChar(mini ? 0xE91B : 0xE7F4), miniBusy);
+    m_redrawVideoButtons = [this, available, video, busy, mini, miniBusy] { setVideoState(available, video, busy, mini, miniBusy); };
 }
 
 void NowPlayingPanel::setCoverAspect(double aspect)
@@ -666,9 +670,9 @@ void NowPlayingPanel::showCredits()
         auto *row = new QWidget;
         auto *name = new QLabel(credits[i].second);
         name->setWordWrap(true);
-        name->setStyleSheet("font-weight: 600; color: rgb(240,240,245);");
+        theme::style(name, "font-weight: 600; color: @textBright;");
         auto *role = new QLabel(credits[i].first);
-        role->setStyleSheet("color: rgb(170,168,182);");
+        theme::style(role, "color: @dim;");
         auto *box = new QVBoxLayout(row);
         box->setContentsMargins(0, 0, 0, 0);
         box->setSpacing(1);
@@ -694,7 +698,7 @@ void NowPlayingPanel::setNext(const QString &title, const QString &artist, const
     shape.addRoundedRect(QRectF(0, 0, 88, 88), 8, 8);
     p.setClipPath(shape);
     if (cover.isNull()) {
-        p.fillRect(QRectF(0, 0, 88, 88), QColor(48, 46, 56));
+        p.fillRect(QRectF(0, 0, 88, 88), theme::c().raisedHover);
     } else {
         const int side = qMin(cover.width(), cover.height());
         p.drawPixmap(QRectF(0, 0, 88, 88), cover,

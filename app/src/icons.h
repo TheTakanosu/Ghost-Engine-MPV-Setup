@@ -38,7 +38,7 @@ private:
     int m_size;
     bool m_round = false;
     bool m_dot = false;
-    QColor m_fill, m_fillHover, m_normal{170, 168, 182}, m_hover{Qt::white};
+    QColor m_fill, m_fillHover, m_normal, m_hover;   // invalid: the theme's icon colours
 };
 
 } // namespace icons

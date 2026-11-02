@@ -2,6 +2,7 @@
 
 #include "theme.h"
 
+#include <QApplication>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -178,11 +179,11 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF track = QRectF(rect()).adjusted(1, 1, -1, -1);
     p.setPen(Qt::NoPen);
-    p.setBrush(isChecked() ? theme::accent() : QColor(60, 58, 72));
+    p.setBrush(isChecked() ? theme::accent() : theme::c().track);
     p.drawRoundedRect(track, track.height() / 2, track.height() / 2);
     const qreal knob = track.height() - 6;
     const qreal x = isChecked() ? track.right() - 3 - knob : track.left() + 3;
-    p.setBrush(isChecked() ? QColor(24, 18, 34) : QColor(200, 198, 210));
+    p.setBrush(isChecked() ? theme::c().onAccent : theme::c().textBody);
     p.drawEllipse(QRectF(x, track.top() + 3, knob, knob));
 }
 
@@ -330,17 +331,17 @@ protected:
         for (int i = 0; i < kSteps; ++i) {
             const int percent = qRound((kFirst + i / 10.0) * 100);
             const QRectF text(xOf(i) - 20, 0, 40, line - 12);
-            p.setPen(percent == 100 ? theme::accent() : (i == m_step ? QColor(236, 236, 241) : QColor(150, 148, 162)));
+            p.setPen(percent == 100 ? theme::accent() : (i == m_step ? theme::c().text : theme::c().muted));
             p.drawText(text, Qt::AlignHCenter | Qt::AlignTop, QString::number(percent));
-            p.fillRect(QRectF(xOf(i) - 0.5, line - 9, 1, 5), QColor(90, 88, 104));
+            p.fillRect(QRectF(xOf(i) - 0.5, line - 9, 1, 5), theme::c().tick);
         }
         const QRectF groove(12, line - 2, width() - 24, 4);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(60, 58, 72));
+        p.setBrush(theme::c().track);
         p.drawRoundedRect(groove, 2, 2);
         p.setBrush(theme::accent());
         p.drawRoundedRect(QRectF(12, line - 2, xOf(m_step) - 12, 4), 2, 2);
-        p.setBrush(Qt::white);
+        p.setBrush(theme::c().strong);
         p.drawEllipse(QPointF(xOf(m_step), line), 8, 8);
     }
     void mousePressEvent(QMouseEvent *e) override { move(e->position().x()); }
@@ -484,6 +485,14 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         words->addWidget(m_zoom);
         look->addLayout(words);
     }
+    // The built-in themes; more come with the marketplace.
+    m_theme = new QComboBox;
+    m_theme->addItem("Default", int(theme::Kind::Default));
+    m_theme->addItem("Black", int(theme::Kind::Black));
+    m_theme->addItem("Light", int(theme::Kind::Light));
+    m_theme->addItem("System", int(theme::Kind::System));
+    m_theme->setMinimumWidth(190);
+    addRow(look, "Theme", "Default is Ghost Engine's violet, Black is all greys, System follows Windows' light or dark mode.", m_theme);
     m_covers = new QComboBox;
     m_covers->addItem("Rounded corners", false);
     m_covers->addItem("Circles", true);
@@ -683,6 +692,11 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (onPlayerWindowChanged)
             onPlayerWindowChanged(on);
     });
+    connect(m_theme, &QComboBox::currentIndexChanged, this, [this] {
+        if (!m_loading)
+            theme::setKind(*static_cast<QApplication *>(QCoreApplication::instance()),
+                           theme::Kind(m_theme->currentData().toInt()));
+    });
     connect(m_covers, &QComboBox::currentIndexChanged, this, [this] {
         if (m_loading)
             return;
@@ -764,6 +778,7 @@ void SettingsPage::load()
     QSettings settings;
     m_window->setChecked(settings.value("player/window", true).toBool());
     m_embedVideo->setChecked(settings.value("player/embedVideo", true).toBool());
+    m_theme->setCurrentIndex(qMax(0, m_theme->findData(int(theme::kind()))));
     m_covers->setCurrentIndex(settings.value("look/circleCovers").toBool() ? 1 : 0);
     m_volumeNumber->setChecked(settings.value("look/volumeNumber", false).toBool());
     m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());

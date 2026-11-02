@@ -1,4 +1,5 @@
 #include "traymenu.h"
+#include "theme.h"
 
 #include "icons.h"
 
@@ -15,14 +16,11 @@
 
 namespace {
 
-const QColor kCard(30, 29, 37);
-const QColor kHairline(255, 255, 255, 26);
-
 QFrame *line()
 {
     auto *rule = new QFrame;
     rule->setFixedHeight(1);
-    rule->setStyleSheet("background: rgba(255,255,255,22); border: none;");
+    theme::style(rule, "background: @lineSoft; border: none;");
     return rule;
 }
 
@@ -31,10 +29,10 @@ QPushButton *row(const QString &label)
 {
     auto *button = new QPushButton(label);
     button->setCursor(Qt::PointingHandCursor);
-    button->setStyleSheet(
+    theme::style(button, 
         "QPushButton { text-align: left; padding: 0 12px; min-height: 28px; max-height: 28px; border: none;"
-        " border-radius: 5px; background: transparent; color: rgb(232,232,238); font-size: 9pt; font-weight: 400; }"
-        "QPushButton:hover { background: rgba(255,255,255,18); }");
+        " border-radius: 5px; background: transparent; color: @text; font-size: 9pt; font-weight: 400; }"
+        "QPushButton:hover { background: @raised; }");
     return button;
 }
 
@@ -43,7 +41,8 @@ QPushButton *row(const QString &label)
 icons::IconButton *glyph(icons::Icon icon, const QString &tip)
 {
     auto *button = new icons::IconButton(icon, 26, tip);
-    button->setColors(QColor(220, 218, 230), Qt::white);
+    button->setColors(theme::c().textSoft, theme::c().strong);
+    theme::whenChanged(button, [button] { button->setColors(theme::c().textSoft, theme::c().strong); });
     button->setCursor(Qt::PointingHandCursor);
     return button;
 }
@@ -56,7 +55,7 @@ QPixmap tickMark(qreal dpr)
     mark.fill(Qt::transparent);
     QPainter p(&mark);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QColor(232, 232, 238), 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setPen(QPen(theme::c().text, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.drawPolyline(QPolygonF{{2.0, 6.4}, {4.8, 9.0}, {10.0, 3.2}});
     return mark;
 }
@@ -69,7 +68,7 @@ TrayMenu::TrayMenu(QWidget *parent) : QWidget(parent, Qt::Popup | Qt::FramelessW
     setFixedWidth(232);
 
     m_now = new QLabel;
-    m_now->setStyleSheet("color: rgb(176,174,188); font-size: 8.5pt; background: transparent; padding: 0 12px;");
+    theme::style(m_now, "color: @dim; font-size: 8.5pt; background: transparent; padding: 0 12px;");
     m_now->setMinimumWidth(0);
 
     auto *previous = glyph(icons::Icon::Previous, "Previous");
@@ -157,6 +156,7 @@ void TrayMenu::setKeepRunning(bool on)
 
 void TrayMenu::popupAt(const QPoint &cursor)
 {
+    m_keepTick->setPixmap(tickMark(devicePixelRatioF()));   // in the theme's text colour
     adjustSize();
     // Up and to the left of the cursor, the way Windows opens a tray menu,
     // then pulled inside the screen whatever side the taskbar is on.
@@ -179,7 +179,7 @@ void TrayMenu::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(kHairline, 1));
-    p.setBrush(kCard);
+    p.setPen(QPen(theme::c().line, 1));
+    p.setBrush(theme::c().popup);
     p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 9, 9);
 }

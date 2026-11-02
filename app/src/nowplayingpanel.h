@@ -94,6 +94,8 @@ private:
     class SquareCover *m_cover;
     QPushButton *m_switch;
     QPushButton *m_mini;
+    // The video buttons' last state, drawn again in a new theme's colours.
+    std::function<void()> m_redrawVideoButtons;
     QLabel *m_title;
     QLabel *m_artist;
     class ClickCard *m_lyricsCard;

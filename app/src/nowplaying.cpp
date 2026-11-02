@@ -65,7 +65,7 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        const QColor ink = underMouse() ? Qt::white : theme::muted();
+        const QColor ink = underMouse() ? theme::c().strong : theme::muted();
         p.setPen(QPen(ink, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.setBrush(ink);
         p.drawPolygon(QPolygonF({{3, 9}, {7, 9}, {11, 5}, {11, 17}, {7, 13}, {3, 13}}));
@@ -125,14 +125,20 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
 
     auto *prev = new icons::IconButton(icons::Icon::Previous, 32, "Previous");
     m_playPause = new icons::IconButton(icons::Icon::Play, 40, "Play / pause");
-    m_playPause->setRound(theme::text(), Qt::white, theme::window());
     auto *next = new icons::IconButton(icons::Icon::Next, 32, "Next");
-    for (auto *b : {prev, next})
-        b->setColors(QColor(200, 198, 210), Qt::white);
+    const auto colour = [this, prev, next] {
+        m_playPause->setRound(theme::text(), theme::c().strong, theme::window());
+        for (auto *b : {prev, next})
+            b->setColors(theme::c().textBody, theme::c().strong);
+        showShuffle();
+        showRepeat();
+    };
     // Shuffle and repeat act on what is playing, as in Spotify; the shuffle
     // on a playlist page starts that list shuffled instead.
     m_shuffle = new icons::IconButton(icons::Icon::Shuffle, 32, "Shuffle what is playing");
     m_repeat = new icons::IconButton(icons::Icon::Repeat, 32, "Repeat");
+    colour();
+    theme::whenChanged(this, colour);
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(20);
     buttons->addStretch();
@@ -300,12 +306,12 @@ void NowPlayingBar::showIdle()
 
 void NowPlayingBar::setLyricsOpen(bool open)
 {
-    m_lyrics->setStyleSheet(open ? QStringLiteral("color: rgb(176,127,224);") : QString());
+    theme::style(m_lyrics, open ? QStringLiteral("color: @accent;") : QString());
 }
 
 void NowPlayingBar::setPanelOpen(bool open)
 {
-    m_panel->setStyleSheet(open ? QStringLiteral("color: rgb(176,127,224);") : QString());
+    theme::style(m_panel, open ? QStringLiteral("color: @accent;") : QString());
 }
 
 void NowPlayingBar::setVolumeNumber(bool shown)
@@ -330,7 +336,7 @@ void NowPlayingBar::expectList(bool shuffled)
 void NowPlayingBar::showShuffle()
 {
     const QColor on = theme::accent();
-    m_shuffle->setColors(m_shuffled ? on : QColor(170, 168, 182), m_shuffled ? on.lighter(120) : Qt::white);
+    m_shuffle->setColors(m_shuffled ? on : theme::c().dim, m_shuffled ? on.lighter(120) : theme::c().strong);
     m_shuffle->setDot(m_shuffled);
     m_shuffle->setToolTip(m_shuffled ? "Shuffle is on: back to the list's order" : "Shuffle what is playing");
 }
@@ -340,7 +346,7 @@ void NowPlayingBar::showRepeat()
     const bool one = looping(m_mpv->property("loop-file")), all = looping(m_mpv->property("loop-playlist"));
     const QColor on = theme::accent();
     m_repeat->setIcon(one ? icons::Icon::RepeatOne : icons::Icon::Repeat);
-    m_repeat->setColors(one || all ? on : QColor(170, 168, 182), one || all ? on.lighter(120) : Qt::white);
+    m_repeat->setColors(one || all ? on : theme::c().dim, one || all ? on.lighter(120) : theme::c().strong);
     m_repeat->setDot(one || all);
     m_repeat->setToolTip(one ? "Repeating this song" : all ? "Repeating the list" : "Repeat is off");
 }

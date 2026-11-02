@@ -1,4 +1,5 @@
 #include "songinfo.h"
+#include "theme.h"
 
 #include <QDate>
 #include <QDesktopServices>
@@ -244,7 +245,7 @@ void SongInfoDialog::setCover(const QPixmap &cover)
     shape.addRoundedRect(QRectF(0, 0, 150, 150), 8, 8);
     p.setClipPath(shape);
     if (cover.isNull()) {
-        p.fillRect(QRectF(0, 0, 150, 150), QColor(40, 38, 48));
+        p.fillRect(QRectF(0, 0, 150, 150), theme::c().raised);
     } else {
         const int side = qMin(cover.width(), cover.height());
         const QRect middle((cover.width() - side) / 2, (cover.height() - side) / 2, side, side);

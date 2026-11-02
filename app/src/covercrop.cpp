@@ -79,7 +79,7 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
-        p.fillRect(rect(), QColor(16, 15, 20));
+        p.fillRect(rect(), theme::c().base);
         // The picture, placed so that m_center sits in the middle of the canvas.
         const QSizeF shown = QSizeF(m_image.size()) * m_zoom;
         const QPointF topLeft = QPointF(width() / 2.0, height() / 2.0) - m_center * m_zoom;
@@ -156,8 +156,8 @@ CoverCropDialog::CoverCropDialog(const QImage &image, QWidget *parent) : QDialog
     // A picture mark, small and large, at the slider's two ends.
     auto *small = new QLabel(QString(QChar(0xEB9F)));
     auto *large = new QLabel(QString(QChar(0xEB9F)));
-    small->setStyleSheet("font-family: 'Segoe Fluent Icons'; font-size: 9pt; color: rgb(170,168,182);");
-    large->setStyleSheet("font-family: 'Segoe Fluent Icons'; font-size: 15pt; color: rgb(170,168,182);");
+    theme::style(small, "font-family: 'Segoe Fluent Icons'; font-size: 9pt; color: @dim;");
+    theme::style(large, "font-family: 'Segoe Fluent Icons'; font-size: 15pt; color: @dim;");
     auto *turn = new QPushButton(QString(QChar(0xE7AD)));
     turn->setObjectName("glyph");
     turn->setToolTip("Rotate");

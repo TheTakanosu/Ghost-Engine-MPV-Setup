@@ -578,7 +578,7 @@ public:
             QFont note = option.font;
             note.setPointSizeF(note.pointSizeF() * 0.9);
             p->setFont(note);
-            p->setPen(QColor(154, 152, 166));
+            p->setPen(theme::c().muted);
             p->drawText(QRectF(text.left(), titleBox.top() + used + 1, text.width(), QFontMetricsF(note).lineSpacing()),
                         Qt::AlignLeft | Qt::AlignVCenter, QFontMetricsF(note).elidedText(by, Qt::ElideRight, text.width()));
         }
@@ -637,6 +637,7 @@ protected:
         if (!m_glyph)
             f.setWeight(QFont::DemiBold);
         p.setFont(f);
+        // On the picture: light whatever the theme.
         const QColor ink = m_on ? theme::accent() : QColor(240, 240, 245);
         if (m_pip) {
             const qreal w = height() * 0.5, h = w * 0.72;
