@@ -69,7 +69,7 @@ jobs:
           # The setup, laid out as every release before this one.
           $setup = "dist/setup"
           New-Item -ItemType Directory -Force $setup | Out-Null
-          Copy-Item LICENSE, README.md, install.bat, uninstall.bat $setup
+          Copy-Item LICENSE, README.md, PRIVACY.md, install.bat, uninstall.bat $setup
           Copy-Item lib, mpv, vencord-plugin $setup -Recurse
           Compress-Archive "$setup/*" dist/Ghost-Engine-MPV-Setup.zip
 

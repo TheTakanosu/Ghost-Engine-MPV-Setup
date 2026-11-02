@@ -618,8 +618,18 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     connect(openConf, &QPushButton::clicked, this, [] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(mpvconf::path()));
     });
+    // What the app keeps and who it talks to, written out on GitHub.
+    auto *privacy = new QPushButton("Privacy");
+    privacy->setObjectName("link");
+    privacy->setCursor(Qt::PointingHandCursor);
+    privacy->setToolTip("What Ghost Engine keeps on your PC and who it talks to.");
+    connect(privacy, &QPushButton::clicked, this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral(
+            "https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/blob/main/PRIVACY.md")));
+    });
     auto *footer = new QHBoxLayout;
     footer->addWidget(m_confPath, 1);
+    footer->addWidget(privacy);
     footer->addWidget(openConf);
 
     auto *content = new QWidget;

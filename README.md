@@ -229,6 +229,9 @@ to copyright in what you play or keep on your disk is up to you. It is not
 affiliated with YouTube, Google, Spotify or Discord, and it is not a way to
 get music for free: it plays what is already public, as a browser would.
 
+It collects nothing about you and has no server: [Privacy](PRIVACY.md) lists
+what it keeps on your PC and who it talks to.
+
 ---
 
 ## mpv on its own
