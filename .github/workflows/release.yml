@@ -35,6 +35,10 @@ jobs:
           version: '6.11.0'
           arch: win64_msvc2022_64
           cache: true
+          # Qt 6.11 moved its download folders, and the released aqtinstall
+          # (3.3.0) cannot find them. The fix is in aqtinstall's master but not
+          # released yet, so this takes it from there, pinned to one commit.
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7'
 
       - uses: seanmiddleditch/gha-setup-ninja@v5
 
