@@ -3,6 +3,7 @@
 #include "covercrop.h"
 #include "settings.h"
 #include "songinfo.h"
+#include "updates.h"
 #include "videopage.h"
 #include "icons.h"
 #include "nowplaying.h"
@@ -62,6 +63,7 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSplitter>
+#include <QSystemTrayIcon>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTimer>
@@ -807,6 +809,8 @@ MainWindow::MainWindow()
             m_profileSoon.start();
     });
     connect(&m_mpv, &MpvClient::propertyChanged, this, [this, repaint](const QString &name) {
+        if (name == "media-title" || name == "pause")
+            updateTray();
         // A song played since the last look may have given a list its cover.
         if (name == "user-data/ghost/source")
             QTimer::singleShot(500, repaint);
@@ -933,6 +937,28 @@ MainWindow::MainWindow()
         QTimer::singleShot(0, this, [this, savedZoom] { changeZoom(savedZoom - theme::zoom()); });
 
     applyLook();
+    buildTray();
+    m_updates = new UpdateChecker(this);
+    connect(m_updates, &UpdateChecker::finished, this, [this](bool ok) {
+        const int behind = ok ? m_updates->newerCount() : 0;
+        m_updateButton->setVisible(behind > 0);
+        m_updateButton->setToolTip(behind == 1 ? QStringLiteral("An update is available")
+                                               : QStringLiteral("%1 updates are available").arg(behind));
+        if (!m_updateAsked)
+            return;
+        m_updateAsked = false;
+        if (!ok)
+            QMessageBox::information(this, "Updates", "Couldn't check for updates. Check your connection, "
+                                                      "or run update.bat in the mpv folder.");
+        else
+            showUpdates();
+    });
+    // Once a day at most, a little after opening, in the background.
+    QTimer::singleShot(8000, this, [this] {
+        const QDateTime last = QSettings().value("updates/checkedAt").toDateTime();
+        if (!last.isValid() || last.secsTo(QDateTime::currentDateTime()) > 20 * 3600)
+            checkForUpdates(false);
+    });
     connect(&m_mpv, &MpvClient::fileFailed, this, &MainWindow::songFailed);
     connect(&m_mpv, &MpvClient::fileLoaded, this, [this] {
         m_failedSongs.clear();
@@ -978,6 +1004,13 @@ MainWindow::MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // Kept running in the tray (Settings off by default): the window goes,
+    // the music does not.
+    if (!m_quitting && m_tray && QSettings().value("tray/keepRunning", false).toBool()) {
+        hide();
+        event->ignore();
+        return;
+    }
     if (m_mpvEmbedded && m_mpv.connected()) {
         m_mpv.command({"quit"});
         m_mpv.flush();
@@ -993,6 +1026,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue("window/split", m_split->saveState());
     settings.setValue("window/panelSplit", m_rightSplit->saveState());
     QMainWindow::closeEvent(event);
+    if (m_tray)
+        m_tray->hide();
+    // The tray keeps Qt from quitting on the last window by itself.
+    QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+}
+
+void MainWindow::quitForReal()
+{
+    m_quitting = true;
+    close();
 }
 
 // -- window chrome -----------------------------------------------------------
@@ -1089,6 +1132,12 @@ QWidget *MainWindow::buildTopBar()
     auto *close = glyphButton(kIconClose, "Close", "chromeClose");
     auto *gear = glyphButton(QChar(0xE713), "Settings", "pill");
     connect(gear, &QPushButton::clicked, this, &MainWindow::showSettings);
+    // Only there while something is behind, in the accent colour: noticed,
+    // never in the way, and nothing opens by itself.
+    m_updateButton = glyphButton(QChar(0xE896), "Updates are available", "pill");
+    m_updateButton->setStyleSheet(QStringLiteral("color: %1;").arg(theme::accent().name()));
+    m_updateButton->hide();
+    connect(m_updateButton, &QPushButton::clicked, this, &MainWindow::showUpdates);
     connect(minimize, &QPushButton::clicked, this, &MainWindow::showMinimized);
     // Through Windows itself rather than Qt's showMaximized(): Qt resizes a
     // frameless window to the screen, so Windows took the full size for the
@@ -1098,7 +1147,7 @@ QWidget *MainWindow::buildTopBar()
         ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     });
     connect(close, &QPushButton::clicked, this, &MainWindow::close);
-    m_chromeButtons = {m_profileButton, home, m_search, gear, minimize, m_maxButton, close};
+    m_chromeButtons = {m_profileButton, home, m_search, m_updateButton, gear, minimize, m_maxButton, close};
 
     m_topBar = new QWidget;
     m_topBar->setObjectName("topBar");
@@ -1110,6 +1159,7 @@ QWidget *MainWindow::buildTopBar()
     row->addWidget(home);
     row->addWidget(m_search);
     row->addStretch();
+    row->addWidget(m_updateButton);
     row->addWidget(m_profileButton);
     row->addWidget(gear);
     row->addSpacing(10);
@@ -3495,6 +3545,125 @@ void MainWindow::songFailed(int entryId)
         20000);
 }
 
+void MainWindow::checkForUpdates(bool asked)
+{
+    m_updateAsked = m_updateAsked || asked;
+    QSettings().setValue("updates/checkedAt", QDateTime::currentDateTime());
+    m_updates->check();
+}
+
+void MainWindow::showUpdates()
+{
+    if (m_updates->parts().isEmpty()) {
+        checkForUpdates(true);
+        return;
+    }
+    if (m_updates->newerCount() == 0) {
+        QString lines;
+        for (const updates::Part &p : m_updates->parts())
+            lines += QStringLiteral("\n%1  %2").arg(p.name, p.installed);
+        QMessageBox::information(this, "Updates", "Everything is up to date." + lines);
+        return;
+    }
+    UpdateDialog dialog(m_updates->parts(), this);
+    dialog.onStopPlayer = [this] {
+        if (m_mpv.connected()) {
+            m_mpv.command({"quit"});
+            m_mpv.flush();
+        }
+    };
+    dialog.onQuitForUpdate = [this] { quitForReal(); };
+    dialog.exec();
+    // What was updated in place is current now; ask again for the button.
+    if (!m_quitting)
+        checkForUpdates(false);
+}
+
+// The app's icon as the exe carries it (ghostengine.rc), at the sizes a tray
+// draws: Qt's window icon comes from there too, but not as a QIcon.
+static QIcon exeIcon()
+{
+    QIcon icon;
+    for (int size : {16, 20, 24, 32, 48}) {
+        HICON h = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), L"IDI_ICON1", IMAGE_ICON, size, size, 0));
+        if (h) {
+            icon.addPixmap(QPixmap::fromImage(QImage::fromHICON(h)));
+            DestroyIcon(h);
+        }
+    }
+    return icon;
+}
+
+void MainWindow::buildTray()
+{
+    if (!QSystemTrayIcon::isSystemTrayAvailable())
+        return;
+    QApplication::setQuitOnLastWindowClosed(false);   // closeEvent quits instead
+    m_tray = new QSystemTrayIcon(exeIcon(), this);
+    m_tray->setToolTip("Ghost Engine");
+    auto *menu = new QMenu(this);
+    m_trayNow = menu->addAction(QString());
+    m_trayNow->setEnabled(false);
+    menu->addAction("Previous", this, [this] { m_mpv.command({"playlist-prev"}); });
+    m_trayPause = menu->addAction("Pause", this, [this] { m_mpv.command({"cycle", "pause"}); });
+    menu->addAction("Next", this, [this] { m_mpv.command({"playlist-next"}); });
+    menu->addSeparator();
+    menu->addAction("Open Ghost Engine", this, &MainWindow::bringToFront);
+    QAction *keep = menu->addAction("Keep running in the tray");
+    keep->setCheckable(true);
+    keep->setChecked(QSettings().value("tray/keepRunning", false).toBool());
+    keep->setToolTip("Closing the window keeps Ghost Engine and the music going here.");
+    connect(keep, &QAction::toggled, this, [](bool on) { QSettings().setValue("tray/keepRunning", on); });
+    menu->addSeparator();
+    menu->addAction("Check for updates...", this, [this] { checkForUpdates(true); });
+    menu->addAction("Thanks to...", this, &MainWindow::showThanks);
+    menu->addSeparator();
+    menu->addAction("Quit Ghost Engine", this, &MainWindow::quitForReal);
+    m_tray->setContextMenu(menu);
+    connect(m_tray, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason why) {
+        if (why != QSystemTrayIcon::Trigger)
+            return;
+        if (isVisible() && !isMinimized())
+            hide();
+        else
+            bringToFront();
+    });
+    updateTray();
+    m_tray->show();
+}
+
+void MainWindow::updateTray()
+{
+    if (!m_tray)
+        return;
+    const QString title = m_mpv.connected() ? m_mpv.property("media-title").toString() : QString();
+    const QString shown = title.isEmpty() ? QStringLiteral("Nothing playing") : title;
+    m_trayNow->setText(fontMetrics().elidedText(shown, Qt::ElideRight, 280));
+    m_trayPause->setText(m_mpv.property("pause").toBool() ? "Play" : "Pause");
+    m_tray->setToolTip(title.isEmpty() ? QStringLiteral("Ghost Engine")
+                                       : QStringLiteral("Ghost Engine\n") + title.left(100));
+}
+
+void MainWindow::showThanks()
+{
+    // What Ghost Engine stands on, each with where it lives.
+    QMessageBox box(this);
+    box.setWindowTitle("Thanks to");
+    box.setTextFormat(Qt::RichText);
+    box.setText(QStringLiteral(
+        "<b>Ghost Engine " GHOST_VERSION "</b> by TheTakanosu stands on the work of:<br><br>"
+        "<a href='https://mpv.io'>mpv</a>, the player, in "
+        "<a href='https://github.com/shinchiro/mpv-winbuild-cmake'>shinchiro's Windows builds</a><br>"
+        "<a href='https://github.com/yt-dlp/yt-dlp'>yt-dlp</a>, which turns YouTube links into music<br>"
+        "<a href='https://www.qt.io'>Qt</a>, which draws this app<br>"
+        "<a href='https://lrclib.net'>LRCLIB</a>, for the lyrics<br>"
+        "<a href='https://nodejs.org'>Node.js</a>, for YouTube's JavaScript checks<br>"
+        "<a href='https://github.com/qwertyquerty/pypresence'>pypresence</a>, for the Discord card<br><br>"
+        "And everyone who tried it early and said what was wrong."));
+    box.setTextInteractionFlags(Qt::TextBrowserInteraction);
+    box.exec();
+}
+
 void MainWindow::undoSongEdit()
 {
     if (m_undoPath.isEmpty() || m_open < 0 || m_library.playlists()[m_open].path != m_undoPath)
@@ -4709,7 +4878,16 @@ void MainWindow::importFiles(const QStringList &paths)
     for (int i = 0; i < all.size(); ++i)
         if (all[i].path.compare(last, Qt::CaseInsensitive) == 0)
             openPlaylist(i);
-    showNormal();
+    bringToFront();
+}
+
+void MainWindow::bringToFront()
+{
+    // Back as it was left: from the tray, from the taskbar, maximised or not.
+    // showNormal() would also take a maximised window down to its normal size.
+    show();
+    if (isMinimized())
+        ShowWindow(reinterpret_cast<HWND>(winId()), SW_RESTORE);
     raise();
     activateWindow();
 }

@@ -139,6 +139,13 @@ Ghost Engine 1.3.0 is out (you have 1.2.5).
 Run update.bat in your mpv folder.
 ```
 
+The app checks too, once a day: when something is behind, a download icon
+appears in its top bar, and the tray icon's **Check for updates...** asks at
+any time. It opens a window with a box for each part (Ghost Engine, yt-dlp,
+mpv, node), what you have and what is out; tick what to update. Behind it runs
+the same `update.ps1`, with the same checks. Updating Ghost Engine itself
+closes the app, updates in a window of its own and opens the app again.
+
 `update.bat` in the install folder then does the rest:
 
 - **Ghost Engine:** a newer release is installed straight away, the app with
@@ -280,7 +287,8 @@ agent when it opens and the agent exits a few seconds after mpv closes. Nothing
 is added to Windows' startup, and there is nothing running while you are not
 playing anything.
 
-The card shows the track, the channel, the video's thumbnail and a progress bar,
+The card shows the track, the channel, the playlist, the video's thumbnail and a
+progress bar, with buttons to watch it on YouTube and to get Ghost Engine,
 and reports **Listening** for audio and **Watching** for video.
 
 To turn it off for one session, set `GHOST_RPC_DISABLE=1` before starting mpv.
@@ -374,7 +382,8 @@ usual answers are that Discord is not running, or `pypresence` is not installed
 Places where the obvious choice was rejected, and why. Most of these were measured against the real client rather than reasoned about.
 
 **Discord fits two RPC buttons on one row only under ~30 characters.** Measured:
-`Watch on YouTube` + `Discord Server` (30) sits in a row; adding a `▶` (32) stacks them.
+`Watch on YouTube` + `Discord Server` (30) sat in a row; adding a `▶` (32) stacked them.
+The second button is now `Get the app` (27 together).
 There is no API for asking. `Watch YouTube` would add margin but reads as watching the
 site rather than the video.
 

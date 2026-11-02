@@ -110,11 +110,8 @@ int main(int argc, char *argv[])
         QObject::connect(client, &QLocalSocket::readyRead, &window, [&window, client] {
             const QStringList paths = QString::fromUtf8(client->readAll()).split('\n', Qt::SkipEmptyParts);
             window.importFiles(paths);
-            if (paths.isEmpty()) {
-                window.showNormal();
-                window.raise();
-                window.activateWindow();
-            }
+            if (paths.isEmpty())
+                window.bringToFront();
             client->deleteLater();
         });
     });

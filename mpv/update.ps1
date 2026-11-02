@@ -15,8 +15,12 @@
 #  they publish with it, the same contract as the installer.
 #
 #  A checksum mismatch replaces nothing.
+#
+#  The app's Update window drives this too: -Check says what is behind, as
+#  JSON, and changes nothing; -Only ghost,mpv,node,ytdlp updates just those
+#  (all of them when left out); -Reopen starts the app again once done.
 # =============================================================================
-param([switch]$Unattended)
+param([switch]$Unattended, [string[]]$Only, [switch]$Check, [string]$Reopen)
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
@@ -53,26 +57,35 @@ function Is-Newer($A, $B) {
     return [string]::CompareOrdinal($A.Pre, $B.Pre) -gt 0
 }
 
-Write-Host ""
-Say "Ghost Engine update" "Magenta"
+# -Only arrives as one "ghost,ytdlp" string through powershell -File.
+$parts = @($Only | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+function Wants([string]$Part) { return (-not $parts.Count) -or ($parts -contains $Part) }
 
-# -- Ghost Engine -------------------------------------------------------------
-$versionFile = Join-Path $PSScriptRoot "VERSION"
-$installed = if (Test-Path $versionFile) { Read-Tag (Get-Content $versionFile -Raw) } else { $null }
-Write-Host ""
-Say "Ghost Engine" "Cyan"
-Say "installed: $(if ($installed) { $installed.Tag } else { 'unknown (before 1.2.5)' })" "DarkGray"
-
-try {
-    # Stored first: Windows PowerShell hands a JSON array down a pipeline as
-    # one object, and every release would have been filtered out together.
-    $all = Get-Json "https://api.github.com/repos/TheTakanosu/Ghost-Engine-MPV-Setup/releases?per_page=20"
-    $releases = @($all | Where-Object { -not $_.draft })
-} catch {
-    Say "Could not reach GitHub: $($_.Exception.Message)" "Yellow"
-    $releases = @()
+# What is installed and what is out, for each part; shared by -Check and the
+# updates below, so the two can never disagree.
+function Get-GhostReleases {
+    try {
+        # Stored first: Windows PowerShell hands a JSON array down a pipeline as
+        # one object, and every release would have been filtered out together.
+        $all = Get-Json "https://api.github.com/repos/TheTakanosu/Ghost-Engine-MPV-Setup/releases?per_page=20"
+        return @($all | Where-Object { -not $_.draft })
+    } catch {
+        Say "Could not reach GitHub: $($_.Exception.Message)" "Yellow"
+        return @()
+    }
+}
+function Get-MpvBuilt([string]$Exe) {
+    $line = (& $Exe --version 2>$null | Select-String "built on" | Select-Object -First 1)
+    if ($line -and "$line" -match 'built on (\w{3})\s+(\d{1,2})\s+(\d{4})') {
+        return [datetime]::ParseExact("$($Matches[1]) $($Matches[2]) $($Matches[3])", "MMM d yyyy",
+                                      [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    return $null
 }
 
+$versionFile = Join-Path $PSScriptRoot "VERSION"
+$installed = if (Test-Path $versionFile) { Read-Tag (Get-Content $versionFile -Raw) } else { $null }
+$releases = Get-GhostReleases
 $stable = $null; $preview = $null
 foreach ($r in $releases) {
     $tag = Read-Tag $r.tag_name
@@ -82,8 +95,61 @@ foreach ($r in $releases) {
     else               { if (Is-Newer $tag $stable)  { $stable  = $tag } }
 }
 
+if ($Check) {
+    # One line of JSON on stdout. "newer" is whether updating would change
+    # anything, by the same rules the updates below follow; a part that
+    # could not be checked (offline) has no "latest".
+    $report = [ordered]@{}
+    $report.ghost = [ordered]@{
+        installed = if ($installed) { $installed.Tag -replace '^v', '' } else { "" }
+        latest = if ($stable) { $stable.Tag -replace '^v', '' } else { "" }
+        newer = [bool]($stable -and (Is-Newer $stable $installed))
+        notes = if ($stable) { "$($stable.Release.html_url)" } else { "" }
+    }
+    $ytExe = Join-Path $PSScriptRoot "yt-dlp.exe"
+    $ytNow = if (Test-Path $ytExe) { (& $ytExe --version 2>$null) -join "" } else { "" }
+    $ytLatest = try { (Get-Json "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest").tag_name } catch { "" }
+    $report.ytdlp = [ordered]@{
+        installed = "$ytNow"; latest = "$ytLatest"
+        newer = [bool]($ytLatest -and ($ytNow -ne $ytLatest -or -not (Test-Path (Join-Path $PSScriptRoot "_internal"))))
+    }
+    $mpvExe = Join-Path $PSScriptRoot "mpv.exe"
+    if (Test-Path $mpvExe) {
+        $built = Get-MpvBuilt $mpvExe
+        $tagName = try { (Get-Json "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases?per_page=1")[0].tag_name } catch { "" }
+        $latestDate = if ($tagName -match '^\d{8}$') { [datetime]::ParseExact($tagName, "yyyyMMdd", $null) } else { $null }
+        $report.mpv = [ordered]@{
+            installed = if ($built) { $built.ToString('yyyy-MM-dd') } else { "" }
+            latest = if ($latestDate) { $latestDate.ToString('yyyy-MM-dd') } else { "" }
+            newer = [bool]($latestDate -and (-not $built -or ($latestDate - $built).TotalDays -gt 30))
+        }
+    }
+    $nodeExe = Join-Path $PSScriptRoot "node.exe"
+    if (Test-Path $nodeExe) {
+        $nodeVersion = try { "$(& $nodeExe --version 2>$null)" } catch { "" }
+        $report.node = [ordered]@{
+            installed = $nodeVersion -replace '^v', ''; latest = ""
+            newer = [bool]($nodeVersion -match '^v(\d+)\.' -and [int]$Matches[1] -lt 22)
+        }
+    }
+    $report | ConvertTo-Json -Compress -Depth 3
+    exit 0
+}
+
+Write-Host ""
+Say "Ghost Engine update" "Magenta"
+
+# -- Ghost Engine -------------------------------------------------------------
+if (Wants "ghost") {
+    Write-Host ""
+    Say "Ghost Engine" "Cyan"
+    Say "installed: $(if ($installed) { $installed.Tag } else { 'unknown (before 1.2.5)' })" "DarkGray"
+}
+
 $target = $null
-if ($stable -and (Is-Newer $stable $installed)) {
+if (-not (Wants "ghost")) {
+    # Left out of -Only.
+} elseif ($stable -and (Is-Newer $stable $installed)) {
     Say "latest   : $($stable.Tag)" "DarkGray"
     $target = $stable
 } elseif ($preview -and (Is-Newer $preview $installed)) {
@@ -195,16 +261,11 @@ if ($target) {
 # reopened. mpv fixed it six days after that build. A build more than a month
 # behind the latest is replaced; nightly churn alone is not worth 30 MB.
 $mpvExe = Join-Path $PSScriptRoot "mpv.exe"
-if (Test-Path $mpvExe) {
+if ((Wants "mpv") -and (Test-Path $mpvExe)) {
     Write-Host ""
     Say "mpv" "Cyan"
-    $built = $null
-    $line = (& $mpvExe --version 2>$null | Select-String "built on" | Select-Object -First 1)
-    if ($line -and "$line" -match 'built on (\w{3})\s+(\d{1,2})\s+(\d{4})') {
-        $built = [datetime]::ParseExact("$($Matches[1]) $($Matches[2]) $($Matches[3])", "MMM d yyyy",
-                                        [System.Globalization.CultureInfo]::InvariantCulture)
-        Say "installed: built $($built.ToString('yyyy-MM-dd'))" "DarkGray"
-    }
+    $built = Get-MpvBuilt $mpvExe
+    if ($built) { Say "installed: built $($built.ToString('yyyy-MM-dd'))" "DarkGray" }
     try {
         $mpvRelease = (Get-Json "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases?per_page=1")[0]
     } catch {
@@ -254,7 +315,7 @@ if (Test-Path $mpvExe) {
 # it (below 22, its MIN_SUPPORTED_VERSION). A working node is left alone: a
 # newer one buys nothing and is one more thing that could change.
 $nodeExe = Join-Path $PSScriptRoot "node.exe"
-if (Test-Path $nodeExe) {
+if ((Wants "node") -and (Test-Path $nodeExe)) {
     $nodeVersion = $null
     try { $nodeVersion = "$(& $nodeExe --version 2>$null)" } catch { }
     if ($nodeVersion -match '^v(\d+)\.' -and [int]$Matches[1] -lt 22) {
@@ -286,19 +347,19 @@ if (Test-Path $nodeExe) {
 
 # -- yt-dlp ---------------------------------------------------------------------
 $exePath = Join-Path $PSScriptRoot "yt-dlp.exe"
-Write-Host ""
-Say "yt-dlp" "Cyan"
-
-if (Test-Path $exePath) {
-    $current = (& $exePath --version 2>$null) -join ""
-    Say "installed: $current" "DarkGray"
-}
-
-try {
-    $release = Get-Json "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
-} catch {
-    Say "Could not reach GitHub: $($_.Exception.Message)" "Yellow"
-    $release = $null
+$release = $null
+if (Wants "ytdlp") {
+    Write-Host ""
+    Say "yt-dlp" "Cyan"
+    if (Test-Path $exePath) {
+        $current = (& $exePath --version 2>$null) -join ""
+        Say "installed: $current" "DarkGray"
+    }
+    try {
+        $release = Get-Json "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+    } catch {
+        Say "Could not reach GitHub: $($_.Exception.Message)" "Yellow"
+    }
 }
 
 if ($release) {
@@ -388,4 +449,9 @@ foreach ($dir in $PSScriptRoot, (Join-Path $env:APPDATA "mpv")) {
 }
 
 Write-Host ""
-if (-not $Unattended) { Read-Host "  Press Enter to close" | Out-Null }
+# The app closed itself to be updated: open it again, the new one if it was.
+if ($Reopen -and (Test-Path $Reopen)) {
+    Start-Process -FilePath $Reopen -WorkingDirectory (Split-Path $Reopen -Parent)
+} elseif (-not $Unattended) {
+    Read-Host "  Press Enter to close" | Out-Null
+}

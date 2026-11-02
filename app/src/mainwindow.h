@@ -78,6 +78,18 @@ private:
     void newPlaylist(const QString &folder = QString(), bool addSelected = false);
     void toast(const QString &text, int ms = 2600);
     void songFailed(int entryId);
+    // Updates (update.ps1 -Check once a day, or asked for) and the tray.
+    void checkForUpdates(bool asked);
+    void showUpdates();
+    void buildTray();
+    void updateTray();
+    void showThanks();
+    void quitForReal();
+
+public:
+    void bringToFront();
+
+private:
     void undoSongEdit();
     void applyPendingOrder();
     void showHome();
@@ -329,6 +341,13 @@ private:
     QLabel *m_greeting = nullptr;
     QLabel *m_toast = nullptr;
     QTimer m_toastTimer;
+    class UpdateChecker *m_updates = nullptr;
+    bool m_updateAsked = false;     // the check was asked for, so say "up to date" too
+    QPushButton *m_updateButton = nullptr;   // the top bar's, while something is behind
+    class QSystemTrayIcon *m_tray = nullptr;
+    class QAction *m_trayNow = nullptr;
+    class QAction *m_trayPause = nullptr;
+    bool m_quitting = false;        // Quit, not the window's close button kept in the tray
     QSet<int> m_failedSongs;        // entries that failed since a song last opened
     bool m_failNoticeShown = false;
     QWidget *m_welcome = nullptr;   // Home's card while the library is empty
