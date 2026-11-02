@@ -47,6 +47,15 @@ local cookies = mp.find_config_file("cookies.txt")
 local checked_dates = false
 local asked_youtube = false
 
+-- Or the browser's own cookies, read by yt-dlp where the browser keeps them
+-- (Settings > YouTube sign-in, off unless turned on): never stale, nothing to
+-- export. "firefox:<profile folder>" also covers Zen, LibreWolf and the other
+-- Firefox builds. Asked for on the same retry as cookies.txt, and ahead of it.
+local function browser()
+    local name = mp.get_opt("ghost-cookies-browser")
+    return name ~= "" and name or nil
+end
+
 local function warn(text)
     mp.msg.warn(text)
     mp.osd_message(text .. "\n" .. HOW_TO_RENEW, 10)
@@ -89,7 +98,10 @@ local function resolve_raw_options()
 
     local id = current_entry_id()
     if id and needs_login[id] then
-        if cookies then
+        if browser() then
+            options[#options + 1] = "cookies-from-browser=" .. browser()
+            mp.msg.info("retrying with the browser's cookies and node")
+        elseif cookies then
             options[#options + 1] = "cookies=" .. cookies
             mp.msg.info("retrying with cookies.txt and node")
         else
@@ -156,7 +168,13 @@ mp.register_event("end-file", function(event)
     ask_youtube_about_cookies(entry_url(id))
 
     failures[id] = (failures[id] or 0) + 1
-    if cookies and not hinted and failures[id] >= GIVE_UP then
+    if hinted or failures[id] < GIVE_UP then return end
+    if browser() then
+        hinted = true
+        mp.msg.warn("A song would not open even with the browser's cookies.")
+        mp.osd_message("A song would not open even with your browser's cookies.\n" ..
+                       "Check that you are signed in to YouTube there.", 10)
+    elseif cookies then
         hinted = true
         warn("A song would not open even with retries. If this keeps happening, your cookies.txt has probably expired.")
     end

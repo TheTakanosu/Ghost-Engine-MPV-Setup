@@ -83,6 +83,8 @@ public:
     // Performance: a level picked, and what the app and its player use now.
     std::function<void(int level)> onMemoryChanged;
     std::function<QString()> memoryUsage;
+    // YouTube sign-in: the browser yt-dlp reads cookies from (empty: none).
+    std::function<void(const QString &browser)> onCookiesBrowserChanged;
 
     // The zoom changed elsewhere (Ctrl + wheel): the bar follows.
     void showZoom(qreal zoom);
@@ -109,6 +111,10 @@ private:
     ZoomBar *m_zoom;
     QComboBox *m_memory;
     QLabel *m_memoryNow;
+    QLabel *m_cookiesFile;
+    ToggleSwitch *m_cookiesBrowser;
+    QComboBox *m_browser;
+    void saveCookiesBrowser();
     QTimer *m_memoryTimer;
     bool m_loading = false;
 

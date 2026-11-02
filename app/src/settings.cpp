@@ -4,6 +4,8 @@
 
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QLocale>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -22,6 +24,8 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <tuple>
 
 // -- mpv.conf ------------------------------------------------------------------
 
@@ -207,6 +211,50 @@ QWidget *card(const QString &title, QVBoxLayout *&rows)
     heading->setObjectName("sectionTitle");
     rows->addWidget(heading);
     return box;
+}
+
+// The browsers yt-dlp can read YouTube cookies from, as found on this
+// computer: a name to show and what --cookies-from-browser is given. The
+// Firefox builds are named by their newest profile, since yt-dlp only knows
+// Firefox's own folder; the Chromium ones are named outright, and since
+// Chrome 127 their cookies are often encrypted past what yt-dlp can read.
+struct Browser {
+    QString name;
+    QString value;
+    QDateTime used;   // its cookies last written (Firefox builds only)
+};
+
+QList<Browser> findBrowsers()
+{
+    QList<Browser> found;
+    const QString roaming = QDir::fromNativeSeparators(qEnvironmentVariable("APPDATA"));
+    const QString local = QDir::fromNativeSeparators(qEnvironmentVariable("LOCALAPPDATA"));
+    const std::pair<const char *, const char *> firefoxes[] = {
+        {"Firefox", "Mozilla/Firefox/Profiles"}, {"Zen", "zen/Profiles"}, {"LibreWolf", "librewolf/Profiles"},
+        {"Waterfox", "Waterfox/Profiles"}, {"Floorp", "Floorp/Profiles"},
+    };
+    for (const auto &[name, folder] : firefoxes) {
+        QFileInfo newest;
+        for (const QFileInfo &profile : QDir(roaming + '/' + folder).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            const QFileInfo jar(profile.absoluteFilePath() + QStringLiteral("/cookies.sqlite"));
+            if (jar.exists() && (!newest.exists() || jar.lastModified() > newest.lastModified()))
+                newest = jar;
+        }
+        if (newest.exists())
+            found.append({QString::fromLatin1(name),
+                          QStringLiteral("firefox:") + QDir::toNativeSeparators(newest.absolutePath()),
+                          newest.lastModified()});
+    }
+    // The one in use first: it is the one picked when the list opens.
+    std::sort(found.begin(), found.end(), [](const Browser &a, const Browser &b) { return a.used > b.used; });
+    const std::tuple<const char *, const char *, const char *> chromiums[] = {
+        {"Chrome", "Google/Chrome/User Data", "chrome"}, {"Edge", "Microsoft/Edge/User Data", "edge"},
+        {"Brave", "BraveSoftware/Brave-Browser/User Data", "brave"}, {"Vivaldi", "Vivaldi/User Data", "vivaldi"},
+    };
+    for (const auto &[name, folder, value] : chromiums)
+        if (QDir(local + '/' + folder).exists())
+            found.append({QString::fromLatin1(name) + QStringLiteral(" (may not work)"), QString::fromLatin1(value), {}});
+    return found;
 }
 
 // A setting: its name and a line on what it does, the control on the right.
@@ -483,6 +531,77 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
             onMemoryChanged(index);
     });
 
+    // YouTube sign-in: only for when YouTube asks to confirm this is no bot,
+    // or for an age-restricted song. Made easy here, never done for the user:
+    // the cookies stay where they are, and the browser is read only once the
+    // user turned it on.
+    QVBoxLayout *signIn;
+    auto *signInCard = card("YouTube sign-in", signIn);
+    m_cookiesFile = new QLabel;
+    m_cookiesFile->setObjectName("statLabel");
+    m_cookiesFile->setWordWrap(true);
+    auto *openFolder = new QPushButton("Open the mpv folder");
+    openFolder->setObjectName("link");
+    openFolder->setCursor(Qt::PointingHandCursor);
+    connect(openFolder, &QPushButton::clicked, this, [] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(mpvconf::path()).absolutePath()));
+    });
+    addRow(signIn, "cookies.txt",
+           "Put next to mpv.exe, it lets a song through when YouTube asks to confirm you're not a bot.",
+           openFolder);
+    signIn->addWidget(m_cookiesFile);
+    m_browser = new QComboBox;
+    m_browser->setMinimumWidth(190);
+    m_cookiesBrowser = new ToggleSwitch;
+    auto *browserBox = new QWidget;
+    auto *browserRow = new QHBoxLayout(browserBox);
+    browserRow->setContentsMargins(0, 0, 0, 0);
+    browserRow->setSpacing(12);
+    browserRow->addWidget(m_browser);
+    browserRow->addWidget(m_cookiesBrowser);
+    addRow(signIn, "Use my browser's cookies instead",
+           "When a song fails, yt-dlp reads your YouTube sign-in from the browser, so it never goes "
+           "stale. Firefox, Zen and the other Firefox builds work best.",
+           browserBox);
+    auto *guide = new QPushButton("How to get cookies.txt, step by step");
+    guide->setObjectName("link");
+    guide->setCursor(Qt::PointingHandCursor);
+    connect(guide, &QPushButton::clicked, this, [] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral(
+            "https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/blob/main/docs/cookies.md")));
+    });
+    auto *guideRow = new QHBoxLayout;
+    guideRow->addWidget(guide);
+    guideRow->addStretch();
+    signIn->addLayout(guideRow);
+    connect(m_cookiesBrowser, &QAbstractButton::toggled, this, [this](bool on) {
+        if (m_loading)
+            return;
+        if (on) {
+            QMessageBox ask(QMessageBox::Question, "Use your browser's cookies?",
+                "When a song fails, yt-dlp will read your YouTube sign-in from " + m_browser->currentText() +
+                    " on this computer and send it to YouTube, the way the browser itself does.\n\n"
+                    "Nothing leaves your computer otherwise, and you can turn this off at any time. "
+                    "A separate Google account is the safe choice: YouTube may restrict an account it "
+                    "takes for a bot.",
+                QMessageBox::NoButton, this);
+            QPushButton *yes = ask.addButton("Turn on", QMessageBox::AcceptRole);
+            ask.setDefaultButton(ask.addButton(QMessageBox::Cancel));
+            ask.exec();
+            if (ask.clickedButton() != yes) {
+                m_loading = true;
+                m_cookiesBrowser->setChecked(false);
+                m_loading = false;
+                return;
+            }
+        }
+        saveCookiesBrowser();
+    });
+    connect(m_browser, &QComboBox::currentIndexChanged, this, [this] {
+        if (!m_loading && m_cookiesBrowser->isChecked())
+            saveCookiesBrowser();
+    });
+
     QVBoxLayout *discord;
     auto *discordCard = card("Discord", discord);
     m_presenceSongs = new ToggleSwitch;
@@ -510,6 +629,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     box->setSpacing(16);
     box->addWidget(title);
     box->addWidget(playbackCard);
+    box->addWidget(signInCard);
     box->addWidget(windowCard);
     box->addWidget(downloadsCard);
     box->addWidget(lookCard);
@@ -579,9 +699,34 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     load();
 }
 
+void SettingsPage::saveCookiesBrowser()
+{
+    const QString browser = m_cookiesBrowser->isChecked() ? m_browser->currentData().toString() : QString();
+    mpvconf::setOption("ghost-cookies-browser", browser);
+    if (onCookiesBrowserChanged)
+        onCookiesBrowserChanged(browser);
+}
+
 void SettingsPage::load()
 {
     m_loading = true;
+    const QFileInfo jar(QFileInfo(mpvconf::path()).absolutePath() + QStringLiteral("/cookies.txt"));
+    m_cookiesFile->setText(jar.exists()
+        ? QStringLiteral("Found, saved %1. mpv says so when it expires.")
+              .arg(QLocale().toString(jar.lastModified().date(), QLocale::ShortFormat))
+        : QStringLiteral("None yet. Most songs play without it."));
+    // The browsers as found now; one saved but no longer found stays listed.
+    const QString chosen = mpvconf::option("ghost-cookies-browser");
+    m_browser->clear();
+    for (const Browser &b : findBrowsers())
+        m_browser->addItem(b.name, b.value);
+    if (!chosen.isEmpty() && m_browser->findData(chosen) < 0)
+        m_browser->addItem(chosen, chosen);
+    if (m_browser->count() == 0)
+        m_browser->addItem("No browser found", QString());
+    m_browser->setCurrentIndex(chosen.isEmpty() ? 0 : m_browser->findData(chosen));
+    m_cookiesBrowser->setChecked(!chosen.isEmpty());
+    m_cookiesBrowser->setEnabled(!m_browser->currentData().toString().isEmpty() || !chosen.isEmpty());
     // A format written by hand, not one of ours, is shown as such and left
     // alone until another is picked.
     const QString format = mpvconf::value("ytdl-format");

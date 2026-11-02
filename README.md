@@ -294,6 +294,10 @@ anyone who gets that file can sign into your account. You do not need one for
 normal playback — add one only if you hit age-restricted videos or rate
 limiting. Drop it next to `mpv.exe` and `mpv.conf`, and `scripts/cookies.lua`
 picks it up. It is in `.gitignore`, so it cannot end up in a commit.
+[docs/cookies.md](docs/cookies.md) walks through getting one, and through the
+app's other way: **Settings → YouTube sign-in** can let yt-dlp read the
+sign-in straight from your browser (off until you turn it on), so there is no
+file to export or renew.
 
 Songs are opened without it first, and only a song that fails is retried with
 cookies and node. That is on purpose: logged in, YouTube hands out stream links

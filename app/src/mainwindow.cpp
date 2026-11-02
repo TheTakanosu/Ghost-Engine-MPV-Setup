@@ -622,6 +622,10 @@ MainWindow::MainWindow()
     m_settings->onMemoryChanged = applyMemory;
     m_covers.setMemoryBudget(performance::level(QSettings().value("performance/memory", performance::kDefault).toInt()).coversMb);
     m_settings->memoryUsage = [this] { return memoryUsage(); };
+    // cookies.lua reads it on the next retry, so a running mpv is told too.
+    m_settings->onCookiesBrowserChanged = [this](const QString &browser) {
+        m_mpv.command({"change-list", "script-opts", "append", "ghost-cookies-browser=" + browser});
+    };
     // rpc_exporter.lua reads these each time it writes the bridge file and
     // tells ghost_rpc.py to show nothing for what is turned off.
     const auto applyPresence = [this] {
@@ -3478,11 +3482,16 @@ void MainWindow::songFailed(int entryId)
         return;
     m_failNoticeShown = true;
     const bool haveCookies = QFileInfo::exists(QFileInfo(findMpv()).absoluteDir().filePath("cookies.txt"));
+    if (!mpvconf::option("ghost-cookies-browser").isEmpty()) {
+        toast(QStringLiteral("Songs aren't opening, even with your browser's cookies.\n"
+                             "Check that you're signed in to YouTube in that browser."), 20000);
+        return;
+    }
     toast(haveCookies
         ? QStringLiteral("Songs aren't opening, even with your cookies.txt.\n"
                          "It has probably expired: export a fresh one and put it next to mpv.exe.")
         : QStringLiteral("Songs aren't opening. If your internet works, YouTube is probably checking for bots.\n"
-                         "A cookies.txt from your browser next to mpv.exe gets past it (see the README)."),
+                         "A cookies.txt next to mpv.exe gets past it: Settings > YouTube sign-in."),
         20000);
 }
 
