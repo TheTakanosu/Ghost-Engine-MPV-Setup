@@ -218,6 +218,17 @@ LyricsView::LyricsView(QWidget *parent) : QWidget(parent)
     }
     connect(m_copy, &QPushButton::clicked, this, &LyricsView::copyLyrics);
     connect(m_save, &QPushButton::clicked, this, &LyricsView::saveLyrics);
+    // Scrolled away to read ahead or back: the page stays there until this
+    // brings it back to the line being sung.
+    m_sync = new QPushButton("Sync lyrics", this);
+    m_sync->setObjectName("chip");
+    m_sync->setCursor(Qt::PointingHandCursor);
+    m_sync->hide();
+    connect(m_sync, &QPushButton::clicked, this, [this] {
+        m_userScrolledAt = 0;
+        m_sync->hide();
+        followCurrent();
+    });
     setFocusPolicy(Qt::ClickFocus);
     connect(m_genius, &QPushButton::clicked, this, [this] {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://genius.com/search?q=") +
@@ -244,6 +255,7 @@ void LyricsView::setSearching(const QString &title)
     m_genius->hide();
     m_copy->hide();
     m_save->hide();
+    m_sync->hide();
     m_selFrom = m_selTo = -1;
     m_scroll = m_targetScroll = 0;
     update();
@@ -261,6 +273,7 @@ void LyricsView::setLyrics(const Lyrics &lyrics, const QString &title)
     resizeEvent(nullptr);
     m_scroll = m_targetScroll = 0;
     m_userScrolledAt = 0;
+    m_sync->hide();
     followCurrent();
     update();
 }
@@ -278,6 +291,14 @@ void LyricsView::resizeEvent(QResizeEvent *)
     m_copy->adjustSize();
     m_save->move(width() - m_save->width() - 24, height() - m_save->height() - 18);
     m_copy->move(m_save->x() - m_copy->width() - 8, m_save->y());
+    m_sync->adjustSize();
+    m_sync->move((width() - m_sync->width()) / 2, m_save->y());
+}
+
+void LyricsView::stopFollowing()
+{
+    m_userScrolledAt = QDateTime::currentMSecsSinceEpoch();
+    m_sync->setVisible(!m_lyrics.lines.isEmpty());   // untimed lyrics never follow
 }
 
 void LyricsView::setTint(const QColor &tint)
@@ -323,9 +344,9 @@ QVector<QRectF> LyricsView::layoutLines(qreal width) const
 
 void LyricsView::followCurrent()
 {
-    // The line being sung a third of the way down, unless the wheel moved
-    // the page a moment ago.
-    if (QDateTime::currentMSecsSinceEpoch() - m_userScrolledAt < 4000)
+    // The line being sung a third of the way down, unless the wheel took the
+    // page (Sync lyrics gives it back).
+    if (m_userScrolledAt)
         return;
     const int line = currentLine();
     if (line < 0) {
@@ -432,7 +453,7 @@ void LyricsView::wheelEvent(QWheelEvent *event)
     const QVector<QRectF> rects = layoutLines(textArea().width());
     const qreal end = rects.isEmpty() ? 0 : qMax(0.0, rects.last().bottom() - height() / 2.0);
     m_targetScroll = qBound(0.0, m_targetScroll - event->angleDelta().y() * 1.2, end);
-    m_userScrolledAt = QDateTime::currentMSecsSinceEpoch();
+    stopFollowing();
     if (!m_glide.isActive())
         m_glide.start();
 }
@@ -559,7 +580,7 @@ void LyricsView::mouseMoveEvent(QMouseEvent *event)
             m_selTo = line;
         else if (m_selTo < 0)
             m_selTo = m_pressLine;
-        m_userScrolledAt = QDateTime::currentMSecsSinceEpoch();   // stay put while selecting
+        stopFollowing();   // stay put while selecting
         update();
         return;
     }
@@ -590,6 +611,7 @@ void LyricsView::mouseReleaseEvent(QMouseEvent *event)
     const int line = lineAt(event->position());
     if (line >= 0) {
         m_userScrolledAt = 0;
+        m_sync->hide();
         onSeek(m_lyrics.lines[line].at);
     }
 }

@@ -89,8 +89,10 @@ private:
     QColor m_tint;
     double m_position = 0;
     qreal m_scroll = 0, m_targetScroll = 0;
-    qint64 m_userScrolledAt = 0;   // the wheel takes over for a few seconds
+    qint64 m_userScrolledAt = 0;   // the wheel took over (0: the page follows the song)
     QTimer m_glide;                // eases the scroll towards its target
+    void stopFollowing();
+    class QPushButton *m_sync;     // back to the line being sung
     class QPushButton *m_genius;
     class QPushButton *m_copy;
     class QPushButton *m_save;

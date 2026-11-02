@@ -491,12 +491,14 @@ void NowPlayingPanel::setCover(const QPixmap &cover)
 void NowPlayingPanel::setVideoState(bool available, bool video, bool busy, bool mini, bool miniBusy)
 {
     // The glyph as an icon: inside the text it sat lower than the words and
-    // pushed them off the middle.
+    // pushed them off the middle. Qt puts no gap after an icon, so the
+    // picture carries one on its right, and icon and words centre together.
+    constexpr int kGap = 6;
     const auto label = [this](QPushButton *button, const QString &text, QChar glyph, bool loading) {
         button->setEnabled(!loading);
         button->setText(loading ? QStringLiteral("Loading the video...") : text);
         const qreal dpr = devicePixelRatioF();
-        QPixmap icon(QSize(16, 16) * dpr);
+        QPixmap icon(QSize(16 + kGap, 16) * dpr);
         icon.setDevicePixelRatio(dpr);
         icon.fill(Qt::transparent);
         if (!loading) {
@@ -509,7 +511,7 @@ void NowPlayingPanel::setVideoState(bool available, bool video, bool busy, bool 
             p.drawText(QRectF(0, 0, 16, 16), Qt::AlignCenter, QString(glyph));
         }
         button->setIcon(QIcon(icon));
-        button->setIconSize(QSize(loading ? 0 : 16, 16));
+        button->setIconSize(QSize(loading ? 0 : 16 + kGap, 16));
     };
     m_switch->setVisible(available && !miniBusy);
     // A screen for the video, a note for the song.
