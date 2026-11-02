@@ -19,6 +19,7 @@ Discord bot is a separate project.
 | Your Discord name and avatar, for the profile card | `%LOCALAPPDATA%\TheTakanosu\Ghost Engine` |
 | Settings | the registry, `HKEY_CURRENT_USER\Software\TheTakanosu\Ghost Engine` |
 | Player settings and `cookies.txt`, if you add one | the mpv folder (`C:\mpv` by default) |
+| A short log of what the player did, only if you turn it on in mpv.conf (`script-opts-append=ghost-log=<path>`); off by default | where that line says; it starts empty each time and stops at 5 MB |
 | A crash report, if the app ever crashes | `%TEMP%\GhostEngine-crash.txt`; it is never sent anywhere |
 
 The history can be turned off or cleared in Settings > Privacy; turning it

@@ -82,3 +82,21 @@ private:
     QPushButton *m_later;
     QProcess *m_process = nullptr;
 };
+
+// Once, the first time a new version opens after an update: what it brings,
+// in a few lines, and a link to the release's notes. A fresh install says
+// nothing; there is nothing it is new compared to.
+class WhatsNewDialog : public QDialog {
+public:
+    // Shown if this version has notes and an older one ran here before.
+    static void showIfUpdated(QWidget *parent);
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+
+private:
+    WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent);
+    QPoint m_dragFrom;
+};

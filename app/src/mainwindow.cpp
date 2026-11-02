@@ -628,6 +628,8 @@ MainWindow::MainWindow()
             showResume();
     });
     QTimer::singleShot(0, this, &MainWindow::showResume);
+    // After an update, once: what the new version brings.
+    QTimer::singleShot(1500, this, [this] { WhatsNewDialog::showIfUpdated(this); });
     m_settings->onLookChanged = [this] { applyLook(); };
     m_settings->onResumeChanged = [this] { showResume(); };
     m_settings->onHistoryChanged = [this](bool on) {
@@ -3181,6 +3183,9 @@ void MainWindow::saveResume()
     settings.setValue("resume/title", track.isEmpty() ? m_mpv.property("media-title").toString() : track);
     settings.setValue("resume/artist", artist);
     settings.setValue("resume/id", id);
+    // A video goes on from its second; a song starts again from the top
+    // (Batın: a song heard from its middle is not much of a song).
+    settings.setValue("resume/video", !m_mpv.property("user-data/ghost/audio").toBool());
 }
 
 void MainWindow::showResume()
@@ -3193,20 +3198,22 @@ void MainWindow::showResume()
     }
     const QString artist = settings.value("resume/artist").toString();
     const QString name = Playlist::peek(list).name;
+    const bool video = settings.value("resume/video").toBool();
     m_nowPlaying->setResume(settings.value("resume/title").toString(),
                             artist.isEmpty() ? name : artist + QStringLiteral("  ·  ") + name,
-                            settings.value("resume/id").toString(), settings.value("resume/at").toDouble(),
+                            settings.value("resume/id").toString(), video ? settings.value("resume/at").toDouble() : 0,
                             settings.value("resume/duration").toDouble());
 }
 
 void MainWindow::resume()
 {
-    // The same list, from the same song and second; shuffle starts afresh.
+    // The same list from the same song: a video from its second, a song
+    // from the top. Shuffle starts afresh.
     QSettings settings;
     const QString list = settings.value("resume/list").toString();
     if (list.isEmpty() || !QFileInfo::exists(list))
         return;
-    m_startSeconds = settings.value("resume/at").toDouble();
+    m_startSeconds = settings.value("resume/video").toBool() ? settings.value("resume/at").toDouble() : 0;
     play(list, false, settings.value("resume/pos").toInt());
 }
 

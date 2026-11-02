@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "theme.h"
 
+#include <QSettings>
 #include <QAbstractButton>
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -340,4 +341,109 @@ void UpdateDialog::start()
         m_later->setEnabled(true);
     });
     m_process->start("powershell.exe", updates::powershell({"-Only", keys.join(','), "-Unattended"}));
+}
+
+// -- what's new ------------------------------------------------------------------
+
+namespace {
+
+// What each version brings, as its window says it. A version with no lines
+// opens without one.
+QStringList notesFor(const QString &version)
+{
+    if (version == QLatin1String("1.3.1"))
+        return {
+            "Themes: Default, Black, Light, or System to follow Windows. Settings > Appearance.",
+            "History on your profile, and your top videos apart from your top songs.",
+            "The playlist you play moves to the top of your library.",
+            "Pick up where you left off: what played last waits in the player bar.",
+            "Fixed: a video list opened after songs played as videos had no picture.",
+        };
+    return {};
+}
+
+} // namespace
+
+void WhatsNewDialog::showIfUpdated(QWidget *parent)
+{
+    QSettings settings;
+    const QString now = QStringLiteral(GHOST_VERSION);
+    const QString seen = settings.value("whatsnew/seen").toString();
+    // Before 1.3.1 nothing was written here: settings of any other kind
+    // mean the app ran before, so this is an update, not an install.
+    const bool ranBefore = !seen.isEmpty() || settings.contains("window/geometry");
+    settings.setValue("whatsnew/seen", now);
+    const QStringList lines = notesFor(now);
+    if (seen == now || !ranBefore || lines.isEmpty())
+        return;
+    WhatsNewDialog dialog(now, lines, parent);
+    dialog.exec();
+}
+
+WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent) : QDialog(parent)
+{
+    setWindowTitle("What's new");
+    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
+    setAttribute(Qt::WA_TranslucentBackground);
+    setFixedWidth(430);
+
+    auto *title = text(QStringLiteral("Updated to %1").arg(version), 13, theme::c().textBright, QFont::DemiBold);
+    auto *about = text("What's new:", 10, theme::c().textBody);
+    auto *box = new QVBoxLayout(this);
+    box->setContentsMargins(24, 18, 24, 22);
+    box->setSpacing(0);
+    box->addWidget(title);
+    box->addSpacing(4);
+    box->addWidget(about);
+    box->addSpacing(12);
+    for (const QString &line : lines) {
+        auto *row = new QHBoxLayout;
+        row->setSpacing(10);
+        auto *dot = text(QStringLiteral("•"), 10.5, theme::accent(), QFont::Bold);
+        dot->setWordWrap(false);
+        auto *words = text(line, 10.5, theme::c().textBright);
+        words->setTextFormat(Qt::PlainText);
+        row->addWidget(dot, 0, Qt::AlignTop);
+        row->addWidget(words, 1, Qt::AlignTop);
+        box->addLayout(row);
+        box->addSpacing(8);
+    }
+    auto *notes = text(QStringLiteral("<a href='https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/releases/tag/v%1' "
+                                      "style='color:%2; text-decoration:none'>All the changes</a>")
+                           .arg(version, theme::accent().name()), 10, theme::c().textBody);
+    notes->setOpenExternalLinks(true);
+    auto *ok = new QPushButton("Got it");
+    ok->setCursor(Qt::PointingHandCursor);
+    theme::style(ok, QStringLiteral(
+        "QPushButton { min-height: 36px; max-height: 36px; padding: 0 22px; border-radius: 9px; font-size: 10.5pt;"
+        " font-weight: 600; color: @onAccent; background: @accent; border: none; }"
+        "QPushButton:hover { background: @accentHover; }"));
+    connect(ok, &QPushButton::clicked, this, &QDialog::accept);
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(notes, 1, Qt::AlignVCenter);
+    buttons->addWidget(ok);
+    box->addSpacing(8);
+    box->addLayout(buttons);
+}
+
+void WhatsNewDialog::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(theme::c().line, 1));
+    p.setBrush(theme::c().popup);
+    p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+}
+
+void WhatsNewDialog::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+        m_dragFrom = event->globalPosition().toPoint() - frameGeometry().topLeft();
+    QDialog::mousePressEvent(event);
+}
+
+void WhatsNewDialog::mouseMoveEvent(QMouseEvent *event)
+{
+    if ((event->buttons() & Qt::LeftButton) && !m_dragFrom.isNull())
+        move(event->globalPosition().toPoint() - m_dragFrom);
 }

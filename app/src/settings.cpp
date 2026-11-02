@@ -406,7 +406,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     addRow(playback, "Starting volume", "The volume mpv opens at.", volumeBox);
     m_resume = new ToggleSwitch;
     addRow(playback, "Pick up where you left off",
-           "When the app opens, the last song waits in the player bar at the second it stopped; play goes on from there.",
+           "When the app opens, what played last waits in the player bar: a video goes on from where it stopped, a song starts from the top.",
            m_resume);
     connect(m_resume, &QAbstractButton::toggled, this, [this](bool on) {
         if (m_loading)
