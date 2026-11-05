@@ -1,11 +1,14 @@
 #include "settings.h"
 
+#include "icons.h"
 #include "theme.h"
 
 #include <QApplication>
 #include <QButtonGroup>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QListWidget>
+#include <QMenu>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QLocale>
@@ -369,6 +372,228 @@ private:
     int m_step = 3;
 };
 
+// A bar of a few stops, each a value, as the zoom bar is: the seek step
+// (5 to 60 seconds). The usual stop's number is in the accent.
+class StepBar : public QWidget {
+public:
+    std::function<void(int)> onPicked;
+
+    StepBar(QVector<int> values, int usual, QString suffix, QWidget *parent = nullptr)
+        : QWidget(parent), m_values(std::move(values)), m_usual(usual), m_suffix(std::move(suffix))
+    {
+        setMinimumHeight(46);
+        setCursor(Qt::PointingHandCursor);
+    }
+    void setValue(int value)
+    {
+        m_step = qMax(0, int(m_values.indexOf(value)));
+        update();
+    }
+
+protected:
+    qreal xOf(int step) const { return 12 + (width() - 24) * step / qreal(m_values.size() - 1); }
+    int stepAt(qreal x) const { return qBound(0, qRound((x - 12) / (width() - 24) * (m_values.size() - 1)), int(m_values.size()) - 1); }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QFont small = font();
+        small.setPointSizeF(font().pointSizeF() * 0.8);
+        p.setFont(small);
+        const qreal line = height() - 12;
+        for (int i = 0; i < m_values.size(); ++i) {
+            const QRectF text(xOf(i) - 24, 0, 48, line - 12);
+            p.setPen(m_values[i] == m_usual ? theme::accent() : (i == m_step ? theme::c().text : theme::c().muted));
+            p.drawText(text, Qt::AlignHCenter | Qt::AlignTop, QString::number(m_values[i]) + m_suffix);
+            p.fillRect(QRectF(xOf(i) - 0.5, line - 9, 1, 5), theme::c().tick);
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(theme::c().track);
+        p.drawRoundedRect(QRectF(12, line - 2, width() - 24, 4), 2, 2);
+        p.setBrush(theme::accent());
+        p.drawRoundedRect(QRectF(12, line - 2, xOf(m_step) - 12, 4), 2, 2);
+        p.setBrush(theme::c().strong);
+        p.drawEllipse(QPointF(xOf(m_step), line), 8, 8);
+    }
+    void mousePressEvent(QMouseEvent *e) override { move(e->position().x()); }
+    void mouseMoveEvent(QMouseEvent *e) override
+    {
+        if (e->buttons() & Qt::LeftButton)
+            move(e->position().x());
+    }
+    void mouseReleaseEvent(QMouseEvent *) override
+    {
+        if (onPicked)
+            onPicked(m_values.value(m_step));
+    }
+
+private:
+    void move(qreal x)
+    {
+        m_step = stepAt(x);
+        update();
+    }
+    QVector<int> m_values;
+    int m_usual;
+    QString m_suffix;
+    int m_step = 1;
+};
+
+namespace {
+
+// The languages YouTube captions come in that most people pick; the rest
+// are under "More languages". Codes as yt-dlp names the tracks.
+struct Language { const char *code; const char *name; };
+const Language kCommon[] = {
+    {"en", "English"}, {"tr", "Turkish"}, {"de", "German"}, {"es", "Spanish"}, {"fr", "French"},
+    {"ru", "Russian"}, {"ar", "Arabic"}, {"pt", "Portuguese"}, {"ja", "Japanese"}, {"ko", "Korean"},
+};
+const Language kMore[] = {
+    {"az", "Azerbaijani"}, {"bg", "Bulgarian"}, {"zh-Hans", "Chinese (Simplified)"}, {"zh-Hant", "Chinese (Traditional)"},
+    {"hr", "Croatian"}, {"cs", "Czech"}, {"da", "Danish"}, {"nl", "Dutch"}, {"fi", "Finnish"}, {"ka", "Georgian"},
+    {"el", "Greek"}, {"he", "Hebrew"}, {"hi", "Hindi"}, {"hu", "Hungarian"}, {"id", "Indonesian"}, {"it", "Italian"},
+    {"kk", "Kazakh"}, {"ku", "Kurdish"}, {"ms", "Malay"}, {"no", "Norwegian"}, {"fa", "Persian"}, {"pl", "Polish"},
+    {"ro", "Romanian"}, {"sr", "Serbian"}, {"sv", "Swedish"}, {"th", "Thai"}, {"uk", "Ukrainian"}, {"vi", "Vietnamese"},
+};
+
+QString languageName(const QString &code)
+{
+    for (const Language &l : kCommon)
+        if (code == QLatin1String(l.code))
+            return QString::fromLatin1(l.name);
+    for (const Language &l : kMore)
+        if (code == QLatin1String(l.code))
+            return QString::fromLatin1(l.name);
+    return code;
+}
+
+} // namespace
+
+// Subtitles: on or off in videos, and the languages in order. The first
+// a video has is shown (Batın: "Default", then "Preferred", then the rest),
+// dragged up and down to change the order; English to begin with.
+QWidget *SettingsPage::buildSubtitles()
+{
+    QVBoxLayout *subs;
+    auto *subsCard = card("Subtitles", subs);
+    auto *on = new ToggleSwitch;
+    addRow(subs, "Turn subtitles on in videos",
+           "Off: a video opens without them, and the subtitle button under it still has them.", on);
+    on->setChecked(QSettings().value("subs/on", false).toBool());
+
+    auto *name = new QLabel("Languages, in order");
+    name->setObjectName("settingName");
+    auto *about = new QLabel("The first one a video has is shown. Drag a language up or down to change the order; "
+                             "right-click one to remove it.");
+    about->setObjectName("statLabel");
+    about->setWordWrap(true);
+    auto *list = new QListWidget;
+    list->setObjectName("subLanguages");
+    list->setDragDropMode(QAbstractItemView::InternalMove);
+    list->setDefaultDropAction(Qt::MoveAction);
+    list->setSelectionMode(QAbstractItemView::SingleSelection);
+    list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    list->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    list->setContextMenuPolicy(Qt::CustomContextMenu);
+    list->setCursor(Qt::OpenHandCursor);
+    theme::style(list, QStringLiteral("QListWidget { background: transparent; border: none; outline: none; }"
+                                      "QListWidget::item { background: @raised; border-radius: 8px; padding: 6px 12px; margin: 2px 0; }"
+                                      "QListWidget::item:hover { background: @raisedHover; }"
+                                      "QListWidget::item:selected { background: @pressed; color: @text; }"));
+    QStringList saved = QSettings().value("subs/langs", QStringList{"en"}).toStringList();
+    if (saved.isEmpty())
+        saved = {"en"};
+    for (const QString &code : saved) {
+        auto *item = new QListWidgetItem(languageName(code));
+        item->setData(Qt::UserRole, code);
+        list->addItem(item);
+    }
+
+    auto *add = new QPushButton("Add a language");
+    add->setObjectName("link");
+    add->setCursor(Qt::PointingHandCursor);
+
+    const auto codes = [list] {
+        QStringList out;
+        for (int i = 0; i < list->count(); ++i)
+            out << list->item(i)->data(Qt::UserRole).toString();
+        return out;
+    };
+    // Each row says its place: the first is the default, the second the
+    // one preferred after it; the list is as tall as its rows.
+    const auto relabel = [list] {
+        for (int i = 0; i < list->count(); ++i) {
+            QListWidgetItem *item = list->item(i);
+            const QString lang = languageName(item->data(Qt::UserRole).toString());
+            const QString place = i == 0 ? QStringLiteral("  \u2022  Default") : i == 1 ? QStringLiteral("  \u2022  Preferred") : QString();
+            item->setText(QStringLiteral("%1.  %2%3").arg(i + 1).arg(lang, place));
+        }
+        list->setFixedHeight(qMax(1, list->count()) * (list->sizeHintForRow(0) > 0 ? list->sizeHintForRow(0) : 36) + 6);
+    };
+    const auto save = [this, on, codes, relabel] {
+        relabel();
+        const QStringList langs = codes();
+        QSettings().setValue("subs/on", on->isChecked());
+        QSettings().setValue("subs/langs", langs);
+        // mpv shows the first of these a video has; yt-dlp fetches them.
+        mpvconf::setOption("ghost-sub-langs", langs.join(','));
+        mpvconf::setValue("slang", on->isChecked() ? langs.join(',') : QString());
+        if (onSubtitlesChanged)
+            onSubtitlesChanged(on->isChecked(), langs);
+    };
+    relabel();
+    connect(on, &QAbstractButton::toggled, this, [this, save] { if (!m_loading) save(); });
+    connect(list->model(), &QAbstractItemModel::rowsMoved, this, [save] { QTimer::singleShot(0, save); });
+    connect(list, &QListWidget::customContextMenuRequested, this, [list, save](const QPoint &at) {
+        QListWidgetItem *item = list->itemAt(at);
+        if (!item)
+            return;
+        QMenu menu(list);
+        QAction *remove = menu.addAction(QStringLiteral("Remove %1").arg(languageName(item->data(Qt::UserRole).toString())));
+        remove->setEnabled(list->count() > 1);   // one language is always there
+        if (menu.exec(list->viewport()->mapToGlobal(at)) == remove) {
+            delete item;
+            save();
+        }
+    });
+    const std::function<void()> saveFn = save;
+    connect(add, &QPushButton::clicked, this, [add, list, codes, saveFn] {
+        const QStringList have = codes();
+        QMenu menu(add);
+        QMenu *more = nullptr;
+        for (int i = 0; i < int(std::size(kCommon) + std::size(kMore)); ++i) {
+            const bool common = i < int(std::size(kCommon));
+            const Language &l = common ? kCommon[i] : kMore[i - std::size(kCommon)];
+            if (!common && !more)
+                more = menu.addMenu("More languages");
+            const QString code = QString::fromLatin1(l.code);
+            QAction *a = (common ? &menu : more)->addAction(QString::fromLatin1(l.name));
+            a->setEnabled(!have.contains(code));
+            QObject::connect(a, &QAction::triggered, list, [list, code, saveFn] {
+                auto *item = new QListWidgetItem(languageName(code));
+                item->setData(Qt::UserRole, code);
+                list->addItem(item);
+                saveFn();
+            });
+        }
+        menu.exec(add->mapToGlobal(QPoint(0, add->height())));
+    });
+
+    auto *words = new QVBoxLayout;
+    words->setSpacing(2);
+    words->addWidget(name);
+    words->addWidget(about);
+    words->addSpacing(6);
+    words->addWidget(list);
+    auto *addRowBox = new QHBoxLayout;
+    addRowBox->addWidget(add);
+    addRowBox->addStretch();
+    words->addLayout(addRowBox);
+    subs->addLayout(words);
+    return subsCard;
+}
+
 SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
 {
     auto *title = new QLabel("Settings");
@@ -406,6 +631,29 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     volumeRow->addWidget(m_volume);
     volumeRow->addWidget(m_volumeValue);
     addRow(playback, "Starting volume", "The volume mpv opens at.", volumeBox);
+    // How far Left and Right (and the video's arrows) jump.
+    {
+        auto *name = new QLabel("Seek step");
+        name->setObjectName("settingName");
+        auto *about = new QLabel("How far the seek keys (Left and Right) and the video's jump buttons go.");
+        about->setObjectName("statLabel");
+        about->setWordWrap(true);
+        auto *bar = new StepBar({5, 10, 15, 20, 30, 60}, 10, QStringLiteral(" s"));
+        bar->setValue(QSettings().value("playback/seekStep", 10).toInt());
+        bar->onPicked = [](int seconds) {
+            QSettings().setValue("playback/seekStep", seconds);
+            icons::setSkipSeconds(seconds);
+            for (QWidget *w : QApplication::allWidgets())
+                w->update();
+        };
+        auto *words = new QVBoxLayout;
+        words->setSpacing(2);
+        words->addWidget(name);
+        words->addWidget(about);
+        words->addSpacing(6);
+        words->addWidget(bar);
+        playback->addLayout(words);
+    }
     m_resume = new ToggleSwitch;
     addRow(playback, "Pick up where you left off",
            "When the app opens, what played last waits in the player bar: a video goes on from where it stopped, a song starts from the top.",
@@ -783,6 +1031,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     box->addWidget(windowCard);
     box->addWidget(downloadsCard);
     box->addWidget(lookCard);
+    box->addWidget(buildSubtitles());
     {
         QVBoxLayout *keys;
         auto *keysCard = card("Keyboard shortcuts", keys);

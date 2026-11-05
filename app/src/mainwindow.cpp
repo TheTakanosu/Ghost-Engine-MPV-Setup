@@ -702,6 +702,14 @@ MainWindow::MainWindow()
     };
     m_settings->onRemoveDownloads = [this] { m_offline.removeAll(); };
     m_settings->onShowShortcuts = [this] { showShortcuts(); };
+    // To a player already open too: its next video asks yt-dlp for these
+    // and shows the first it has.
+    m_settings->onSubtitlesChanged = [this](bool on, const QStringList &languages) {
+        if (!m_mpv.connected())
+            return;
+        m_mpv.command({"change-list", "script-opts", "append", "ghost-sub-langs=" + languages.join(',')});
+        m_mpv.setProperty("slang", on ? languages.join(',') : QString());
+    };
     m_settings->downloadedLists = [this] {
         QList<SettingsPage::DownloadedList> out;
         const auto &all = m_library.playlists();
@@ -985,6 +993,7 @@ MainWindow::MainWindow()
     });
 
     qApp->installEventFilter(this);
+    icons::setSkipSeconds(QSettings().value("playback/seekStep", 10).toInt());
     for (auto [keys, step] : {std::pair{QKeySequence::ZoomIn, 0.1}, std::pair{QKeySequence::ZoomOut, -0.1}}) {
         auto *shortcut = new QShortcut(keys, this);
         connect(shortcut, &QShortcut::activated, this, [this, step] { changeZoom(step); });
@@ -3265,9 +3274,9 @@ void MainWindow::runShortcut(const QString &action)
     else if (action == QLatin1String("previous") && playing)
         m_mpv.command({"playlist-prev"});
     else if (action == QLatin1String("forward") && playing)
-        m_mpv.command({"seek", 10, "relative+exact"});
+        m_mpv.command({"seek", icons::skipSeconds(), "relative+exact"});
     else if (action == QLatin1String("back") && playing)
-        m_mpv.command({"seek", -10, "relative+exact"});
+        m_mpv.command({"seek", -icons::skipSeconds(), "relative+exact"});
     else if (action == QLatin1String("volumeUp") && playing)
         m_mpv.command({"add", "volume", 5});
     else if (action == QLatin1String("volumeDown") && playing)

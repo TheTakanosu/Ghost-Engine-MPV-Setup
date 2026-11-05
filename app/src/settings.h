@@ -57,6 +57,7 @@ protected:
 class SettingsPage : public QWidget {
 public:
     explicit SettingsPage(QWidget *parent = nullptr);
+    QWidget *buildSubtitles();
 
     // Told when a setting the rest of the app shows changes.
     std::function<void()> onLookChanged;
@@ -71,6 +72,8 @@ public:
     std::function<QString()> downloadsSummary;
     std::function<void()> onRemoveDownloads;
     std::function<void()> onShowShortcuts;
+    // Subtitles on or off in videos, and the languages in the order wanted.
+    std::function<void(bool on, const QStringList &languages)> onSubtitlesChanged;
     // Each downloaded list, shown with its cover and what it takes.
     struct DownloadedList {
         QString path;

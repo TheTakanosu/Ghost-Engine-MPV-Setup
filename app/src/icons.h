@@ -14,6 +14,11 @@ enum class Icon { Play, Pause, Previous, Next, Shuffle, Folder, Playing, Clock, 
 
 void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color);
 
+// The seconds Back10/Forward10 jump and show inside their arrow
+// (Settings > Playback > Seek step; 10 until set).
+int skipSeconds();
+void setSkipSeconds(int seconds);
+
 // A flat button showing one of the icons. `round` gives it a filled circle
 // behind the icon, as the play button has.
 class IconButton : public QAbstractButton {

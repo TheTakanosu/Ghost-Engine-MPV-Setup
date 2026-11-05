@@ -1088,13 +1088,13 @@ QWidget *VideoPage::buildControls()
     auto *previous = iconButton(icons::Icon::Previous, 32, "Previous video");
     m_play = iconButton(icons::Icon::Pause, 36, "Play / pause (Space)");
     auto *next = iconButton(icons::Icon::Next, 32, "Next video");
-    auto *back10 = iconButton(icons::Icon::Back10, 32, "Back 10 seconds (Left)");
-    auto *fwd10 = iconButton(icons::Icon::Forward10, 32, "Forward 10 seconds (Right)");
+    auto *back10 = iconButton(icons::Icon::Back10, 32, "Back (Left); the step is in Settings > Playback");
+    auto *fwd10 = iconButton(icons::Icon::Forward10, 32, "Forward (Right); the step is in Settings > Playback");
     connect(previous, &QAbstractButton::clicked, this, [this] { if (onPrevious) onPrevious(); });
     connect(m_play, &QAbstractButton::clicked, this, [this] { if (onTogglePause) onTogglePause(); });
     connect(next, &QAbstractButton::clicked, this, [this] { if (onNext) onNext(); });
-    connect(back10, &QAbstractButton::clicked, this, [this] { if (onSkip) onSkip(-10); });
-    connect(fwd10, &QAbstractButton::clicked, this, [this] { if (onSkip) onSkip(10); });
+    connect(back10, &QAbstractButton::clicked, this, [this] { if (onSkip) onSkip(-icons::skipSeconds()); });
+    connect(fwd10, &QAbstractButton::clicked, this, [this] { if (onSkip) onSkip(icons::skipSeconds()); });
 
     m_mute = glyphButton(QString(QChar(0xE767)), "Mute");
     connect(m_mute, &QPushButton::clicked, this, [this] { if (onToggleMute) onToggleMute(); });

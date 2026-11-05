@@ -8,6 +8,13 @@
 namespace icons {
 
 namespace {
+int g_skip = 10;
+} // namespace
+
+int skipSeconds() { return g_skip; }
+void setSkipSeconds(int seconds) { g_skip = seconds; }
+
+namespace {
 
 // A triangle pointing right, its weight nudged left so it looks centred: a
 // play mark's visual centre is left of its box's centre.
@@ -166,7 +173,7 @@ void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color
         f.setWeight(QFont::Bold);
         painter.setFont(f);
         painter.setPen(color);
-        painter.drawText(r.adjusted(0, s * 0.04, 0, 0), Qt::AlignCenter, QStringLiteral("10"));
+        painter.drawText(r.adjusted(0, s * 0.04, 0, 0), Qt::AlignCenter, QString::number(g_skip));
         break;
     }
     case Icon::Clock: {

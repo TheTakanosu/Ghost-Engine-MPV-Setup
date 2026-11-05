@@ -116,10 +116,14 @@ local function resolve_raw_options()
     -- Turkish and English: every caption is offered in some 150 languages,
     -- and each one asked for is downloaded when the video opens. Songs
     -- need none. The brackets keep the commas inside one value.
+    -- The languages are the app's Settings > Subtitles list
+    -- (script-opts ghost-sub-langs=en,tr), Turkish and English until set.
     if not mp.get_property_native("user-data/ghost/audio", false) then
+        local langs = mp.get_opt("ghost-sub-langs")
+        if not langs or langs == "" then langs = "tr,en" end
         options[#options + 1] = "write-subs="
         options[#options + 1] = "write-auto-subs="
-        options[#options + 1] = "sub-langs=[.*-orig,tr,en]"
+        options[#options + 1] = "sub-langs=[.*-orig," .. langs .. "]"
     end
 
     mp.set_property("ytdl-raw-options", table.concat(options, ","))
