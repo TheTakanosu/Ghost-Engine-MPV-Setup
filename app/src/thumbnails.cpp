@@ -83,6 +83,11 @@ QPixmap ThumbnailCache::get(const QString &videoId, Size size)
         return {};
     }
     image = cropBars(image);
+    // Kept no larger than it is ever drawn (a picture by URL came 1000 px
+    // wide): scaling it down once here instead of at every painted frame.
+    const int cap = size == Size::Hero ? 640 : 400;
+    if (image.width() > cap)
+        image = image.scaledToWidth(cap, Qt::SmoothTransformation);
     auto *pixmap = new QPixmap(QPixmap::fromImage(image));
     const int costKb = qMax(1, pixmap->width() * pixmap->height() * 4 / 1024);
     m_memory.insert(k, pixmap, costKb);

@@ -5,6 +5,7 @@
 #include "thumbnails.h"
 #include "tiles.h"
 
+#include <QCoreApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -246,8 +247,13 @@ QListWidget *SearchPage::makeList(bool scrolls)
     list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    if (!scrolls)
+    if (!scrolls) {
         list->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        // The wheel goes to the page: a list left a few pixels of its own
+        // to scroll took the wheel first, and the page stopped, then jumped.
+        list->viewport()->installEventFilter(this);
+        list->setProperty("pageScrolls", true);
+    }
     list->setItemDelegate(new tiles::SongDelegate([this](const QModelIndex &index) {
         return m_covers.get(index.data(Qt::UserRole).toString(), ThumbnailCache::Size::Card);
     }, list));
@@ -476,6 +482,10 @@ void SearchPage::openPlaylist(const QString &id, const QString &title)
 
 bool SearchPage::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::Wheel && watched->parent() && watched->parent()->property("pageScrolls").toBool()) {
+        QCoreApplication::sendEvent(m_resultsScroll->viewport(), event);
+        return true;
+    }
     auto *list = qobject_cast<QListWidget *>(watched);
     if (list && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();

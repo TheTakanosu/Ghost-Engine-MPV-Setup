@@ -63,15 +63,27 @@ QString runs(const QJsonValue &text)
     return out;
 }
 
-// The last (largest) picture URL under a thumbnail object.
+// The smallest picture under a thumbnail object that is still sharp in a
+// row (120 px or more), else the largest there is. The largest were 1000 px
+// squares, scaled down at every frame of a scroll: the search page stuttered.
 QString picture(const QJsonValue &thumbnail)
 {
-    QString url;
+    QString url, largest;
+    int best = 0, most = 0;
     const std::function<void(const QJsonValue &)> walk = [&](const QJsonValue &v) {
         if (v.isObject()) {
             const QJsonObject o = v.toObject();
-            if (o.value("url").isString())
-                url = o.value("url").toString();
+            if (o.value("url").isString()) {
+                const int w = o.value("width").toInt();
+                if (w >= 120 && (best == 0 || w < best)) {
+                    best = w;
+                    url = o.value("url").toString();
+                }
+                if (w >= most) {
+                    most = w;
+                    largest = o.value("url").toString();
+                }
+            }
             for (const QJsonValue &child : o)
                 walk(child);
         } else if (v.isArray()) {
@@ -80,7 +92,7 @@ QString picture(const QJsonValue &thumbnail)
         }
     };
     walk(thumbnail);
-    return url;
+    return url.isEmpty() ? largest : url;
 }
 
 bool isDuration(const QString &s)

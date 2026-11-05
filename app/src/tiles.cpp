@@ -3,6 +3,7 @@
 #include "icons.h"
 #include "theme.h"
 
+#include <QPixmapCache>
 #include <QPainter>
 #include <QPainterPath>
 
@@ -29,6 +30,32 @@ qreal paintPin(QPainter *painter, const QRectF &text, Qt::Alignment vertical)
 void paintCover(QPainter &painter, const QRectF &rect, const QPixmap &pixmap,
                 const QString &name, qreal radius)
 {
+    // The cover cut and scaled to this size once, then only copied: drawn
+    // anew through an antialiased rounded clip at every frame of a smooth
+    // scroll (165 a second here), the search page stuttered.
+    if (!pixmap.isNull() && rect.width() >= 1 && rect.height() >= 1) {
+        const qreal dpr = painter.device() ? painter.device()->devicePixelRatioF() : 1.0;
+        const QSize size = (rect.size() * dpr).toSize();
+        const QString key = QStringLiteral("cover:%1:%2x%3:%4").arg(pixmap.cacheKey()).arg(size.width()).arg(size.height()).arg(radius, 0, 'f', 1);
+        QPixmap ready;
+        if (!QPixmapCache::find(key, &ready)) {
+            ready = QPixmap(size);
+            ready.fill(Qt::transparent);
+            QPainter p(&ready);
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setRenderHint(QPainter::SmoothPixmapTransform);
+            const QRectF area(QPointF(0, 0), QSizeF(size));
+            QPainterPath round;
+            round.addRoundedRect(area, radius * dpr, radius * dpr);
+            p.setClipPath(round);
+            const QSizeF scaled = QSizeF(pixmap.size()).scaled(area.size(), Qt::KeepAspectRatioByExpanding);
+            p.drawPixmap(QRectF(area.center() - QPointF(scaled.width() / 2, scaled.height() / 2), scaled), pixmap, pixmap.rect());
+            p.end();
+            QPixmapCache::insert(key, ready);
+        }
+        painter.drawPixmap(rect, ready, QRectF(ready.rect()));
+        return;
+    }
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
