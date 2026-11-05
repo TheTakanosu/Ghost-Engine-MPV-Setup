@@ -1,5 +1,6 @@
 #include "thumbnails.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -48,6 +49,9 @@ QImage cropBars(const QImage &image)
 
 QString key(const QString &videoId, ThumbnailCache::Size size)
 {
+    // A picture by its URL (search results' playlists): a file named by its hash.
+    if (videoId.startsWith(QLatin1String("http")))
+        return QString::fromLatin1(QCryptographicHash::hash(videoId.toUtf8(), QCryptographicHash::Sha1).toHex().left(24));
     return videoId + (size == ThumbnailCache::Size::Hero ? QStringLiteral("-hq") : QStringLiteral("-mq"));
 }
 
@@ -93,7 +97,9 @@ void ThumbnailCache::fetch(const QString &videoId, Size size)
     m_inFlight.insert(k);
 
     const QString file = size == Size::Hero ? QStringLiteral("hqdefault.jpg") : QStringLiteral("mqdefault.jpg");
-    QNetworkRequest request(QUrl(QStringLiteral("https://i.ytimg.com/vi/%1/%2").arg(videoId, file)));
+    QNetworkRequest request(videoId.startsWith(QLatin1String("http"))
+                                ? QUrl(videoId)
+                                : QUrl(QStringLiteral("https://i.ytimg.com/vi/%1/%2").arg(videoId, file)));
     request.setTransferTimeout(10000);
     QNetworkReply *reply = m_net.get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, videoId, size, k] {

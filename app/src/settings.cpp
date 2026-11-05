@@ -416,6 +416,23 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
             onResumeChanged();
     });
 
+    // Windows' own list of what opens at sign-in, so the setting is
+    // whatever that list says (Task Manager's Startup apps can turn it off
+    // too).
+    m_startup = new ToggleSwitch;
+    addRow(playback, "Open Ghost Engine when Windows starts",
+           "It opens minimised, or only in the tray when \"Keep running in the tray\" is on, "
+           "with what played last waiting in the player bar.", m_startup);
+    connect(m_startup, &QAbstractButton::toggled, this, [this](bool on) {
+        if (m_loading)
+            return;
+        QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"), QSettings::NativeFormat);
+        if (on)
+            run.setValue(QStringLiteral("Ghost Engine"), QStringLiteral("\"%1\" --startup").arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath())));
+        else
+            run.remove(QStringLiteral("Ghost Engine"));
+    });
+
     // The player window (Batın's "app only / mpv only").
     QVBoxLayout *window;
     auto *windowCard = card("Player", window);
@@ -815,6 +832,8 @@ void SettingsPage::load()
     m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());
     m_history->setChecked(settings.value("history/keep", true).toBool());
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
+    m_startup->setChecked(QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                                    QSettings::NativeFormat).contains(QStringLiteral("Ghost Engine")));
     m_presenceVideos->setChecked(settings.value("presence/videos", true).toBool());
     m_offlineQuality->setCurrentIndex(qMax(0, m_offlineQuality->findData(settings.value("offline/quality").toString())));
     m_zoom->setZoom(theme::zoom());

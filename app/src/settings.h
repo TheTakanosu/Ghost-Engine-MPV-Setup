@@ -109,6 +109,7 @@ private:
     ToggleSwitch *m_presenceSongs;
     ToggleSwitch *m_history;
     ToggleSwitch *m_resume;
+    ToggleSwitch *m_startup;
     ToggleSwitch *m_presenceVideos;
     QLabel *m_confPath;
     QComboBox *m_offlineQuality;

@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QDir>
 #include <QSettings>
 
 #include <windows.h>
@@ -96,9 +97,18 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName("Ghost Engine");
     QApplication::setApplicationVersion(GHOST_VERSION);
 
-    const QStringList files = app.arguments().mid(1);
+    // "--startup": opened by Windows at sign-in (Settings > Playback).
+    QStringList files = app.arguments().mid(1);
+    const bool atStartup = files.removeAll(QStringLiteral("--startup")) > 0;
     if (handOver(files.isEmpty() ? QStringList{""} : files))
         return 0;
+    {
+        // Kept pointing at this exe, wherever an update or a move put it.
+        QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"), QSettings::NativeFormat);
+        const QString line = QStringLiteral("\"%1\" --startup").arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
+        if (run.contains(QStringLiteral("Ghost Engine")) && run.value(QStringLiteral("Ghost Engine")).toString() != line)
+            run.setValue(QStringLiteral("Ghost Engine"), line);
+    }
 
     // Song lists play with no mpv window by default since 1.3.3. Someone who
     // used the app before and never chose keeps the window they had.
@@ -125,7 +135,12 @@ int main(int argc, char *argv[])
         });
     });
 
-    window.show();
+    // At sign-in it waits out of the way: in the tray when it is kept
+    // running there, otherwise minimised on the taskbar.
+    if (!atStartup)
+        window.show();
+    else if (!QSettings().value("tray/keepRunning", false).toBool())
+        window.showMinimized();
     window.importFiles(files);
     return app.exec();
 }

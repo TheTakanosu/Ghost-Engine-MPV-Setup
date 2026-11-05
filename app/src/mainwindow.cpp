@@ -23,6 +23,7 @@
 #include <QDropEvent>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -42,6 +43,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
@@ -377,6 +379,28 @@ MainWindow::MainWindow()
     profileScroll->setFrameShape(QFrame::NoFrame);
     m_profileScroll = profileScroll;
     m_pages->addWidget(m_profileScroll);
+    m_searchPage = new SearchPage(m_covers);
+    m_searchPage->setRegion(QLocale::territoryToCode(QLocale::system().territory()));
+    m_searchPage->libraryMatches = [this](const QString &query) {
+        QVector<SearchPage::LibraryMatch> out;
+        for (const Playlist &p : m_library.playlists())
+            if (p.name.contains(query, Qt::CaseInsensitive))
+                out << SearchPage::LibraryMatch{p.name, p.path};
+        return out;
+    };
+    m_searchPage->onPlay = [this](const QVector<ytmusic::Item> &items, const QString &name, int start, bool shuffle, bool audio) {
+        playFound(items, name, start, shuffle, audio);
+    };
+    m_searchPage->onSave = [this](const QString &name, const QVector<ytmusic::Item> &items) { saveFound(name, items); };
+    m_searchPage->onMenu = [this](const QVector<ytmusic::Item> &items, const QPoint &at) { foundMenu(items, at); };
+    m_searchPage->onToast = [this](const QString &text) { toast(text); };
+    m_searchPage->onOpenLibrary = [this](const QString &path) {
+        const auto &all = m_library.playlists();
+        for (int i = 0; i < all.size(); ++i)
+            if (all[i].path.compare(path, Qt::CaseInsensitive) == 0)
+                openPlaylist(i);
+    };
+    m_pages->addWidget(m_searchPage);
     m_videoPage->coverFor = [this](const QString &target) {
         return m_covers.get(idForTarget(target), ThumbnailCache::Size::Card);
     };
@@ -937,6 +961,8 @@ MainWindow::MainWindow()
                                       static_cast<QAbstractScrollArea *>(m_homeScroll)})
         new SmoothScroll(area);
     new SmoothScroll(m_videoPage->scrollArea());
+    for (QWidget *area : m_searchPage->scrollAreas())
+        new SmoothScroll(qobject_cast<QAbstractScrollArea *>(area));
     new SmoothScroll(qobject_cast<QAbstractScrollArea *>(m_panel->scrollArea()));
     m_songs->viewport()->installEventFilter(this);
 
@@ -1157,10 +1183,44 @@ QWidget *MainWindow::buildTopBar()
 
     m_search = new QLineEdit;
     m_search->setObjectName("topSearch");
-    m_search->setPlaceholderText("Search your library");
+    m_search->setPlaceholderText("What do you want to play?");
+    // A magnifier at the start, as Spotify's box has: without it the box
+    // read as an empty strip and the search went unnoticed.
+    {
+        auto *glass = m_search->addAction(QIcon(), QLineEdit::LeadingPosition);
+        const auto paintGlass = [glass] {
+            QPixmap pixmap(32, 32);
+            pixmap.fill(Qt::transparent);
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::TextAntialiasing);
+            QFont font(QStringLiteral("Segoe Fluent Icons"));
+            font.setPixelSize(20);
+            painter.setFont(font);
+            painter.setPen(theme::c().dim);
+            painter.drawText(pixmap.rect(), Qt::AlignCenter, QString(QChar(0xE721)));
+            glass->setIcon(QIcon(pixmap));
+        };
+        paintGlass();
+        theme::whenChanged(m_search, paintGlass);
+    }
+    m_search->setToolTip("Songs, videos and playlists on YouTube Music, with your own lists that match on top. "
+                         "A YouTube playlist link opens that playlist.");
     m_search->setClearButtonEnabled(true);
     m_search->setFixedWidth(360);
-    connect(m_search, &QLineEdit::textChanged, this, &MainWindow::refill);
+    // YouTube Music is asked once typing pauses, or at once with Enter.
+    m_searchTimer.setSingleShot(true);
+    m_searchTimer.setInterval(450);
+    connect(&m_searchTimer, &QTimer::timeout, this, &MainWindow::runSearch);
+    connect(m_search, &QLineEdit::textChanged, this, [this](const QString &text) {
+        if (text.trimmed().isEmpty())
+            runSearch();
+        else
+            m_searchTimer.start();
+    });
+    connect(m_search, &QLineEdit::returnPressed, this, [this] {
+        m_searchTimer.stop();
+        runSearch();
+    });
 
     auto *minimize = glyphButton(kIconMin, "Minimize", "chrome");
     m_maxButton = glyphButton(kIconMax, "Maximize", "chrome");
@@ -1237,11 +1297,30 @@ QWidget *MainWindow::buildLibrary()
     m_viewToggle = glyphButton(kIconDense, "Compact list");
     connect(m_viewToggle, &QPushButton::clicked, this, [this] { setLibraryDense(!m_rowDelegate->dense()); });
 
+    // The library's own search, apart from the top box (Batın, 2026-11-06),
+    // as Spotify's "Search in Your Library": a magnifier that opens a box
+    // under the title; it filters only this panel.
+    m_libraryFind = glyphButton(QChar(0xE721), "Search in Your Library");
+    m_librarySearch = new QLineEdit;
+    m_librarySearch->setObjectName("songSearch");
+    m_librarySearch->setPlaceholderText("Search in Your Library");
+    m_librarySearch->setClearButtonEnabled(true);
+    m_librarySearch->hide();
+    m_librarySearch->installEventFilter(this);
+    connect(m_librarySearch, &QLineEdit::textChanged, this, &MainWindow::refill);
+    // Opens it; it closes with Esc or when left empty (a toggle here met
+    // the box closing itself as the click took the focus away).
+    connect(m_libraryFind, &QPushButton::clicked, this, [this] {
+        m_librarySearch->show();
+        m_librarySearch->setFocus();
+    });
+
     m_libraryHead = new QWidget;
     auto *head = new QHBoxLayout(m_libraryHead);
     head->setContentsMargins(0, 0, 0, 0);
     head->addWidget(m_collapse);
     head->addWidget(m_libraryTitle, 1);
+    head->addWidget(m_libraryFind);
     head->addWidget(m_viewToggle);
     head->addWidget(add);
 
@@ -1363,6 +1442,7 @@ QWidget *MainWindow::buildLibrary()
     box->setContentsMargins(10, 14, 6, 10);
     box->setSpacing(10);
     box->addWidget(m_libraryHead);
+    box->addWidget(m_librarySearch);
     box->addWidget(m_chipRow);
     box->addWidget(m_libraryList, 1);
     return panel;
@@ -1435,6 +1515,11 @@ void MainWindow::setLibraryCompact(bool compact)
     m_chipRow->setVisible(!compact);
     m_addButton->setVisible(!compact);
     m_viewToggle->setVisible(!compact);
+    m_libraryFind->setVisible(!compact);
+    if (compact) {
+        m_librarySearch->clear();
+        m_librarySearch->hide();
+    }
     m_collapse->setText(QString(compact ? kIconExpand : kIconCollapse));
     m_collapse->setToolTip(compact ? "Expand library" : "Collapse library");
     m_rowDelegate->setCompact(compact);
@@ -2378,6 +2463,22 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // The library's search box closes with Esc, or when left empty.
+    if (watched == m_librarySearch) {
+        // Esc is the window's shortcut for leaving full screen; in the box
+        // it is the box's.
+        if (event->type() == QEvent::ShortcutOverride && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+            event->accept();
+            return true;
+        }
+        if (event->type() == QEvent::KeyPress && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+            m_librarySearch->clear();
+            m_librarySearch->hide();
+            return true;
+        }
+        if (event->type() == QEvent::FocusOut && m_librarySearch->text().isEmpty())
+            QTimer::singleShot(0, m_librarySearch, &QWidget::hide);
+    }
     if (dragOrResize(watched, event))
         return true;
     if (event->type() == QEvent::MouseButtonPress && videoShowing() &&
@@ -2701,7 +2802,7 @@ void MainWindow::fitLibraryHead()
             break;
     }
     int buttons = 0;
-    for (QWidget *w : std::initializer_list<QWidget *>{m_collapse, m_viewToggle, m_addButton})
+    for (QWidget *w : std::initializer_list<QWidget *>{m_collapse, m_libraryFind, m_viewToggle, m_addButton})
         buttons += w->sizeHint().width() + m_libraryHead->layout()->spacing();
     m_libraryTitle->setText(m_libraryTitle->fontMetrics().elidedText("Your Library", Qt::ElideRight, qMax(0, room - buttons)));
 }
@@ -3952,7 +4053,7 @@ void MainWindow::refill()
     fitLibraryHead();
 
     // library panel
-    const QString needle = m_search->text().trimmed();
+    const QString needle = m_librarySearch ? m_librarySearch->text().trimmed() : QString();
     m_libraryList->clear();
     auto shown = [&](const Playlist &p) {
         return !((m_filter == Songs && !p.audio) || (m_filter == Videos && p.audio)) &&
@@ -5007,6 +5108,9 @@ void MainWindow::closeExtraPlayers(bool all)
 
 void MainWindow::rememberPlayed(const QString &path)
 {
+    // What was played from a search is not a list of the library.
+    if (QDir::cleanPath(QFileInfo(path).absolutePath()).compare(foundFolder(), Qt::CaseInsensitive) == 0)
+        return;
     QSettings settings;
     QStringList played = settings.value("recent/played").toStringList();
     played.removeAll(path);
@@ -5090,4 +5194,137 @@ void MainWindow::addFolder()
         return;
     m_library.addFolder(folder);
     rescan();
+}
+
+QString MainWindow::foundFolder()
+{
+    return QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/search"));
+}
+
+void MainWindow::runSearch()
+{
+    const QString text = m_search->text().trimmed();
+    if (text.isEmpty()) {
+        // Emptied: back where the search started from.
+        if (m_pages->currentWidget() == m_searchPage)
+            m_pages->setCurrentWidget(m_beforeSearch ? m_beforeSearch : m_pages->widget(0));
+        m_searchPage->setQuery(QString());
+        return;
+    }
+    if (m_pages->currentWidget() != m_searchPage) {
+        QWidget *now = m_pages->currentWidget();
+        // The video page keeps its own way back; the search returns home then.
+        m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;
+        if (now == m_lyricsView)
+            m_beforeLyrics = nullptr;
+    }
+    m_searchPage->setQuery(text);
+    m_pages->setCurrentWidget(m_searchPage);
+}
+
+void MainWindow::playFound(const QVector<ytmusic::Item> &items, const QString &name, int start, bool shuffle, bool audio)
+{
+    // A list file of its own in the app's cache, as the bot writes them, so
+    // mpv, the scripts and "pick up where you left off" treat it as any
+    // other. A file per list: one being played is never rewritten under it.
+    const QString dir = foundFolder();
+    QDir().mkpath(dir);
+    QByteArray body = "#EXTM3U\r\n";
+    if (audio)
+        body += "#GHOST_AUDIO\r\n";
+    body += QStringLiteral("#PLAYLIST:%1\r\n").arg(name).toUtf8();
+    for (const ytmusic::Item &it : items)
+        body += QStringLiteral("#EXTINF:-1, %1\r\n%2\r\n").arg(it.lineTitle(), it.target()).toUtf8();
+    const QString path = dir + '/' + QString::fromLatin1(QCryptographicHash::hash(body, QCryptographicHash::Sha1).toHex().left(16)) + QStringLiteral(".m3u");
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(body) != body.size()) {
+        toast("Couldn't start it: the search list couldn't be written.");
+        return;
+    }
+    file.close();
+    // The newest 30 are kept (one may be what plays, or what resumes later).
+    QFileInfoList old = QDir(dir).entryInfoList({"*.m3u"}, QDir::Files, QDir::Time);
+    for (int i = 30; i < old.size(); ++i)
+        QFile::remove(old[i].absoluteFilePath());
+    play(path, shuffle, qBound(0, start, int(items.size()) - 1));
+}
+
+void MainWindow::saveFound(const QString &name, const QVector<ytmusic::Item> &items)
+{
+    const QString path = m_library.createPlaylist(name, QString());
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, "Save to library", "The playlist couldn't be made.");
+        return;
+    }
+    QVector<PlaylistEntry> entries;
+    for (const ytmusic::Item &it : items)
+        entries << PlaylistEntry{it.lineTitle(), it.target(), {}};
+    if (!Playlist::append(path, entries)) {
+        QMessageBox::warning(this, "Save to library", "The playlist file couldn't be written.");
+        return;
+    }
+    toast(QStringLiteral("Saved to your library: %1").arg(name));
+    reopenAfter(path);
+}
+
+void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &global)
+{
+    if (items.isEmpty())
+        return;
+    const bool videos = items.first().kind == ytmusic::Kind::Video;
+    QMenu menu(this);
+    menu.addAction(items.size() > 1 ? QStringLiteral("Play these %1").arg(items.size()) : QStringLiteral("Play"), this,
+                   [this, items, videos] { playFound(items, items.size() > 1 ? QStringLiteral("Search: %1").arg(m_searchPage->query()) : items.first().title, 0, false, !videos); });
+    if (items.size() == 1 && !videos)
+        menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
+    QMenu *to = menu.addMenu(items.size() > 1 ? QStringLiteral("Add %1 songs to playlist").arg(items.size()) : QStringLiteral("Add to playlist"));
+    QVector<PlaylistEntry> entries;
+    for (const ytmusic::Item &it : items)
+        entries << PlaylistEntry{it.lineTitle(), it.target(), {}};
+    const auto addTo = [this, entries](const QString &path) {
+        const Playlist target = Playlist::peek(path);
+        QSet<QString> has;
+        for (const PlaylistEntry &e : target.readEntries())
+            has << e.target;
+        QVector<PlaylistEntry> adding;
+        for (const PlaylistEntry &e : entries)
+            if (!has.contains(e.target)) {
+                adding << e;
+                has << e.target;
+            }
+        if (adding.isEmpty()) {
+            toast(QStringLiteral("Already in %1").arg(target.name));
+            return;
+        }
+        if (!Playlist::append(path, adding)) {
+            QMessageBox::warning(this, "Add to playlist", "The playlist file couldn't be written.");
+            return;
+        }
+        toast(adding.size() == 1 ? QStringLiteral("Added to %1").arg(target.name)
+                                 : QStringLiteral("%1 songs added to %2").arg(adding.size()).arg(target.name));
+        rescan();
+    };
+    to->addAction("New playlist...", this, [this, addTo] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, "New playlist", "Playlist name:", QLineEdit::Normal, QString(), &ok).trimmed();
+        if (!ok || name.isEmpty())
+            return;
+        const QString path = m_library.createPlaylist(name, QString());
+        if (path.isEmpty()) {
+            QMessageBox::warning(this, "New playlist", "The playlist couldn't be made.");
+            return;
+        }
+        addTo(path);
+    });
+    to->addSeparator();
+    const QString home = Library::homeFolder();
+    for (const Playlist &p : m_library.playlists()) {
+        const QString dir = QDir::cleanPath(QFileInfo(p.path).absolutePath());
+        const bool ours = dir.compare(home, Qt::CaseInsensitive) == 0 || dir.startsWith(home + '/', Qt::CaseInsensitive);
+        if (!ours)
+            continue;   // lists outside the library are the bot's to write
+        const QString path = p.path;
+        to->addAction(p.folder.isEmpty() ? p.name : p.folder + QStringLiteral("  ›  ") + p.name, this, [addTo, path] { addTo(path); });
+    }
+    menu.exec(global);
 }

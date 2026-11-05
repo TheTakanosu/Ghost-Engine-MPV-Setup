@@ -1,3 +1,4 @@
+#include "elidedlabel.h"
 #include "videopage.h"
 
 #include "icons.h"
@@ -931,7 +932,7 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_page->viewport()->setAutoFillBackground(false);
     connect(m_page->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { if (onScrolled) onScrolled(); });
 
-    m_listName = new QLabel;
+    m_listName = new ElidedLabel;
     m_listName->setObjectName("sectionTitle");
     m_list = new QListWidget;
     m_list->setObjectName("songs");
@@ -1279,7 +1280,7 @@ QWidget *VideoPage::buildMini()
 
 void VideoPage::setList(const QString &name, const QVector<Entry> &entries)
 {
-    m_listName->setText(name);
+    static_cast<ElidedLabel *>(m_listName)->setFullText(name);
     m_list->clear();
     for (const Entry &e : entries) {
         auto *item = new QListWidgetItem(e.title);

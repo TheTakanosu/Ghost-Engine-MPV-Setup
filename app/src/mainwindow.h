@@ -7,6 +7,7 @@
 #include "mpvclient.h"
 #include "nowplayingpanel.h"
 #include "resolver.h"
+#include "searchpage.h"
 #include "thumbnails.h"
 #include "youtube.h"
 
@@ -167,6 +168,13 @@ private:
     // playing keeps its file name, so it is found by that.
     QString playingListPath() const;
     void rememberPlayed(const QString &path);
+    // The top search box: the search page after a short pause in typing,
+    // and back to the page before it when the box is emptied.
+    void runSearch();
+    void playFound(const QVector<ytmusic::Item> &items, const QString &name, int start, bool shuffle, bool audio);
+    void saveFound(const QString &name, const QVector<ytmusic::Item> &items);
+    void foundMenu(const QVector<ytmusic::Item> &items, const QPoint &global);
+    static QString foundFolder();
 
     Library m_library;
     ThumbnailCache m_covers;
@@ -202,6 +210,8 @@ private:
     QWidget *m_chipRow = nullptr;
     QButtonGroup *m_chips = nullptr;
     QLineEdit *m_search = nullptr;
+    QLineEdit *m_librarySearch = nullptr;
+    QPushButton *m_libraryFind = nullptr;
     QListWidget *m_libraryList = nullptr;
     tiles::RowDelegate *m_rowDelegate = nullptr;
 
@@ -255,6 +265,9 @@ private:
     bool m_videosSorted = false;  // old song counts that were videos, moved over once
     ProfilePage *m_profilePage = nullptr;
     QWidget *m_profileScroll = nullptr;
+    SearchPage *m_searchPage = nullptr;
+    QWidget *m_beforeSearch = nullptr;
+    QTimer m_searchTimer;
     QListWidget *m_topLists = nullptr;
     class QPushButton *m_profileButton = nullptr;
     QTimer m_profileSoon;

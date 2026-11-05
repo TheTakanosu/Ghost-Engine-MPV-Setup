@@ -1,3 +1,4 @@
+#include "elidedlabel.h"
 #include "nowplayingpanel.h"
 #include "theme.h"
 
@@ -222,32 +223,6 @@ protected:
     }
 };
 
-// One line, cut short with "…" to the room it is given. A plain QLabel asks
-// for its whole text's width, so one long next title held the panel wider
-// than the window and pushed the cover and the photos off its right edge.
-class ElidedLabel : public QLabel {
-public:
-    void setFullText(const QString &text)
-    {
-        m_full = text;
-        setToolTip(text);
-        fit();
-    }
-    QSize minimumSizeHint() const override { return {0, QLabel::minimumSizeHint().height()}; }
-    QSize sizeHint() const override { return {0, QLabel::sizeHint().height()}; }
-
-protected:
-    void resizeEvent(QResizeEvent *event) override
-    {
-        QLabel::resizeEvent(event);
-        fit();
-    }
-
-private:
-    void fit() { setText(fontMetrics().elidedText(m_full, Qt::ElideRight, width())); }
-    QString m_full;
-};
-
 // The artist's photo, wide, with "About the artist" written over it as
 // Spotify does.
 class ArtistPhoto : public QWidget {
@@ -316,7 +291,7 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
         "QPushButton#npSwitch:hover { background: @raisedHover; border-color: @tick; }"
         "QPushButton#npSwitch:disabled { color: @muted; }");
 
-    m_list = new QLabel;
+    m_list = new ElidedLabel;
     theme::style(m_list, "font-size: 11pt; font-weight: 700; color: @textBright;");
     auto *close = new QPushButton(QString(QChar(0xE8BB)));
     close->setObjectName("glyph");
@@ -499,7 +474,7 @@ bool NowPlayingPanel::eventFilter(QObject *watched, QEvent *event)
 
 void NowPlayingPanel::setList(const QString &name)
 {
-    m_list->setText(name);
+    static_cast<ElidedLabel *>(m_list)->setFullText(name);
 }
 
 void NowPlayingPanel::setSong(const QString &title, const QString &artist)

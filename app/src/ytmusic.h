@@ -1,0 +1,79 @@
+#pragma once
+
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QObject>
+#include <QString>
+#include <QVector>
+
+#include <functional>
+
+// YouTube Music's own search, the queue it makes after a song (its radio)
+// and the songs of a playlist, through the same keyless web client the
+// Now playing panel uses for artists. Measured on 2026-11-05: a search
+// answers in ~0.6 s inside the app, where yt-dlp took ~1.7 s and a ~72 MB
+// process of its own per search.
+//
+// It is YouTube's internal interface, not a published one: the answers are
+// read by looking for the row objects wherever they sit, so a layout change
+// around them does not break it, and a failed call just reports nothing.
+namespace ytmusic {
+
+enum class Kind { Song, Video, Playlist, Artist };
+
+struct Item {
+    Kind kind = Kind::Song;
+    QString id;          // a video id, or for a playlist its id without "VL"
+    QString title;
+    QString artist;      // songs and videos; a playlist's maker
+    QString album;
+    QString duration;    // "3:12"
+    QString extra;       // "143M plays", "28M views", "50 songs"
+    QString thumbnail;   // a picture URL YouTube gave with the row
+
+    // The playlist line it plays as: "#EXTINF:-1, <artist> - <title>" over a
+    // watch URL, the way the bot writes the lists.
+    QString lineTitle() const;
+    QString target() const;
+};
+
+struct PlaylistPage {
+    QString id;
+    QString title;
+    QString subtitle;   // "88 tracks • 6 hours, 34 minutes"
+    QString thumbnail;
+    QVector<Item> songs;
+    bool ok = false;
+};
+
+// A playlist id in a pasted YouTube or YouTube Music link ("list=PL..."),
+// a video id in one ("v=..." or youtu.be/...), or empty.
+QString playlistIdIn(const QString &text);
+QString videoIdIn(const QString &text);
+
+class Client : public QObject {
+    Q_OBJECT
+public:
+    explicit Client(QObject *parent = nullptr);
+
+    // One kind of result per call, so each shelf fills as its answer comes.
+    // A newer search makes the answers of an older one arrive as nothing.
+    void search(const QString &query, Kind kind, std::function<void(QVector<Item>)> done);
+    // The songs YouTube Music plays after this one, the song itself first.
+    void radio(const QString &videoId, std::function<void(QVector<Item>)> done);
+    // A playlist's songs, every page of them (up to a few thousand).
+    void playlist(const QString &id, std::function<void(PlaylistPage)> done);
+
+    // The region results are ranked for (Turkish songs first in Turkey).
+    void setRegion(const QString &countryCode) { m_region = countryCode; }
+
+private:
+    void post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done);
+    void morePages(PlaylistPage page, const QString &token, int pages, std::function<void(PlaylistPage)> done);
+
+    QNetworkAccessManager m_net;
+    QString m_region;
+    int m_searchSerial = 0;
+};
+
+} // namespace ytmusic

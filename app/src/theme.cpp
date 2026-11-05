@@ -378,7 +378,7 @@ void apply(QApplication &app)
         }
         QPushButton#chrome:hover { background: @raised; color: @strong; }
         QPushButton#chromeClose:hover { background: @danger; color: white; }
-        QLineEdit#topSearch { background: @card; border-radius: 17px; padding: 0 16px; min-height: 34px; max-height: 34px; }
+        QLineEdit#topSearch { background: @card; border-radius: 17px; padding: 0 16px 0 6px; min-height: 34px; max-height: 34px; }
         QPushButton#chip { border-radius: 14px; padding: 0 12px; min-height: 28px; max-height: 28px; font-size: 9pt; }
         QPushButton#chip:checked { background: @text; border-color: @text; color: @window; }
         QPushButton#primary {
@@ -386,6 +386,7 @@ void apply(QApplication &app)
             border-radius: 20px; padding: 0 28px; min-height: 40px; max-height: 40px;
         }
         QPushButton#primary:hover { background: @accentHover; }
+        QPushButton#primary:disabled { background: @card; color: @muted; }
         QLabel#kicker { color: @muted; font-size: 8.5pt; font-weight: 700; letter-spacing: 1px; }
         QLabel#bigTitle { font-size: 40pt; font-weight: 800; }
         QListWidget#grid { background: transparent; border: none; outline: none; }
