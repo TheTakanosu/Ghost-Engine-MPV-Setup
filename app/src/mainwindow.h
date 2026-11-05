@@ -309,6 +309,7 @@ private:
     bool m_surfaceDrag = false;
     QPixmap m_pressedStill;
     QRect m_normalPlace;
+    void keepNormalPlaceOnScreen();
     int m_libraryWanted = -1;
     int m_chipsWidth = 0;
     void *m_playerJob = nullptr;   // kills the embedded mpv when the app ends, however it ends   // the library panel's width the chips need, counts left out   // the library's width about to be set, for panelFits   // the window's normal size while full screen hides it   // the picture as it was when a panel's edge was pressed

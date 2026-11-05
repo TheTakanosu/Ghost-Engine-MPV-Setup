@@ -807,7 +807,7 @@ void SettingsPage::load()
     m_volume->setValue(ok ? volume : 100);
     m_volumeValue->setText(QString::number(m_volume->value()));
     QSettings settings;
-    m_window->setChecked(settings.value("player/window", true).toBool());
+    m_window->setChecked(settings.value("player/window", false).toBool());
     m_embedVideo->setChecked(settings.value("player/embedVideo", true).toBool());
     m_theme->setCurrentIndex(qMax(0, m_theme->findData(int(theme::kind()))));
     m_covers->setCurrentIndex(settings.value("look/circleCovers").toBool() ? 1 : 0);

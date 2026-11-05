@@ -16,7 +16,9 @@
 #  Nothing beyond Windows itself is required: `curl`/`Invoke-WebRequest` to
 #  download, `tar.exe` (bsdtar, shipped since Windows 10 1803) to unpack the
 #  .7z mpv is released as, and `Get-FileHash` to verify. Measured, not assumed:
-#  bsdtar 3.8.4 unpacks shinchiro's mpv archive with exit code 0.
+#  bsdtar 3.8.4 unpacks shinchiro's mpv archive with exit code 0. Older
+#  Windows 10 builds ship a tar without LZMA; there 7-Zip's 7zr.exe is
+#  fetched (pinned version and SHA-256) to unpack it instead.
 #
 #  Undo it with uninstall.bat.
 # =============================================================================
@@ -157,11 +159,52 @@ function Get-Json([string]$Url) {
     }
 }
 
-function Fetch([string]$Url, [string]$Path, [string]$Label) {
+# A release file, by its usual link and, when that fails, through GitHub's
+# API. The usual link went 504 (Gateway Timeout) on every try for
+# GhostEngine-win64.zip on 2026-11-05 while the API handed out the same file.
+function Save-Asset($Asset, [string]$To) {
+    try {
+        Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $To -UseBasicParsing
+    } catch {
+        if (-not $Asset.url) { throw }
+        Invoke-WebRequest -Uri $Asset.url -OutFile $To -UseBasicParsing -Headers @{
+            "Accept"     = "application/octet-stream"
+            "User-Agent" = "Ghost-Engine-MPV-Setup"
+        }
+    }
+}
+
+function Fetch($Asset, [string]$Path, [string]$Label) {
     Say "downloading $Label ..."
-    Invoke-WebRequest -Uri $Url -OutFile $Path -UseBasicParsing
+    Save-Asset $Asset $Path
     $mb = [math]::Round((Get-Item $Path).Length / 1MB, 1)
     Say "  $mb MB" "DarkGray"
+}
+
+# mpv is released as .7z (LZMA). The tar.exe in Windows 11 unpacks it, but the
+# one in older Windows 10 builds says "LZMA codec is unsupported" (a friend's
+# PC, 1.3.2). Then 7-Zip's own console 7zr.exe does it: a 7-Zip that is
+# already installed, or 7zr.exe from 7-Zip's GitHub release, pinned to one
+# version and its SHA-256 so what runs is exactly the file that was checked.
+$SEVENZR_URL    = "https://github.com/ip7z/7zip/releases/download/26.05/7zr.exe"
+$SEVENZR_SHA256 = "9bf582b894dfa665f852d7e9112b02290a1c303c2d95a21fcdc41ffcb03143b7"
+
+function Expand-7z([string]$Archive, [string]$To, [string]$Temp) {
+    & $tar -xf $Archive -C $To
+    if ($LASTEXITCODE -eq 0) { return }
+    Say "(the tar error above is expected on older Windows 10) unpacking with 7-Zip instead" "DarkGray"
+    Get-ChildItem $To -Force | Remove-Item -Recurse -Force
+    $seven = @("$env:ProgramFiles\7-Zip\7z.exe", "${env:ProgramFiles(x86)}\7-Zip\7z.exe") |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $seven) {
+        $seven = Join-Path $Temp "7zr.exe"
+        Fetch $SEVENZR_URL $seven "7zr.exe (7-Zip)"
+        $actual = (Get-FileHash $seven -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $SEVENZR_SHA256) { throw "7zr.exe does not match its pinned checksum (got $actual)." }
+        Say "checksum verified" "Green"
+    }
+    & $seven x -y "-o$To" $Archive | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "7-Zip could not unpack $(Split-Path $Archive -Leaf)." }
 }
 
 # The app is built by GitHub from this repository's source when a version is
@@ -185,7 +228,7 @@ function Install-App([string]$Dir, [string]$Temp, [string]$Version) {
 
         Say "release $($release.tag_name)" "DarkGray"
         $zip = Join-Path $Temp $asset.name
-        Fetch $asset.browser_download_url $zip "the app"
+        Fetch $asset $zip "the app"
         $expected = "$($asset.digest)" -replace '^sha256:', ''
         $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
         if (-not $expected -or $actual -ne $expected.ToLower()) {
@@ -291,13 +334,12 @@ try {
 
         Say "build $($release.tag_name)" "DarkGray"
         $archive = Join-Path $temp $asset.name
-        Fetch $asset.browser_download_url $archive "mpv"
+        Fetch $asset $archive "mpv"
 
         Say "unpacking ..."
         $unpacked = Join-Path $temp "mpv"
         New-Item -ItemType Directory -Force $unpacked | Out-Null
-        & $tar -xf $archive -C $unpacked
-        if ($LASTEXITCODE -ne 0) { throw "tar could not unpack the mpv archive." }
+        Expand-7z $archive $unpacked $temp
 
         Copy-Item (Join-Path $unpacked "*") $InstallDir -Recurse -Force
         Say "mpv installed" "Green"
@@ -315,11 +357,11 @@ try {
     if (-not $ytAsset) { throw "yt-dlp_win.zip is missing from release $($ytRelease.tag_name)." }
 
     $ytTemp = Join-Path $temp "yt-dlp_win.zip"
-    Fetch $ytAsset.browser_download_url $ytTemp "yt-dlp"
+    Fetch $ytAsset $ytTemp "yt-dlp"
 
     if ($sumAsset) {
         $sumFile = Join-Path $temp "SHA2-256SUMS"
-        Invoke-WebRequest -Uri $sumAsset.browser_download_url -OutFile $sumFile -UseBasicParsing
+        Save-Asset $sumAsset $sumFile
         $expected = (Get-Content $sumFile |
             Where-Object { $_ -match '\s+yt-dlp_win\.zip$' } |
             Select-Object -First 1) -split '\s+' | Select-Object -First 1

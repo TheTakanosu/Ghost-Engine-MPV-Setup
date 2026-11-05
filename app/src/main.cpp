@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QSettings>
 
 #include <windows.h>
 #include <dbghelp.h>
@@ -98,6 +99,14 @@ int main(int argc, char *argv[])
     const QStringList files = app.arguments().mid(1);
     if (handOver(files.isEmpty() ? QStringList{""} : files))
         return 0;
+
+    // Song lists play with no mpv window by default since 1.3.3. Someone who
+    // used the app before and never chose keeps the window they had.
+    {
+        QSettings settings;
+        if (!settings.contains("player/window") && settings.contains("window/geometry"))
+            settings.setValue("player/window", true);
+    }
 
     theme::apply(app);
     MainWindow window;

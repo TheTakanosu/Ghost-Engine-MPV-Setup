@@ -361,6 +361,11 @@ const QList<QPair<QString, QStringList>> &allNotes()
             "Pick up where you left off: what played last waits in the player bar.",
             "Fixed: a video list opened after songs played as videos had no picture.",
         }},
+        {QStringLiteral("1.3.3"), {
+            "Maximised on your second screen, the app now stays there when you minimise it and bring it back (Win+number, the taskbar).",
+            "Song lists play with no mpv window by default on new installs. Yours stays as you had it.",
+            "Installing and updating work on older Windows 10, and keep going when GitHub's download link fails.",
+        }},
     };
     return notes;
 }

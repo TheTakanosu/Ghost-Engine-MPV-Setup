@@ -45,8 +45,22 @@ function Temp-Path([string]$Name) {
 
 # Downloads a release asset and checks it against the SHA-256 GitHub keeps
 # for it; throws on a mismatch, leaving nothing behind but the temp file.
+# A release file, by its usual link and, when that fails, through GitHub's
+# API. The usual link went 504 (Gateway Timeout) on every try for
+# GhostEngine-win64.zip on 2026-11-05 while the API handed out the same file.
+function Save-Asset($Asset, [string]$To) {
+    try {
+        Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $To -UseBasicParsing
+    } catch {
+        if (-not $Asset.url) { throw }
+        Invoke-WebRequest -Uri $Asset.url -OutFile $To -UseBasicParsing -Headers @{
+            "Accept"     = "application/octet-stream"
+            "User-Agent" = "Ghost-Engine-MPV-Setup"
+        }
+    }
+}
 function Get-Checked($Asset, [string]$To) {
-    Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $To -UseBasicParsing
+    Save-Asset $Asset $To
     $expected = "$($Asset.digest)" -replace '^sha256:', ''
     $actual = (Get-FileHash $To -Algorithm SHA256).Hash.ToLower()
     if (-not $expected -or $actual -ne $expected.ToLower()) {
@@ -54,6 +68,36 @@ function Get-Checked($Asset, [string]$To) {
     }
     Say "checksum verified" "Green"
 }
+# mpv is released as .7z (LZMA), which the tar.exe in older Windows 10 builds
+# cannot unpack ("LZMA codec is unsupported"). Then 7-Zip does it: an
+# installed one, or 7zr.exe from 7-Zip's GitHub release, pinned to one version
+# and its SHA-256.
+function Expand-7z([string]$Archive, [string]$To) {
+    $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (Test-Path $tar) {
+        & $tar -xf $Archive -C $To
+        if ($LASTEXITCODE -eq 0) { return }
+        Get-ChildItem $To -Force | Remove-Item -Recurse -Force
+    }
+    $seven = @("$env:ProgramFiles\7-Zip\7z.exe", "${env:ProgramFiles(x86)}\7-Zip\7z.exe") |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+    $fetched = $null
+    try {
+        if (-not $seven) {
+            $seven = $fetched = Temp-Path "7zr.exe"
+            Invoke-WebRequest -Uri "https://github.com/ip7z/7zip/releases/download/26.05/7zr.exe" -OutFile $seven -UseBasicParsing
+            $actual = (Get-FileHash $seven -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne "9bf582b894dfa665f852d7e9112b02290a1c303c2d95a21fcdc41ffcb03143b7") {
+                throw "7zr.exe does not match its pinned checksum (got $actual)"
+            }
+        }
+        & $seven x -y "-o$To" $Archive | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "neither tar nor 7-Zip could unpack the archive" }
+    } finally {
+        if ($fetched) { Remove-Item $fetched -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 # Copies over files that may be held for a moment: the app that has just
 # closed, or Defender reading a file it just saw written.
 function Copy-Retry([string]$From, [string]$To, [string[]]$Except) {
@@ -174,6 +218,7 @@ try {
     }
 
     $target = $null
+    $appOnly = $false
     if (-not (Wants "ghost")) {
         # Left out of -Only.
     } elseif ($stable -and (Is-Newer $stable $installed)) {
@@ -186,6 +231,17 @@ try {
         else { Say "staying on $($installed.Tag)" "DarkGray" }
     } elseif ($releases.Count) {
         Say "Already current." "Green"
+        # Updated from 1.2.x by a script that did not know the app yet, an
+        # install has the current release but no app: offered here, so
+        # nobody has to run install.bat again for it.
+        $appExe = Join-Path $PSScriptRoot "GhostEngine.exe"
+        if ((Wants "ghost") -and -not $Unattended -and $stable -and -not (Is-Newer $installed $stable) -and
+            -not (Test-Path $appExe) -and
+            ($stable.Release.assets | Where-Object { $_.name -eq "GhostEngine-win64.zip" }) -and
+            (Ask "The Ghost Engine app isn't installed here. Install it now?" $true)) {
+            $target = $stable
+            $appOnly = $true
+        }
     }
 
     if ($target) {
@@ -209,7 +265,7 @@ try {
 
                 # The app, built by GitHub for the same tag, where there is one
                 # (releases before 1.3.0 had none) and the app is installed here.
-                $withApp = $appAsset -and ((Test-Path $appExe) -or (Ask "Install the Ghost Engine app as well?" $true))
+                $withApp = $appAsset -and ($appOnly -or (Test-Path $appExe) -or (Ask "Install the Ghost Engine app as well?" $true))
                 if ($withApp) {
                     Say "downloading the app ..."
                     Get-Checked $appAsset $appZip
@@ -308,20 +364,18 @@ try {
                 Where-Object { $_.Path -and (Split-Path $_.Path -Parent) -eq $PSScriptRoot })
             $asset = $mpvRelease.assets | Where-Object { $_.name -match '^mpv-x86_64-\d{8}-git-[0-9a-f]+\.7z$' } |
                 Select-Object -First 1
-            $tar = Join-Path $env:SystemRoot "System32\tar.exe"
             if ($running.Count) {
                 Say "mpv is open, so it cannot be replaced. Close it and run this again." "Yellow"
-            } elseif (-not $asset -or -not (Test-Path $tar)) {
-                Say "No x86_64 build in that release (or no tar.exe) - mpv left as it is." "Yellow"
+            } elseif (-not $asset) {
+                Say "No x86_64 build in that release - mpv left as it is." "Yellow"
             } else {
                 $archive = Temp-Path ".7z"
                 $unpacked = Temp-Path ""
                 try {
                     Say "downloading $($asset.name) ..."
-                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive -UseBasicParsing
+                    Save-Asset $asset $archive
                     New-Item -ItemType Directory -Force $unpacked | Out-Null
-                    & $tar -xf $archive -C $unpacked
-                    if ($LASTEXITCODE -ne 0) { throw "tar could not unpack the archive" }
+                    Expand-7z $archive $unpacked
                     if (-not (Test-Path (Join-Path $unpacked "mpv.exe"))) { throw "no mpv.exe in the archive" }
                     Copy-Item (Join-Path $unpacked "*") $PSScriptRoot -Recurse -Force
                     Say "mpv updated" "Green"
@@ -405,12 +459,12 @@ try {
             } else {
                 $temp = Temp-Path ".zip"
                 Say "downloading ..."
-                Invoke-WebRequest -Uri $exe.browser_download_url -OutFile $temp -UseBasicParsing
+                Save-Asset $exe $temp
 
                 $ok = $true
                 if ($sum) {
                     $sumFile = "$temp.sums"
-                    Invoke-WebRequest -Uri $sum.browser_download_url -OutFile $sumFile -UseBasicParsing
+                    Save-Asset $sum $sumFile
                     $expected = (Get-Content $sumFile | Where-Object { $_ -match '\s+yt-dlp_win\.zip$' } |
                                  Select-Object -First 1) -split '\s+' | Select-Object -First 1
                     $actual = (Get-FileHash $temp -Algorithm SHA256).Hash.ToLower()

@@ -1048,7 +1048,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_mpv.command({"quit"});
         m_mpv.flush();
     }
-    if (!QSettings().value("player/window", true).toBool() && m_mpv.connected() &&
+    if (!QSettings().value("player/window", false).toBool() && m_mpv.connected() &&
         m_mpv.property("user-data/ghost/audio").toBool()) {
         m_mpv.command({"quit"});
         m_mpv.flush();
@@ -1124,8 +1124,10 @@ void MainWindow::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::WindowStateChange && m_maxButton)
         m_maxButton->setText(QString(isMaximized() ? kIconRestore : kIconMax));
-    if (event->type() == QEvent::WindowStateChange)
+    if (event->type() == QEvent::WindowStateChange) {
         schedulePlace();   // the windows over the picture go and come with it
+        QTimer::singleShot(0, this, [this] { keepNormalPlaceOnScreen(); });
+    }
     // Brought up from the taskbar, Windows gives the keys back to the window
     // that last had them, which can be mpv's inside the picture: Space and
     // the other keys then went to mpv instead of here.
@@ -2637,6 +2639,41 @@ void MainWindow::moveEvent(QMoveEvent *event)
 {
     QMainWindow::moveEvent(event);
     schedulePlace();   // the windows over the picture follow
+    // Dropped on another screen's top edge, Windows maximises it there but
+    // puts the normal place back where the drag began; Qt still calls the
+    // window normal at this move, so Windows' own word is asked a bit later.
+    QTimer::singleShot(0, this, [this] { keepNormalPlaceOnScreen(); });
+}
+
+void MainWindow::keepNormalPlaceOnScreen()
+{
+    // Maximised and taken to another screen (dragged by the strip, or
+    // Win+Shift+arrow), the window's normal place stayed on the first one.
+    // Minimised and brought back (Win+3, the taskbar), Windows maximises it
+    // on the screen of that place: it jumped back to the first screen. The
+    // normal place goes along, the same spot on the new screen's work area.
+    HWND hwnd = reinterpret_cast<HWND>(winId());
+    if (!IsZoomed(hwnd) || m_videoFull)
+        return;
+    WINDOWPLACEMENT wp{sizeof(wp)};
+    MONITORINFO here{sizeof(here)}, was{sizeof(was)};
+    if (!GetWindowPlacement(hwnd, &wp) ||
+        !GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &here) ||
+        !GetMonitorInfo(MonitorFromRect(&wp.rcNormalPosition, MONITOR_DEFAULTTONEAREST), &was) ||
+        EqualRect(&was.rcMonitor, &here.rcMonitor))
+        return;
+    // Placements are in workspace coordinates: each screen's corner is its
+    // work area's (the taskbar left out), so a place is kept relative to
+    // the screen's corner and fitted to its work area.
+    const RECT &normal = wp.rcNormalPosition;
+    const int workW = here.rcWork.right - here.rcWork.left, workH = here.rcWork.bottom - here.rcWork.top;
+    const int w = std::min<int>(normal.right - normal.left, workW);
+    const int h = std::min<int>(normal.bottom - normal.top, workH);
+    const int x = here.rcMonitor.left + std::clamp<int>(normal.left - was.rcMonitor.left, 0, workW - w);
+    const int y = here.rcMonitor.top + std::clamp<int>(normal.top - was.rcMonitor.top, 0, workH - h);
+    wp.rcNormalPosition = {x, y, x + w, y + h};
+    wp.showCmd = SW_SHOWMAXIMIZED;
+    SetWindowPlacement(hwnd, &wp);   // still maximised: nothing moves
 }
 
 void MainWindow::fitLibraryHead()
@@ -3111,7 +3148,7 @@ void MainWindow::sendWindowChoice()
     // its window, so a song list there can always be stopped.
     if (m_mpv.connected())
         m_mpv.command({"change-list", "script-opts", "append",
-                       QSettings().value("player/window", true).toBool() ? "ghost-window=yes" : "ghost-window=no"});
+                       QSettings().value("player/window", false).toBool() ? "ghost-window=yes" : "ghost-window=no"});
 }
 
 void MainWindow::showProfile()
@@ -4177,7 +4214,7 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         return;
     }
     QStringList args{QStringLiteral("--input-ipc-server=%1").arg(MpvClient::kPipe)};
-    if (!QSettings().value("player/window", true).toBool())
+    if (!QSettings().value("player/window", false).toBool())
         args << QStringLiteral("--script-opts-append=ghost-window=no");
     if (shuffle)
         args << "--shuffle";
@@ -4228,7 +4265,7 @@ int MainWindow::embedFor(bool audio) const
         return videosInside ? 1 : 0;
     // A song list draws nothing unless it was asked to have a window; that
     // window must then be mpv's own, not one hidden in the app.
-    return QSettings().value("player/window", true).toBool() ? 0 : -1;
+    return QSettings().value("player/window", false).toBool() ? 0 : -1;
 }
 
 void MainWindow::restartPlayer(const QueuedPlay &q, double seconds)
