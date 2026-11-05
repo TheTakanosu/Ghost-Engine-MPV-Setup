@@ -32,6 +32,7 @@ qt_add_executable(GhostEngine WIN32
     src/ytmusic.h src/ytmusic.cpp
     src/searchpage.h src/searchpage.cpp
     src/elidedlabel.h
+    src/shortcuts.h src/shortcuts.cpp
     src/profile.h src/profile.cpp
     src/updates.h src/updates.cpp
     src/traymenu.h src/traymenu.cpp

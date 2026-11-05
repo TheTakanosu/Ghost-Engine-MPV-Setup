@@ -451,3 +451,13 @@ void NowPlayingBar::resizeEvent(QResizeEvent *event)
     others += m_volumeNumber->width() - 46;
     m_volume->setFixedWidth(qBound(48, column - others, 120));
 }
+
+void NowPlayingBar::press(const QString &button)
+{
+    if (button == QLatin1String("playPause"))
+        m_playPause->click();
+    else if (button == QLatin1String("shuffle"))
+        m_shuffle->click();
+    else if (button == QLatin1String("repeat"))
+        m_repeat->click();
+}

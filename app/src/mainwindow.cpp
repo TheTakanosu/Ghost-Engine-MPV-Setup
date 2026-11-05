@@ -401,6 +401,16 @@ MainWindow::MainWindow()
                 openPlaylist(i);
     };
     m_pages->addWidget(m_searchPage);
+    {
+        auto *page = new ShortcutsPage;
+        page->onToast = [this](const QString &text) { toast(text); };
+        auto *scroll = new QScrollArea;
+        scroll->setWidget(page);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        m_shortcutsScroll = scroll;
+        m_pages->addWidget(scroll);
+    }
     m_videoPage->coverFor = [this](const QString &target) {
         return m_covers.get(idForTarget(target), ThumbnailCache::Size::Card);
     };
@@ -518,19 +528,8 @@ MainWindow::MainWindow()
         m_resetStart = true;
         m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
     };
-    // On the video page the keys mpv would take in its own window.
-    auto key = [this](const QKeySequence &seq, std::function<void()> act) {
-        // While the page shows, wherever the keyboard is: a click on the
-        // picture (a window of its own) or the panel took it off the page,
-        // and F and the arrows did nothing. A text box still takes letters.
-        auto *s = new QShortcut(seq, m_videoPage);
-        s->setContext(Qt::WindowShortcut);
-        connect(s, &QShortcut::activated, this, act);
-    };
-    key(QKeySequence(Qt::Key_Left), [this] { m_mpv.command({"seek", -10, "relative+exact"}); });
-    key(QKeySequence(Qt::Key_Right), [this] { m_mpv.command({"seek", 10, "relative+exact"}); });
-    key(QKeySequence(Qt::Key_F), [this] { setVideoFullScreen(!m_videoFull); });
-    key(QKeySequence(Qt::Key_I), [this] { if (m_videoPage->onMinimize) m_videoPage->onMinimize(); });
+    // The video page's keys (arrows, F, I) are shortcuts now: see
+    // runShortcut and Settings > Keyboard shortcuts.
     auto *escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     connect(escape, &QShortcut::activated, this, [this] { if (m_videoFull) setVideoFullScreen(false); });
     m_lyricsView->onSeek = [this](double seconds) { m_mpv.command({"seek", seconds, "absolute"}); };
@@ -702,6 +701,7 @@ MainWindow::MainWindow()
                             .arg(double(m_offline.bytesUsed()) / (1024 * 1024), 0, 'f', 1);
     };
     m_settings->onRemoveDownloads = [this] { m_offline.removeAll(); };
+    m_settings->onShowShortcuts = [this] { showShortcuts(); };
     m_settings->downloadedLists = [this] {
         QList<SettingsPage::DownloadedList> out;
         const auto &all = m_library.playlists();
@@ -2498,10 +2498,24 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         QWidget *active = QApplication::activeWindow();
         const bool ours = active && (active == this || active->parentWidget() == this ||
                                      active == m_videoPage->controls() || active == m_videoPage->corners());
-        if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier && !typing && ours &&
-            !QApplication::activePopupWidget() && m_mpv.connected()) {
-            if (!key->isAutoRepeat())
-                m_mpv.command({"cycle", "pause"});
+        // Every shortcut is taken here, before the widget with the focus,
+        // so a key works on every page; a text box keeps its letters.
+        if (ours && !shortcuts::capturing() && !QApplication::activePopupWidget()) {
+            const QString action = shortcuts::actionFor(shortcuts::keyOf(key));
+            const shortcuts::Action *a = action.isEmpty() ? nullptr : shortcuts::find(action);
+            if (a && (!typing || a->whileTyping)) {
+                if (!key->isAutoRepeat() || a->repeats)
+                    runShortcut(action);
+                return true;
+            }
+        }
+    }
+    // The mouse's side buttons, when one is given something to do.
+    if (event->type() == QEvent::MouseButtonPress && !shortcuts::capturing()) {
+        const QString action = shortcuts::actionFor(shortcuts::keyOfMouse(static_cast<QMouseEvent *>(event)->button()));
+        QWidget *active = QApplication::activeWindow();
+        if (!action.isEmpty() && active && (active == this || active->parentWidget() == this)) {
+            runShortcut(action);
             return true;
         }
     }
@@ -3231,6 +3245,60 @@ void MainWindow::tintLyrics()
     }
     const QColor avg = cover.toImage().scaled(1, 1, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).pixelColor(0, 0);
     m_lyricsView->setTint(QColor::fromHsv(avg.hsvHue(), qMin(avg.hsvSaturation(), 170), qBound(60, avg.value(), 110)));
+}
+
+void MainWindow::showShortcuts()
+{
+    m_open = -1;
+    m_libraryList->clearSelection();
+    m_pages->setCurrentWidget(m_shortcutsScroll);
+    m_nowPlaying->setLyricsOpen(false);
+}
+
+void MainWindow::runShortcut(const QString &action)
+{
+    const bool playing = m_mpv.connected();
+    if (action == QLatin1String("playPause") || action == QLatin1String("shuffle") || action == QLatin1String("repeat"))
+        m_nowPlaying->press(action);
+    else if (action == QLatin1String("next") && playing)
+        m_mpv.command({"playlist-next"});
+    else if (action == QLatin1String("previous") && playing)
+        m_mpv.command({"playlist-prev"});
+    else if (action == QLatin1String("forward") && playing)
+        m_mpv.command({"seek", 10, "relative+exact"});
+    else if (action == QLatin1String("back") && playing)
+        m_mpv.command({"seek", -10, "relative+exact"});
+    else if (action == QLatin1String("volumeUp") && playing)
+        m_mpv.command({"add", "volume", 5});
+    else if (action == QLatin1String("volumeDown") && playing)
+        m_mpv.command({"add", "volume", -5});
+    else if (action == QLatin1String("mute") && playing)
+        m_mpv.command({"cycle", "mute"});
+    else if (action == QLatin1String("subtitles") && playing)
+        m_mpv.command({"cycle", "sub"});
+    else if (action == QLatin1String("fullScreen")) {
+        if (m_videoFull || m_pages->currentWidget() == m_videoPage)
+            setVideoFullScreen(!m_videoFull);
+    } else if (action == QLatin1String("mini")) {
+        if (m_videoPage->onMinimize && m_pages->currentWidget() == m_videoPage)
+            m_videoPage->onMinimize();
+    } else if (action == QLatin1String("search")) {
+        if (m_videoFull)
+            setVideoFullScreen(false);
+        m_search->setFocus();
+        m_search->selectAll();
+    } else if (action == QLatin1String("librarySearch")) {
+        if (m_compact)
+            m_collapse->click();
+        m_libraryFind->click();
+    } else if (action == QLatin1String("home"))
+        showHome();
+    else if (action == QLatin1String("lyrics"))
+        toggleLyrics();
+    else if (action == QLatin1String("settings"))
+        showSettings();
+    else if (action == QLatin1String("shortcuts"))
+        showShortcuts();
 }
 
 void MainWindow::showSettings()

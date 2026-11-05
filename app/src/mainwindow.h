@@ -8,6 +8,7 @@
 #include "nowplayingpanel.h"
 #include "resolver.h"
 #include "searchpage.h"
+#include "shortcuts.h"
 #include "thumbnails.h"
 #include "youtube.h"
 
@@ -96,6 +97,8 @@ private:
     void showHome();
     void showProfile();
     void showSettings();
+    void showShortcuts();
+    void runShortcut(const QString &action);
     void toggleLyrics();
     // The song mpv is on, as artist and track for a lyrics search.
     std::pair<QString, QString> playingSong() const;
@@ -266,6 +269,7 @@ private:
     ProfilePage *m_profilePage = nullptr;
     QWidget *m_profileScroll = nullptr;
     SearchPage *m_searchPage = nullptr;
+    QWidget *m_shortcutsScroll = nullptr;
     QWidget *m_beforeSearch = nullptr;
     QTimer m_searchTimer;
     QListWidget *m_topLists = nullptr;

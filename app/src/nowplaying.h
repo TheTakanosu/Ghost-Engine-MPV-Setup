@@ -28,6 +28,9 @@ public:
     std::function<int()> numberFor;
     void refreshPosition();
     void setVolumeNumber(bool shown);
+    // A keyboard shortcut pressing one of the bar's buttons, so a key does
+    // just what the click does ("playPause", "shuffle", "repeat").
+    void press(const QString &button);
     void setLyricsOpen(bool open);
     void setPanelOpen(bool open);
     // "Pick up where you left off": while nothing plays, the last song stands

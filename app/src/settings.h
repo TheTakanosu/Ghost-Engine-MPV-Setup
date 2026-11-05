@@ -70,6 +70,7 @@ public:
     // Downloads: a line on what is kept, and clearing all of it.
     std::function<QString()> downloadsSummary;
     std::function<void()> onRemoveDownloads;
+    std::function<void()> onShowShortcuts;
     // Each downloaded list, shown with its cover and what it takes.
     struct DownloadedList {
         QString path;

@@ -783,6 +783,18 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     box->addWidget(windowCard);
     box->addWidget(downloadsCard);
     box->addWidget(lookCard);
+    {
+        QVBoxLayout *keys;
+        auto *keysCard = card("Keyboard shortcuts", keys);
+        auto *open = new QPushButton("Change keys");
+        open->setObjectName("primary");
+        open->setCursor(Qt::PointingHandCursor);
+        connect(open, &QPushButton::clicked, this, [this] { if (onShowShortcuts) onShowShortcuts(); });
+        addRow(keys, "Keys for playing, video and getting around",
+               "Next, volume, seeking, search and more, each on a key you choose; a mouse's side buttons too. "
+               "Ctrl + / opens them from anywhere.", open);
+        box->addWidget(keysCard);
+    }
     box->addWidget(speedCard);
     box->addWidget(discordCard);
     box->addWidget(privacyCard);
