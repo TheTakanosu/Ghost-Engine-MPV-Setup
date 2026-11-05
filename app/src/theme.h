@@ -58,6 +58,10 @@ enum class Kind { Default, Black, Light, System };
 Kind kind();
 QString kindName(Kind kind);
 void setKind(QApplication &app, Kind kind);
+// The user's own accent over the theme's (Settings > Appearance), or an
+// invalid colour for the theme's own. The other accent roles follow it.
+QColor customAccent();
+void setAccent(QApplication &app, const QColor &color);
 
 const Palette &c();
 

@@ -7,6 +7,7 @@
 #include <QPair>
 #include <QPointer>
 #include <QSettings>
+#include <cmath>
 #include <QStyleHints>
 #include <QWidget>
 #include <QEvent>
@@ -94,6 +95,34 @@ Palette lightPalette()
 
 Kind g_kind = Kind::Default;
 Palette g_palette = defaultPalette();
+QColor g_accent;   // invalid: the theme's own
+
+// One chosen colour made into the four accent roles, for the theme it sits
+// on: a hover a shade towards the light (dark themes) or the dark (Light),
+// text that stays readable on the theme's panels, and black or white on it.
+void useAccent(Palette &p, const QColor &color)
+{
+    const bool dark = p.window.lightness() < 128;
+    p.accent = color;
+    p.accentHover = dark ? color.lighter(115) : color.darker(115);
+    if (dark) {
+        // Towards white until it reads on the dark panels.
+        QColor t = color;
+        for (int i = 0; i < 6 && t.lightness() < 170; ++i)
+            t = QColor::fromRgbF(t.redF() + (1 - t.redF()) * 0.2, t.greenF() + (1 - t.greenF()) * 0.2,
+                                 t.blueF() + (1 - t.blueF()) * 0.2);
+        p.accentText = t;
+    } else {
+        QColor t = color;
+        for (int i = 0; i < 6 && t.lightness() > 110; ++i)
+            t = t.darker(118);
+        p.accentText = t;
+    }
+    // Relative luminance: light accents carry black text, dark ones white.
+    const auto lin = [](qreal v) { return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+    const qreal lum = 0.2126 * lin(color.redF()) + 0.7152 * lin(color.greenF()) + 0.0722 * lin(color.blueF());
+    p.onAccent = lum > 0.35 ? QColor(16, 14, 22) : QColor(255, 255, 255);
+}
 
 bool windowsIsLight()
 {
@@ -108,6 +137,8 @@ void choosePalette()
     case Kind::System: g_palette = windowsIsLight() ? lightPalette() : defaultPalette(); break;
     case Kind::Default: g_palette = defaultPalette(); break;
     }
+    if (g_accent.isValid())
+        useAccent(g_palette, g_accent);
 }
 
 const QHash<QString, QColor Palette::*> &roles()
@@ -193,6 +224,21 @@ void whenChanged(QObject *owner, std::function<void()> refresh)
     refreshers().append({owner, std::move(refresh)});
 }
 
+QColor customAccent()
+{
+    return g_accent;
+}
+
+void setAccent(QApplication &app, const QColor &color)
+{
+    g_accent = color;
+    if (color.isValid())
+        QSettings().setValue("look/accent", color.name());
+    else
+        QSettings().remove("look/accent");
+    apply(app);
+}
+
 void setKind(QApplication &app, Kind kind)
 {
     g_kind = kind;
@@ -266,6 +312,9 @@ void apply(QApplication &app)
         for (Kind k : {Kind::Black, Kind::Light, Kind::System})
             if (saved == kindName(k))
                 g_kind = k;
+        const QColor accent(QSettings().value("look/accent").toString());
+        if (accent.isValid())
+            g_accent = accent;
         // System follows Windows while the app is open, too.
         QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, &app, [&app] {
             if (g_kind == Kind::System)

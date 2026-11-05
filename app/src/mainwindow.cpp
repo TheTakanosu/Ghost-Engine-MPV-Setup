@@ -2650,6 +2650,16 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     restoreLibraryWidth();
+    // Narrowed until the library is squeezed below its full width, it goes
+    // covers-only and covers wide: only a dragged edge did that before, so
+    // a small window kept a wide strip with the covers in its middle.
+    QTimer::singleShot(0, this, [this] {
+        if (!m_split || m_videoFull || isMinimized())
+            return;
+        if (!m_compact && m_split->sizes().value(0) < compactBelow())
+            setLibraryCompact(true);
+        snapCompactLibrary();
+    });
     layoutHeader();
     syncSearchWidth();
     updatePanelVisibility();

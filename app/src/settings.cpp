@@ -3,6 +3,8 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QButtonGroup>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -521,6 +523,88 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_theme->addItem("Match Windows", int(theme::Kind::System));
     m_theme->setMinimumWidth(190);
     addRow(look, "Theme", "Black is all greys. Match Windows is Light when Windows is light and Purple when it is dark.", m_theme);
+    // The accent over any theme (Batın, 2026-11-02: "e.g. 100,20,255"): the
+    // theme's own, a few ready ones, or any colour by RGB or hex.
+    {
+        auto *box = new QWidget;
+        auto *row = new QHBoxLayout(box);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(6);
+        auto *group = new QButtonGroup(box);
+        group->setExclusive(true);
+        const auto swatch = [](const QColor &color, const QString &tip) {
+            auto *b = new QPushButton;
+            b->setCheckable(true);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setToolTip(tip);
+            theme::style(b, QStringLiteral("QPushButton { background: %1; border-radius: 13px; border: 2px solid @window;"
+                                           " min-width: 22px; max-width: 22px; min-height: 22px; max-height: 22px; }"
+                                           "QPushButton:hover { border-color: @muted; }"
+                                           "QPushButton:checked { border-color: @text; }").arg(color.name()));
+            return b;
+        };
+        auto *own = new QPushButton("Theme");
+        own->setObjectName("chip");
+        own->setCheckable(true);
+        own->setCursor(Qt::PointingHandCursor);
+        own->setToolTip("The theme's own accent");
+        group->addButton(own);
+        row->addWidget(own);
+        static const std::pair<const char *, QColor> ready[] = {
+            {"Violet", QColor(100, 20, 255)}, {"Blue", QColor(64, 140, 255)}, {"Teal", QColor(32, 196, 180)},
+            {"Green", QColor(60, 200, 110)}, {"Gold", QColor(240, 190, 60)}, {"Orange", QColor(255, 128, 52)},
+            {"Red", QColor(236, 72, 84)}, {"Pink", QColor(240, 96, 170)},
+        };
+        QList<QPushButton *> swatches;
+        for (const auto &[name, color] : ready) {
+            QPushButton *b = swatch(color, QString::fromLatin1(name));
+            b->setProperty("accent", color);
+            group->addButton(b);
+            row->addWidget(b);
+            swatches << b;
+        }
+        // The one picked by hand, shown once there is one.
+        QPushButton *mine = swatch(Qt::black, "Your colour");
+        group->addButton(mine);
+        row->addWidget(mine);
+        auto *pick = new QPushButton("Custom...");
+        pick->setObjectName("link");
+        pick->setCursor(Qt::PointingHandCursor);
+        pick->setToolTip("Any colour, by RGB or hex");
+        row->addWidget(pick);
+        auto *app = static_cast<QApplication *>(QCoreApplication::instance());
+        const auto show = [=] {
+            const QColor now = theme::customAccent();
+            bool matched = !now.isValid();
+            own->setChecked(!now.isValid());
+            for (QPushButton *b : swatches)
+                if (now.isValid() && b->property("accent").value<QColor>() == now) {
+                    b->setChecked(true);
+                    matched = true;
+                }
+            mine->setVisible(now.isValid() && !matched);
+            if (now.isValid() && !matched) {
+                mine->setProperty("accent", now);
+                theme::style(mine, QStringLiteral("QPushButton { background: %1; border-radius: 13px; border: 2px solid @text;"
+                                                  " min-width: 22px; max-width: 22px; min-height: 22px; max-height: 22px; }").arg(now.name()));
+                mine->setChecked(true);
+            }
+        };
+        show();
+        connect(own, &QPushButton::clicked, this, [=] { theme::setAccent(*app, QColor()); show(); });
+        for (QPushButton *b : swatches)
+            connect(b, &QPushButton::clicked, this, [=] { theme::setAccent(*app, b->property("accent").value<QColor>()); show(); });
+        connect(pick, &QPushButton::clicked, this, [=] {
+            const QColor start = theme::customAccent().isValid() ? theme::customAccent() : theme::accent();
+            const QColor chosen = QColorDialog::getColor(start, this, "Accent colour");
+            if (chosen.isValid()) {
+                theme::setAccent(*app, chosen);
+                show();
+            }
+        });
+        row->addStretch();
+        addRow(look, "Accent colour", "Buttons, the playing song, bars and links. Theme keeps the theme's own; Custom takes any RGB or hex.", box);
+    }
     m_covers = new QComboBox;
     m_covers->addItem("Rounded corners", false);
     m_covers->addItem("Circles", true);
