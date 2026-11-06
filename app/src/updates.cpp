@@ -366,6 +366,13 @@ const QList<QPair<QString, QStringList>> &allNotes()
             "Song lists play with no mpv window by default on new installs. Yours stays as you had it.",
             "Installing and updating work on older Windows 10, and keep going when GitHub's download link fails.",
         }},
+        {QStringLiteral("1.3.4"), {
+            "Search YouTube Music from the box at the top: a song plays with its radio, a playlist can be previewed and saved to your library. Paste a YouTube link to open it.",
+            "Your library has its own search, and long titles are shortened instead of cut.",
+            "Accent colour of your own: follow the theme, pick one of eight, or set any RGB/hex. Settings > Appearance.",
+            "Keyboard shortcuts page (Ctrl+/): change any key, mouse back/forward buttons included.",
+            "Settings: how far the arrow keys seek, subtitles on or off with your language order, and opening Ghost Engine when Windows starts.",
+        }},
     };
     return notes;
 }
