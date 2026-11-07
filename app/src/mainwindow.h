@@ -108,6 +108,11 @@ private:
     void applyPendingOrder();
     void showHome();
     void showYouTube();
+    // The search: in the top bar, or the box in the middle (SearchPopup).
+    void openSearch();
+    void setSearchMiddle(bool middle);
+    class SearchPopup *m_searchPopup = nullptr;
+    QPushButton *m_searchButton = nullptr;
     // Two apps in one: the music layout (library, lyrics, artists) and the
     // YouTube one (its own menu, home, channels). The top bar's video button
     // goes from one to the other, the new one sliding in.

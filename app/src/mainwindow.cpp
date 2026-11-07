@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "searchpopup.h"
 
 #include "covercrop.h"
 #include "settings.h"
@@ -682,6 +683,7 @@ MainWindow::MainWindow()
     // After an update, once: what the new version brings.
     QTimer::singleShot(1500, this, [this] { WhatsNewDialog::showIfUpdated(this); });
     m_settings->onLookChanged = [this] { applyLook(); };
+    m_settings->onSearchPlaceChanged = [this](bool middle) { setSearchMiddle(middle); };
     m_settings->onResumeChanged = [this] { showResume(); };
     m_settings->onHistoryChanged = [this](bool on) {
         m_stats.setKeepHistory(on);
@@ -850,6 +852,8 @@ MainWindow::MainWindow()
     QSettings settings;
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
+    setSearchMiddle(settings.value("search/middle", false).toBool());
+    connect(new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this), &QShortcut::activated, this, &MainWindow::openSearch);
     if (settings.value("layout/youtube", false).toBool())
         QTimer::singleShot(0, this, [this] { setYouTubeLayout(true, false); });
     m_rightSplit->restoreState(settings.value("window/panelSplit").toByteArray());
@@ -1296,6 +1300,10 @@ QWidget *MainWindow::buildTopBar()
     row->setSpacing(8);
     row->addWidget(home);
     row->addWidget(youtube);
+    m_searchButton = glyphButton(QChar(0xE721), "Search (Ctrl+K)", "pill");
+    connect(m_searchButton, &QPushButton::clicked, this, &MainWindow::openSearch);
+    m_chromeButtons << m_searchButton;   // clicked, not a place to drag the window by
+    row->addWidget(m_searchButton);
     row->addWidget(m_search);
     row->addStretch();
     row->addWidget(m_updateButton);
@@ -3686,10 +3694,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
     };
     QPushButton *search = nav(QChar(0xE721), "Search");
     search->setCheckable(false);
-    connect(search, &QPushButton::clicked, this, [this] {
-        m_search->setFocus();
-        m_search->selectAll();
-    });
+    connect(search, &QPushButton::clicked, this, &MainWindow::openSearch);
     QPushButton *home = nav(kIconHome, "Home");
     QPushButton *followingNav = nav(QChar(0xE734), "Following");
     m_ytNav << home;
@@ -5809,6 +5814,41 @@ void MainWindow::runSearch()
     }
     m_searchPage->setQuery(text);
     m_pages->setCurrentWidget(m_searchPage);
+    SearchPopup::remember(text);
+    for (QPushButton *b : m_ytNav)
+        b->setChecked(false);
+    if (m_ytChannels)
+        m_ytChannels->clearSelection();
+}
+
+void MainWindow::openSearch()
+{
+    // The middle box when that is chosen (or from Ctrl+K); else the top one.
+    if (!QSettings().value("search/middle", false).toBool() && sender() != nullptr &&
+        !qobject_cast<QShortcut *>(sender())) {
+        m_search->setFocus();
+        m_search->selectAll();
+        return;
+    }
+    if (!m_searchPopup) {
+        m_searchPopup = new SearchPopup(this);
+        m_searchPopup->onSearch = [this](const QString &text) {
+            {
+                const QSignalBlocker quiet(m_search);
+                m_search->setText(text);
+            }
+            m_searchTimer.stop();
+            runSearch();
+        };
+    }
+    m_searchPopup->open(m_search->text(), m_youtubeLayout ? QStringLiteral("Search YouTube")
+                                                          : QStringLiteral("What do you want to play?"));
+}
+
+void MainWindow::setSearchMiddle(bool middle)
+{
+    m_search->setVisible(!middle);
+    m_searchButton->setVisible(middle);
 }
 
 void MainWindow::playFound(const QVector<ytmusic::Item> &items, const QString &name, int start, bool shuffle, bool audio)

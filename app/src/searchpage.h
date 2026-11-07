@@ -86,6 +86,7 @@ private:
     void homeMore();
     void homeChip(const QString &channel);
     int appendHome(const QVector<ytmusic::Item> &items);
+    void searchInGrid(const QString &query);
     QVector<ytmusic::Item> picked(QListWidget *list, const QVector<ytmusic::Item> &items) const;
 
     ThumbnailCache &m_covers;
@@ -134,6 +135,7 @@ private:
     QString m_homeNext;           // a chip's search, its next page
     bool m_homeLoading = false;
     bool m_homeFixed = false;     // showVideos: nothing more is fetched
+    bool m_homeSearch = false;    // the grid shows a search's results, not the home
     int m_homeSerial = 0;
 
     // The playlist view.

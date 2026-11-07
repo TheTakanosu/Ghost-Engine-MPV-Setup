@@ -97,6 +97,10 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_youtubeMode->setToolTip("Every video on YouTube, played here instead of in a browser");
     modes->addStretch();
     column->addLayout(modes);
+    // The layout decides what the box searches now (the video button in the
+    // top bar); the switch stays for the code, out of sight.
+    m_musicMode->hide();
+    m_youtubeMode->hide();
     m_youtube = QSettings().value("search/youtube", false).toBool();
     m_musicMode->setChecked(!m_youtube);
     m_youtubeMode->setChecked(m_youtube);
@@ -505,24 +509,9 @@ void SearchPage::setQuery(const QString &text)
     }
 
     if (m_youtube) {
-        setStatus("Searching YouTube...");
-        m_pending = 1;
-        m_client.searchYouTube(query, {}, [this, serial](QVector<ytmusic::Item> items, QString next) {
-            if (serial != m_serial)
-                return;
-            m_pending = 0;
-            m_ytVideos = items;
-            m_ytNext = next;
-            fill(m_youtubeList, m_ytVideos, m_ytVideos.size());
-            m_youtubeMore->setText("Show more");
-            m_youtubeMore->setEnabled(true);
-            m_youtubeMore->setVisible(!next.isEmpty());
-            m_youtubeSection->setVisible(!m_ytVideos.isEmpty());
-            updateEmpty();
-        });
+        searchInGrid(query);
         return;
     }
-
     // Lists in the library whose name matches, as chips.
     QLayout *chips = m_libraryChips->layout();
     while (QLayoutItem *child = chips->takeAt(0)) {
@@ -613,8 +602,12 @@ void SearchPage::showYouTubeHome()
         chips->addWidget(chip);
     }
     static_cast<QHBoxLayout *>(chips)->addStretch();
-    if (m_homeFixed) {
+    if (m_homeFixed || m_homeSearch) {
         m_homeFixed = false;
+        m_homeSearch = false;
+        m_homeChannel.clear();
+        for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
+            chip->setChecked(chip->text() == QLatin1String("All"));
         fillHome(true);
     } else if (m_home.isEmpty() && !m_homeLoading) {
         fillHome(true);
@@ -627,6 +620,7 @@ void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &
     showYouTubeHome();
     ++m_homeSerial;
     m_homeFixed = true;
+    m_homeSearch = false;
     m_homeLoading = false;
     m_home.clear();
     m_homeSeen.clear();
@@ -669,8 +663,34 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
     return added;
 }
 
+void SearchPage::searchInGrid(const QString &query)
+{
+    // YouTube's results as its home's cards (channel pictures, length,
+    // views), page after page as it is scrolled, the chips above.
+    m_views->setCurrentWidget(m_homeGrid->parentWidget());
+    ++m_homeSerial;
+    m_homeFixed = false;
+    m_homeSearch = true;
+    m_homeLoading = false;
+    m_home.clear();
+    m_homeSeen.clear();
+    m_homeSeeded.clear();
+    m_homeSeeds.clear();
+    m_homeNext.clear();
+    m_homeGrid->clear();
+    m_homeChannel = query;
+    for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
+        chip->setChecked(false);
+    m_homeStatus->setText(QStringLiteral("Results for \u201c%1\u201d").arg(query));
+    m_homeStatus->show();
+    m_homeGrid->verticalScrollBar()->setValue(0);
+    homeMore();
+    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+}
+
 void SearchPage::homeChip(const QString &channel)
 {
+    m_homeSearch = false;
     m_homeFixed = false;
     m_homeChannel = channel;
     for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())

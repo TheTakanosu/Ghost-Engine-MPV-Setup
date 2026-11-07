@@ -771,6 +771,17 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_theme->addItem("Match Windows", int(theme::Kind::System));
     m_theme->setMinimumWidth(190);
     addRow(look, "Theme", "Black is all greys. Match Windows is Light when Windows is light and Purple when it is dark.", m_theme);
+    m_searchMiddle = new ToggleSwitch;
+    addRow(look, "Search in the middle of the window",
+           "On: a search button in the top bar opens the box over the page, with what you searched before and "
+           "suggestions. Off: the box stays in the top bar. Ctrl+K opens the middle one either way.", m_searchMiddle);
+    connect(m_searchMiddle, &QAbstractButton::toggled, this, [this](bool on) {
+        if (m_loading)
+            return;
+        QSettings().setValue("search/middle", on);
+        if (onSearchPlaceChanged)
+            onSearchPlaceChanged(on);
+    });
     // The accent over any theme (Batın, 2026-11-02: "e.g. 100,20,255"): the
     // theme's own, a few ready ones, or any colour by RGB or hex.
     {
@@ -1177,6 +1188,7 @@ void SettingsPage::load()
     m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());
     m_history->setChecked(settings.value("history/keep", true).toBool());
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
+    m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
     m_startup->setChecked(QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
                                     QSettings::NativeFormat).contains(QStringLiteral("Ghost Engine")));
     m_presenceVideos->setChecked(settings.value("presence/videos", true).toBool());

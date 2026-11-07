@@ -61,6 +61,7 @@ public:
 
     // Told when a setting the rest of the app shows changes.
     std::function<void()> onLookChanged;
+    std::function<void(bool middle)> onSearchPlaceChanged;
     std::function<void(bool on)> onHistoryChanged;
     std::function<void()> onResumeChanged;
     std::function<void()> onClearHistory;
@@ -114,6 +115,7 @@ private:
     ToggleSwitch *m_history;
     ToggleSwitch *m_resume;
     ToggleSwitch *m_startup;
+    ToggleSwitch *m_searchMiddle;
     ToggleSwitch *m_presenceVideos;
     QLabel *m_confPath;
     QComboBox *m_offlineQuality;
