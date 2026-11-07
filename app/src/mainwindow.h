@@ -95,6 +95,7 @@ private:
     void undoSongEdit();
     void applyPendingOrder();
     void showHome();
+    void showYouTube();
     void showProfile();
     void showSettings();
     void showShortcuts();

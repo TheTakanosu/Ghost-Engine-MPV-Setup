@@ -70,6 +70,10 @@ public:
     void searchYouTube(const QString &query, const QString &next,
                        std::function<void(QVector<Item>, QString next)> done);
 
+    // What YouTube shows beside a video to watch next (~20), the way its
+    // home page is made: the YouTube mode's home is built from these.
+    void related(const QString &videoId, std::function<void(QVector<Item>)> done);
+
     // The region results are ranked for (Turkish songs first in Turkey).
     void setRegion(const QString &countryCode) { m_region = countryCode; }
 

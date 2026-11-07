@@ -394,6 +394,26 @@ MainWindow::MainWindow()
     m_searchPage->onSave = [this](const QString &name, const QVector<ytmusic::Item> &items) { saveFound(name, items); };
     m_searchPage->onMenu = [this](const QVector<ytmusic::Item> &items, const QPoint &at) { foundMenu(items, at); };
     m_searchPage->onToast = [this](const QString &text) { toast(text); };
+    // The YouTube home is made from the videos watched here (newest first)
+    // and the channels watched most.
+    m_searchPage->watchedVideos = [this] {
+        QStringList ids;
+        for (const ListeningStats::Entry &e : m_stats.history())
+            if (e.video && !e.id.isEmpty() && !ids.contains(e.id))
+                ids << e.id;
+        return ids;
+    };
+    m_searchPage->watchedChannels = [this] {
+        QHash<QString, int> plays;
+        for (const ListeningStats::Entry &e : m_stats.history())
+            if (e.video && !e.artist.trimmed().isEmpty())
+                ++plays[e.artist.trimmed()];
+        QStringList names = plays.keys();
+        std::sort(names.begin(), names.end(), [&plays](const QString &a, const QString &b) {
+            return plays.value(a) != plays.value(b) ? plays.value(a) > plays.value(b) : a < b;
+        });
+        return names;
+    };
     m_searchPage->onOpenLibrary = [this](const QString &path) {
         const auto &all = m_library.playlists();
         for (int i = 0; i < all.size(); ++i)
@@ -1182,6 +1202,9 @@ QWidget *MainWindow::buildTopBar()
 {
     auto *home = glyphButton(kIconHome, "Home", "pill");
     connect(home, &QPushButton::clicked, this, &MainWindow::showHome);
+    // YouTube: its own home and search, every video and not only music.
+    auto *youtube = glyphButton(QChar(0xE714), "YouTube", "pill");
+    connect(youtube, &QPushButton::clicked, this, &MainWindow::showYouTube);
     m_profileButton = new QPushButton;
     m_profileButton->setObjectName("profileButton");
     m_profileButton->setToolTip("Profile");
@@ -1251,7 +1274,7 @@ QWidget *MainWindow::buildTopBar()
         ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     });
     connect(close, &QPushButton::clicked, this, &MainWindow::close);
-    m_chromeButtons = {m_profileButton, home, m_search, m_updateButton, gear, minimize, m_maxButton, close};
+    m_chromeButtons = {m_profileButton, home, youtube, m_search, m_updateButton, gear, minimize, m_maxButton, close};
 
     m_topBar = new QWidget;
     m_topBar->setObjectName("topBar");
@@ -1261,6 +1284,7 @@ QWidget *MainWindow::buildTopBar()
     row->setContentsMargins(8, 0, 0, 0);
     row->setSpacing(8);
     row->addWidget(home);
+    row->addWidget(youtube);
     row->addWidget(m_search);
     row->addStretch();
     row->addWidget(m_updateButton);
@@ -3550,8 +3574,31 @@ void MainWindow::trackListening()
         m_profileSoon.start();
 }
 
+void MainWindow::showYouTube()
+{
+    QWidget *now = m_pages->currentWidget();
+    if (now != m_searchPage)
+        m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;
+    if (now == m_lyricsView)
+        m_beforeLyrics = nullptr;
+    {
+        const QSignalBlocker quiet(m_search);
+        m_search->clear();
+    }
+    m_searchTimer.stop();
+    m_searchPage->setYouTubeMode(true);
+    m_searchPage->setQuery(QString());
+    m_searchPage->showYouTubeHome();
+    m_search->setPlaceholderText("Search YouTube");
+    m_pages->setCurrentWidget(m_searchPage);
+}
+
 void MainWindow::showHome()
 {
+    // The music home: the box searches music again.
+    if (m_searchPage->youTubeMode())
+        m_searchPage->setYouTubeMode(false);
+    m_search->setPlaceholderText("What do you want to play?");
     m_open = -1;
     m_libraryList->clearSelection();
     m_pages->setCurrentIndex(0);
@@ -5291,6 +5338,12 @@ QString MainWindow::foundFolder()
 void MainWindow::runSearch()
 {
     const QString text = m_search->text().trimmed();
+    if (text.isEmpty() && m_searchPage->youTubeMode() && m_pages->currentWidget() == m_searchPage) {
+        // Emptied in YouTube mode: its home again.
+        m_searchPage->setQuery(QString());
+        m_searchPage->showYouTubeHome();
+        return;
+    }
     if (text.isEmpty()) {
         // Emptied: back where the search started from.
         if (m_pages->currentWidget() == m_searchPage)

@@ -2,6 +2,7 @@
 
 #include "ytmusic.h"
 
+#include <QSet>
 #include <QWidget>
 
 #include <functional>
@@ -14,6 +15,7 @@ class QScrollArea;
 class QStackedWidget;
 class ThumbnailCache;
 namespace icons { class IconButton; }
+namespace tiles { class VideoCardDelegate; }
 
 // What the top search box finds, as Spotify's search page shows it: lists in
 // the library whose name matches, then songs, videos and playlists from
@@ -49,6 +51,17 @@ public:
     std::function<void(const QVector<ytmusic::Item> &, const QPoint &global)> onMenu;
     std::function<void(const QString &)> onToast;
 
+    // YouTube mode's home, shown when it is opened with nothing typed: a grid
+    // as YouTube's home has, made of what YouTube shows beside the videos
+    // watched here last, newest first, and it goes on as it is scrolled.
+    // Chips at the top: All, then the channels watched most.
+    void showYouTubeHome();
+    bool youTubeMode() const { return m_youtube; }
+    void setYouTubeMode(bool youtube);
+    // The videos watched here, newest first, and the channels watched most.
+    std::function<QStringList()> watchedVideos;
+    std::function<QStringList()> watchedChannels;
+
     // A song's radio, then onPlay; the song alone when there is none.
     void playRadio(const ytmusic::Item &song);
 
@@ -64,8 +77,11 @@ private:
     void refreshCovers(const QString &id);
     void setStatus(const QString &text);
     void updateEmpty();
-    void setYouTubeMode(bool youtube);
     void moreYouTube();
+    void fitHomeGrid();
+    void fillHome(bool reset);
+    void homeMore();
+    void homeChip(const QString &channel);
     QVector<ytmusic::Item> picked(QListWidget *list, const QVector<ytmusic::Item> &items) const;
 
     ThumbnailCache &m_covers;
@@ -98,6 +114,20 @@ private:
     QPushButton *m_youtubeMore = nullptr;
     QVector<ytmusic::Item> m_ytVideos;
     QString m_ytNext;
+
+    // YouTube home.
+    QWidget *m_homeChips = nullptr;
+    QListWidget *m_homeGrid = nullptr;
+    QLabel *m_homeStatus = nullptr;
+    tiles::VideoCardDelegate *m_homeCards = nullptr;
+    QVector<ytmusic::Item> m_home;
+    QStringList m_homeSeeds;      // videos whose side lists are still to ask for
+    QSet<QString> m_homeSeen;
+    QSet<QString> m_homeSeeded;   // videos already asked beside
+    QString m_homeChannel;        // the chip picked; empty: All
+    QString m_homeNext;           // a chip's search, its next page
+    bool m_homeLoading = false;
+    int m_homeSerial = 0;
 
     // The playlist view.
     QLabel *m_listTitle = nullptr;

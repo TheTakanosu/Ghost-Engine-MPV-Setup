@@ -294,6 +294,45 @@ void Client::search(const QString &query, Kind kind, std::function<void(QVector<
     });
 }
 
+void Client::related(const QString &videoId, std::function<void(QVector<Item>)> done)
+{
+    post("next", {{"videoId", videoId}}, [done](const QJsonObject &answer) {
+        QVector<Item> items;
+        // The watch page's side list, in YouTube's newer "lockup" rows.
+        for (const QJsonObject &row : all(answer, "lockupViewModel")) {
+            if (row.value("contentType").toString() != QLatin1String("LOCKUP_CONTENT_TYPE_VIDEO"))
+                continue;
+            Item item;
+            item.kind = Kind::Video;
+            item.id = row.value("contentId").toString();
+            const QJsonObject meta = first(row.value("metadata"), "lockupMetadataViewModel");
+            item.title = meta.value("title").toObject().value("content").toString();
+            const QJsonArray lines = first(meta, "contentMetadataViewModel").value("metadataRows").toArray();
+            QStringList extra;
+            for (int i = 0; i < lines.size(); ++i) {
+                for (const QJsonValue &part : lines[i].toObject().value("metadataParts").toArray()) {
+                    QString text = part.toObject().value("text").toObject().value("content").toString();
+                    if (text.isEmpty())
+                        continue;
+                    if (i == 0 && item.artist.isEmpty())
+                        item.artist = text;
+                    else if (i > 0) {
+                        // "98K" says "98 thousand views" to a screen reader.
+                        if (part.toObject().value("accessibilityLabel").toString().endsWith(QLatin1String("views")))
+                            text += QStringLiteral(" views");
+                        extra << text;
+                    }
+                }
+            }
+            item.extra = extra.join(QStringLiteral("  \u2022  "));
+            item.duration = first(row.value("contentImage"), "thumbnailBadgeViewModel").value("text").toString();
+            if (!item.id.isEmpty() && !item.title.isEmpty())
+                items << item;
+        }
+        done(items);
+    }, true);
+}
+
 void Client::radio(const QString &videoId, std::function<void(QVector<Item>)> done)
 {
     post("next", {{"videoId", videoId}, {"playlistId", QStringLiteral("RDAMVM") + videoId}, {"isAudioOnly", true}},
