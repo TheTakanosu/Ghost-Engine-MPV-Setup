@@ -3914,29 +3914,58 @@ void MainWindow::showFollowing(const QString &onlyChannel)
     const int serial = ++m_followSerial;
     auto all = std::make_shared<QVector<ytmusic::Item>>();
     auto waiting = std::make_shared<int>(channels.size());
+    // Each channel's own Videos tab (lengths, pictures, no Shorts); its
+    // public feed if that fails. Its ages ("3 days ago") give the order.
+    const auto finish = [this, serial, all, waiting, title] {
+        if (serial != m_followSerial || --*waiting > 0)
+            return;
+        std::stable_sort(all->begin(), all->end(), [](const ytmusic::Item &a, const ytmusic::Item &b) { return a.published > b.published; });
+        m_searchPage->showVideos(title, *all);
+    };
     for (const auto &[id, name] : channels) {
-        m_ytClient.channelFeed(id, [this, serial, all, waiting, title](QVector<ytmusic::Item> items) {
+        const QString channelId = id, channelName = name;
+        m_ytClient.channelVideos(channelId, {}, [this, serial, all, finish, channelId, channelName](ytmusic::ChannelPage page) {
             if (serial != m_followSerial)
                 return;
-            *all += items;
-            if (--*waiting > 0)
+            if (page.videos.isEmpty()) {
+                m_ytClient.channelFeed(channelId, [this, serial, all, finish](QVector<ytmusic::Item> items) {
+                    if (serial != m_followSerial)
+                        return;
+                    const qint64 now = QDateTime::currentSecsSinceEpoch();
+                    for (ytmusic::Item &it : items) {
+                        const qint64 ago = now - it.published;
+                        const QString when = ago < 3600 ? QStringLiteral("%1 minutes ago").arg(qMax<qint64>(1, ago / 60))
+                                           : ago < 86400 ? QStringLiteral("%1 hours ago").arg(ago / 3600)
+                                           : ago < 86400 * 30 ? QStringLiteral("%1 days ago").arg(ago / 86400)
+                                           : ago < 86400 * 365 ? QStringLiteral("%1 months ago").arg(ago / (86400 * 30))
+                                                               : QStringLiteral("%1 years ago").arg(ago / (86400 * 365));
+                        const qint64 views = it.extra.toLongLong();
+                        const QString count = views >= 1000000 ? QStringLiteral("%1M views").arg(views / 1000000)
+                                            : views >= 1000 ? QStringLiteral("%1K views").arg(views / 1000)
+                                                            : QStringLiteral("%1 views").arg(views);
+                        it.extra = count + QStringLiteral("  •  ") + when;
+                    }
+                    *all += items;
+                    finish();
+                });
                 return;
-            std::sort(all->begin(), all->end(), [](const ytmusic::Item &a, const ytmusic::Item &b) { return a.published > b.published; });
-            const qint64 now = QDateTime::currentSecsSinceEpoch();
-            for (ytmusic::Item &it : *all) {
-                const qint64 ago = now - it.published;
-                const QString when = ago < 3600 ? QStringLiteral("%1 min ago").arg(qMax<qint64>(1, ago / 60))
-                                   : ago < 86400 ? QStringLiteral("%1 h ago").arg(ago / 3600)
-                                   : ago < 86400 * 30 ? QStringLiteral("%1 d ago").arg(ago / 86400)
-                                   : ago < 86400 * 365 ? QStringLiteral("%1 mo ago").arg(ago / (86400 * 30))
-                                                       : QStringLiteral("%1 y ago").arg(ago / (86400 * 365));
-                const qint64 views = it.extra.toLongLong();
-                const QString count = views >= 1000000 ? QStringLiteral("%1M views").arg(views / 1000000)
-                                    : views >= 1000 ? QStringLiteral("%1K views").arg(views / 1000)
-                                                    : QStringLiteral("%1 views").arg(views);
-                it.extra = count + QStringLiteral("  \u2022  ") + when;
             }
-            m_searchPage->showVideos(title, *all);
+            // "5 hours ago", "Streamed 2 weeks ago": about when, for the order.
+            static const QRegularExpression age(QStringLiteral("(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago"));
+            const qint64 now = QDateTime::currentSecsSinceEpoch();
+            for (ytmusic::Item &it : page.videos) {
+                it.artist = page.name.isEmpty() ? channelName : page.name;
+                if (it.avatar.isEmpty())
+                    it.avatar = page.avatar;
+                const QRegularExpressionMatch m = age.match(it.extra);
+                if (m.hasMatch()) {
+                    static const QHash<QString, qint64> unit{{"second", 1}, {"minute", 60}, {"hour", 3600}, {"day", 86400},
+                                                             {"week", 7 * 86400}, {"month", 30 * 86400}, {"year", 365 * 86400}};
+                    it.published = now - m.captured(1).toLongLong() * unit.value(m.captured(2));
+                }
+            }
+            *all += page.videos;
+            finish();
         });
     }
 }
