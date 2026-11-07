@@ -214,14 +214,20 @@ QString videoIdIn(const QString &text)
 
 Client::Client(QObject *parent) : QObject(parent) {}
 
-void Client::post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done)
+void Client::post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done,
+                  bool youtube)
 {
-    QNetworkRequest request(QUrl(QStringLiteral("https://music.youtube.com/youtubei/v1/%1?prettyPrint=false").arg(endpoint)));
+    // YouTube Music and YouTube answer the same interface, each to its own
+    // web client.
+    const QString host = youtube ? QStringLiteral("www.youtube.com") : QStringLiteral("music.youtube.com");
+    QNetworkRequest request(QUrl(QStringLiteral("https://%1/youtubei/v1/%2?prettyPrint=false").arg(host, endpoint)));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Origin", "https://music.youtube.com");
+    request.setRawHeader("Origin", ("https://" + host).toLatin1());
     request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
     request.setTransferTimeout(15000);
-    QJsonObject client{{"clientName", "WEB_REMIX"}, {"clientVersion", "1.20241023.01.00"}, {"hl", "en"}};
+    QJsonObject client = youtube
+        ? QJsonObject{{"clientName", "WEB"}, {"clientVersion", "2.20251101.00.00"}, {"hl", "en"}}
+        : QJsonObject{{"clientName", "WEB_REMIX"}, {"clientVersion", "1.20241023.01.00"}, {"hl", "en"}};
     if (!m_region.isEmpty())
         client.insert("gl", m_region);
     QJsonObject full = body;
@@ -231,6 +237,43 @@ void Client::post(const QString &endpoint, const QJsonObject &body, std::functio
         reply->deleteLater();
         done(reply->error() == QNetworkReply::NoError ? QJsonDocument::fromJson(reply->readAll()).object() : QJsonObject());
     });
+}
+
+void Client::searchYouTube(const QString &query, const QString &next,
+                           std::function<void(QVector<Item>, QString)> done)
+{
+    // A new search (no token) makes the answers of the older ones nothing.
+    if (next.isEmpty())
+        ++m_youtubeSerial;
+    const int serial = m_youtubeSerial;
+    // "EgIQAQ==" is YouTube's own "Type: Video" filter: no channels, no
+    // playlists, no Shorts shelves in between.
+    const QJsonObject body = next.isEmpty() ? QJsonObject{{"query", query}, {"params", "EgIQAQ=="}}
+                                            : QJsonObject{{"continuation", next}};
+    post("search", body, [this, serial, done](const QJsonObject &answer) {
+        if (serial != m_youtubeSerial)
+            return;
+        QVector<Item> items;
+        for (const QJsonObject &row : all(answer, "videoRenderer")) {
+            Item item;
+            item.kind = Kind::Video;
+            item.id = row.value("videoId").toString();
+            item.title = runs(row.value("title"));
+            item.artist = runs(row.value("ownerText"));
+            item.duration = runs(row.value("lengthText"));   // empty for a live stream
+            QStringList extra;
+            for (const char *key : {"shortViewCountText", "publishedTimeText"}) {
+                const QString text = runs(row.value(key));
+                if (!text.isEmpty())
+                    extra << text;
+            }
+            item.extra = extra.join(QStringLiteral("  •  "));
+            item.thumbnail = picture(row.value("thumbnail"));
+            if (!item.id.isEmpty() && !item.title.isEmpty())
+                items << item;
+        }
+        done(items, first(answer, "continuationCommand").value("token").toString());
+    }, true);
 }
 
 void Client::search(const QString &query, Kind kind, std::function<void(QVector<Item>)> done)

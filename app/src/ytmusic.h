@@ -64,16 +64,24 @@ public:
     // A playlist's songs, every page of them (up to a few thousand).
     void playlist(const QString &id, std::function<void(PlaylistPage)> done);
 
+    // YouTube's own search (www.youtube.com, every video, not only music),
+    // videos only, a page of ~20. `next` continues where the last page ended;
+    // the answer brings the token for the page after, empty at the end.
+    void searchYouTube(const QString &query, const QString &next,
+                       std::function<void(QVector<Item>, QString next)> done);
+
     // The region results are ranked for (Turkish songs first in Turkey).
     void setRegion(const QString &countryCode) { m_region = countryCode; }
 
 private:
-    void post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done);
+    void post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done,
+              bool youtube = false);
     void morePages(PlaylistPage page, const QString &token, int pages, std::function<void(PlaylistPage)> done);
 
     QNetworkAccessManager m_net;
     QString m_region;
     int m_searchSerial = 0;
+    int m_youtubeSerial = 0;
 };
 
 } // namespace ytmusic

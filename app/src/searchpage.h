@@ -20,6 +20,8 @@ namespace icons { class IconButton; }
 // YouTube Music. A song plays with YouTube Music's radio after it; a
 // playlist opens to look at first and is saved to the library from there.
 // A pasted YouTube or YouTube Music link opens its playlist, or its song.
+// In YouTube mode (the switch at the top) it searches YouTube itself: every
+// video, not only music, played on the video page.
 class SearchPage : public QWidget {
     Q_OBJECT
 public:
@@ -62,6 +64,8 @@ private:
     void refreshCovers(const QString &id);
     void setStatus(const QString &text);
     void updateEmpty();
+    void setYouTubeMode(bool youtube);
+    void moreYouTube();
     QVector<ytmusic::Item> picked(QListWidget *list, const QVector<ytmusic::Item> &items) const;
 
     ThumbnailCache &m_covers;
@@ -84,6 +88,16 @@ private:
     QPushButton *m_videosMore = nullptr;
     QVector<ytmusic::Item> m_songs, m_videos, m_playlists;
     int m_pending = 0;
+
+    // YouTube mode.
+    bool m_youtube = false;
+    QPushButton *m_musicMode = nullptr;
+    QPushButton *m_youtubeMode = nullptr;
+    QWidget *m_youtubeSection = nullptr;
+    QListWidget *m_youtubeList = nullptr;
+    QPushButton *m_youtubeMore = nullptr;
+    QVector<ytmusic::Item> m_ytVideos;
+    QString m_ytNext;
 
     // The playlist view.
     QLabel *m_listTitle = nullptr;

@@ -13,6 +13,8 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSet>
+#include <QSettings>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -77,6 +79,27 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     column->setContentsMargins(28, 22, 28, 28);
     column->setSpacing(26);
 
+    // Music | YouTube: what the box searches. Remembered between runs.
+    auto *modes = new QHBoxLayout;
+    modes->setSpacing(8);
+    m_musicMode = new QPushButton("Music");
+    m_youtubeMode = new QPushButton("YouTube");
+    for (QPushButton *b : {m_musicMode, m_youtubeMode}) {
+        b->setObjectName("chip");
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        modes->addWidget(b);
+    }
+    m_musicMode->setToolTip("Songs, music videos and playlists from YouTube Music");
+    m_youtubeMode->setToolTip("Every video on YouTube, played here instead of in a browser");
+    modes->addStretch();
+    column->addLayout(modes);
+    m_youtube = QSettings().value("search/youtube", false).toBool();
+    m_musicMode->setChecked(!m_youtube);
+    m_youtubeMode->setChecked(m_youtube);
+    connect(m_musicMode, &QPushButton::clicked, this, [this] { setYouTubeMode(false); });
+    connect(m_youtubeMode, &QPushButton::clicked, this, [this] { setYouTubeMode(true); });
+
     m_status = new QLabel;
     m_status->setObjectName("heroInfo");
     m_status->setWordWrap(true);
@@ -112,6 +135,22 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_playlistsList = makeList(false);
     m_playlistsSection = section("Playlists", m_playlistsList);
     column->addWidget(m_playlistsSection);
+
+    m_youtubeList = makeList(false);
+    m_youtubeMore = linkButton("Show more");
+    auto *moreRow = new QHBoxLayout;
+    moreRow->addStretch();
+    moreRow->addWidget(m_youtubeMore);
+    moreRow->addStretch();
+    auto *youtubeBody = new QWidget;
+    auto *youtubeColumn = new QVBoxLayout(youtubeBody);
+    youtubeColumn->setContentsMargins(0, 0, 0, 0);
+    youtubeColumn->setSpacing(10);
+    youtubeColumn->addWidget(m_youtubeList);
+    youtubeColumn->addLayout(moreRow);
+    m_youtubeSection = section("Videos on YouTube", youtubeBody);
+    column->addWidget(m_youtubeSection);
+    connect(m_youtubeMore, &QPushButton::clicked, this, &SearchPage::moreYouTube);
     // Only the stretch grows: with few results the sections stay together
     // at the top instead of spreading over the page.
     column->addStretch(1);
@@ -132,6 +171,10 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
         if (onPlay)
             onPlay(m_videos, QStringLiteral("Videos: %1").arg(m_query), item->data(tiles::kEntryRole).toInt(), false, false);
     });
+    connect(m_youtubeList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        if (onPlay)
+            onPlay(m_ytVideos, QStringLiteral("YouTube: %1").arg(m_query), item->data(tiles::kEntryRole).toInt(), false, false);
+    });
     connect(m_playlistsList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
         const ytmusic::Item p = m_playlists.value(item->data(tiles::kEntryRole).toInt());
         openPlaylist(p.id, p.title);
@@ -140,7 +183,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
         const ytmusic::Item p = m_playlists.value(item->data(tiles::kEntryRole).toInt());
         openPlaylist(p.id, p.title);
     });
-    for (auto [list, items] : {std::pair{m_songsList, &m_songs}, std::pair{m_videosList, &m_videos}}) {
+    for (auto [list, items] : {std::pair{m_songsList, &m_songs}, std::pair{m_videosList, &m_videos}, std::pair{m_youtubeList, &m_ytVideos}}) {
         list->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(list, &QListWidget::customContextMenuRequested, this, [this, list, items](const QPoint &pos) {
             QListWidgetItem *item = list->itemAt(pos);
@@ -231,6 +274,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_songsSection->hide();
     m_videosSection->hide();
     m_playlistsSection->hide();
+    m_youtubeSection->hide();
 }
 
 QList<QWidget *> SearchPage::scrollAreas() const
@@ -274,7 +318,8 @@ void SearchPage::fill(QListWidget *list, const QVector<ytmusic::Item> &items, in
         row->setData(tiles::kArtistRole, byline);
         row->setData(tiles::kNumberRole, QString::number(i + 1));
         // A playlist has no length; a space keeps the row's dash away.
-        row->setData(tiles::kDurationRole, it.kind == ytmusic::Kind::Playlist ? QStringLiteral(" ") : it.duration);
+        row->setData(tiles::kDurationRole, it.kind == ytmusic::Kind::Playlist ? QStringLiteral(" ")
+                                          : it.duration.isEmpty() ? QStringLiteral("LIVE") : it.duration);
         row->setData(tiles::kAddedRole, it.kind == ytmusic::Kind::Song ? (it.album.isEmpty() ? it.extra : it.album) : it.kind == ytmusic::Kind::Playlist ? it.extra : QString());
         row->setData(tiles::kEntryRole, i);
         row->setData(Qt::UserRole, coverKey(it));
@@ -311,7 +356,13 @@ void SearchPage::updateEmpty()
 {
     if (m_pending > 0)
         return;
-    const bool nothing = m_songs.isEmpty() && m_videos.isEmpty() && m_playlists.isEmpty();
+    const bool nothing = m_songs.isEmpty() && m_videos.isEmpty() && m_playlists.isEmpty() && m_ytVideos.isEmpty();
+    if (m_youtube) {
+        setStatus(nothing ? QStringLiteral("Nothing found on YouTube for “%1”. If every search says this, "
+                                           "YouTube may be out of reach from here.").arg(m_query)
+                          : QString());
+        return;
+    }
     setStatus(nothing ? QStringLiteral("Nothing found on YouTube Music for “%1”. If every search says this, "
                                        "YouTube Music may be out of reach from here.").arg(m_query)
                       : QString());
@@ -328,11 +379,15 @@ void SearchPage::setQuery(const QString &text)
     m_songs.clear();
     m_videos.clear();
     m_playlists.clear();
-    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList})
+    m_ytVideos.clear();
+    m_ytNext.clear();
+    m_pending = 0;
+    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList})
         list->clear();
     m_songsSection->hide();
     m_videosSection->hide();
     m_playlistsSection->hide();
+    m_youtubeSection->hide();
     if (query.isEmpty()) {
         setStatus({});
         m_librarySection->hide();
@@ -376,6 +431,25 @@ void SearchPage::setQuery(const QString &text)
         // A link with nothing to open here; searching its text finds nonsense.
         setStatus("This link can't be opened here. Paste a YouTube or YouTube Music link to a song or a playlist. "
                   "Mixes made for one viewer (“My mix”) can't be read.");
+        return;
+    }
+
+    if (m_youtube) {
+        setStatus("Searching YouTube...");
+        m_pending = 1;
+        m_client.searchYouTube(query, {}, [this, serial](QVector<ytmusic::Item> items, QString next) {
+            if (serial != m_serial)
+                return;
+            m_pending = 0;
+            m_ytVideos = items;
+            m_ytNext = next;
+            fill(m_youtubeList, m_ytVideos, m_ytVideos.size());
+            m_youtubeMore->setText("Show more");
+            m_youtubeMore->setEnabled(true);
+            m_youtubeMore->setVisible(!next.isEmpty());
+            m_youtubeSection->setVisible(!m_ytVideos.isEmpty());
+            updateEmpty();
+        });
         return;
     }
 
@@ -429,6 +503,44 @@ void SearchPage::setQuery(const QString &text)
         fill(m_playlistsList, m_playlists, kPlaylistsShown);
         m_playlistsSection->setVisible(!m_playlists.isEmpty());
         updateEmpty();
+    });
+}
+
+void SearchPage::setYouTubeMode(bool youtube)
+{
+    m_musicMode->setChecked(!youtube);
+    m_youtubeMode->setChecked(youtube);
+    if (youtube == m_youtube)
+        return;
+    m_youtube = youtube;
+    QSettings().setValue("search/youtube", youtube);
+    const QString query = m_query;
+    m_query.clear();
+    setQuery(query);
+}
+
+void SearchPage::moreYouTube()
+{
+    if (m_ytNext.isEmpty())
+        return;
+    m_youtubeMore->setText("Loading...");
+    m_youtubeMore->setEnabled(false);
+    const int serial = m_serial;
+    m_client.searchYouTube(m_query, m_ytNext, [this, serial](QVector<ytmusic::Item> items, QString next) {
+        if (serial != m_serial)
+            return;
+        // A later page repeats a video now and then; each shows once.
+        QSet<QString> seen;
+        for (const ytmusic::Item &it : m_ytVideos)
+            seen.insert(it.id);
+        for (const ytmusic::Item &it : items)
+            if (!seen.contains(it.id))
+                m_ytVideos << it;
+        m_ytNext = next;
+        fill(m_youtubeList, m_ytVideos, m_ytVideos.size());
+        m_youtubeMore->setText("Show more");
+        m_youtubeMore->setEnabled(true);
+        m_youtubeMore->setVisible(!next.isEmpty());
     });
 }
 
@@ -499,7 +611,7 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
 
 void SearchPage::refreshCovers(const QString &)
 {
-    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_listSongs})
+    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList, m_listSongs})
         if (list->isVisible())
             list->viewport()->update();
 }
