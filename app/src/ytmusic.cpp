@@ -297,44 +297,90 @@ void Client::search(const QString &query, Kind kind, std::function<void(QVector<
     });
 }
 
+namespace {
+
+// One video in YouTube's newer "lockup" rows (a watch page's side list, a
+// channel's videos). `channelLine`: its first line is the channel's name,
+// as beside a video; a channel's own page has only views and age.
+Item lockupItem(const QJsonObject &row, bool channelLine)
+{
+    Item item;
+    item.kind = Kind::Video;
+    if (row.value("contentType").toString() != QLatin1String("LOCKUP_CONTENT_TYPE_VIDEO"))
+        return item;
+    item.id = row.value("contentId").toString();
+    const QJsonObject meta = first(row.value("metadata"), "lockupMetadataViewModel");
+    item.title = meta.value("title").toObject().value("content").toString();
+    const QJsonArray lines = first(meta, "contentMetadataViewModel").value("metadataRows").toArray();
+    QStringList extra;
+    for (int i = 0; i < lines.size(); ++i) {
+        for (const QJsonValue &part : lines[i].toObject().value("metadataParts").toArray()) {
+            QString text = part.toObject().value("text").toObject().value("content").toString();
+            if (text.isEmpty())
+                continue;
+            if (channelLine && i == 0) {
+                if (item.artist.isEmpty())
+                    item.artist = text;
+                continue;
+            }
+            // "98K" says "98 thousand views" to a screen reader.
+            if (part.toObject().value("accessibilityLabel").toString().endsWith(QLatin1String("views")) &&
+                !text.endsWith(QLatin1String("views")))
+                text += QStringLiteral(" views");
+            extra << text;
+        }
+    }
+    item.extra = extra.join(QStringLiteral("  \u2022  "));
+    item.duration = first(row.value("contentImage"), "thumbnailBadgeViewModel").value("text").toString();
+    item.channelId = first(row.value("metadata"), "browseEndpoint").value("browseId").toString();
+    item.avatar = picture(first(row.value("metadata"), "avatarViewModel").value("image"));
+    return item;
+}
+
+} // namespace
+
 void Client::related(const QString &videoId, std::function<void(QVector<Item>)> done)
 {
     post("next", {{"videoId", videoId}}, [done](const QJsonObject &answer) {
         QVector<Item> items;
-        // The watch page's side list, in YouTube's newer "lockup" rows.
+        // The watch page's side list.
         for (const QJsonObject &row : all(answer, "lockupViewModel")) {
-            if (row.value("contentType").toString() != QLatin1String("LOCKUP_CONTENT_TYPE_VIDEO"))
-                continue;
-            Item item;
-            item.kind = Kind::Video;
-            item.id = row.value("contentId").toString();
-            const QJsonObject meta = first(row.value("metadata"), "lockupMetadataViewModel");
-            item.title = meta.value("title").toObject().value("content").toString();
-            const QJsonArray lines = first(meta, "contentMetadataViewModel").value("metadataRows").toArray();
-            QStringList extra;
-            for (int i = 0; i < lines.size(); ++i) {
-                for (const QJsonValue &part : lines[i].toObject().value("metadataParts").toArray()) {
-                    QString text = part.toObject().value("text").toObject().value("content").toString();
-                    if (text.isEmpty())
-                        continue;
-                    if (i == 0 && item.artist.isEmpty())
-                        item.artist = text;
-                    else if (i > 0) {
-                        // "98K" says "98 thousand views" to a screen reader.
-                        if (part.toObject().value("accessibilityLabel").toString().endsWith(QLatin1String("views")))
-                            text += QStringLiteral(" views");
-                        extra << text;
-                    }
-                }
-            }
-            item.extra = extra.join(QStringLiteral("  \u2022  "));
-            item.duration = first(row.value("contentImage"), "thumbnailBadgeViewModel").value("text").toString();
-            item.channelId = first(row.value("metadata"), "browseEndpoint").value("browseId").toString();
-            item.avatar = picture(first(row.value("metadata"), "avatarViewModel").value("image"));
+            const Item item = lockupItem(row, true);
             if (!item.id.isEmpty() && !item.title.isEmpty())
                 items << item;
         }
         done(items);
+    }, true);
+}
+
+void Client::channelVideos(const QString &channelId, const QString &next, std::function<void(ChannelPage)> done)
+{
+    // "EgZ2aWRlb3PyBgQKAjoA" is the channel page's Videos tab.
+    const QJsonObject body = next.isEmpty() ? QJsonObject{{"browseId", channelId}, {"params", "EgZ2aWRlb3PyBgQKAjoA"}}
+                                            : QJsonObject{{"continuation", next}};
+    post("browse", body, [channelId, done](const QJsonObject &answer) {
+        ChannelPage page;
+        const QJsonObject header = first(answer, "pageHeaderViewModel");
+        page.name = first(header.value("title"), "dynamicTextViewModel").value("text").toObject().value("content").toString();
+        page.avatar = picture(first(header.value("image"), "avatarViewModel").value("image"));
+        const QJsonArray rows = first(header.value("metadata"), "contentMetadataViewModel").value("metadataRows").toArray();
+        QStringList about;
+        for (int i = 1; i < rows.size(); ++i)
+            for (const QJsonValue &part : rows[i].toObject().value("metadataParts").toArray()) {
+                const QString text = part.toObject().value("text").toObject().value("content").toString();
+                if (!text.isEmpty())
+                    about << text;
+            }
+        page.about = about.join(QStringLiteral("  \u2022  "));
+        for (const QJsonObject &row : all(answer, "lockupViewModel")) {
+            Item item = lockupItem(row, false);
+            if (item.id.isEmpty() || item.title.isEmpty())
+                continue;
+            item.channelId = channelId;
+            page.videos << item;
+        }
+        page.next = first(answer, "continuationCommand").value("token").toString();
+        done(page);
     }, true);
 }
 

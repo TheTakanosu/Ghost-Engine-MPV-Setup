@@ -59,6 +59,9 @@ public:
     // These videos in the home's grid under a title (the History), until a
     // chip or the home is picked again.
     void showVideos(const QString &title, const QVector<ytmusic::Item> &items);
+    // A channel's own videos, all of them page by page, under its name.
+    void showChannel(const QString &channelId, const QString &name);
+    std::function<void(const QString &channelId, const QString &name)> onChannelShown;
     bool youTubeMode() const { return m_youtube; }
     void setYouTubeMode(bool youtube);
     // The videos watched here, newest first, and the channels watched most.
@@ -136,6 +139,8 @@ private:
     bool m_homeLoading = false;
     bool m_homeFixed = false;     // showVideos: nothing more is fetched
     bool m_homeSearch = false;    // the grid shows a search's results, not the home
+    QString m_homeChannelId;      // the grid shows this channel's page
+    QString m_homeChannelName;
     int m_homeSerial = 0;
 
     // The playlist view.

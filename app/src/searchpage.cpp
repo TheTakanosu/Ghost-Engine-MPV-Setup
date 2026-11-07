@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
@@ -602,9 +603,10 @@ void SearchPage::showYouTubeHome()
         chips->addWidget(chip);
     }
     static_cast<QHBoxLayout *>(chips)->addStretch();
-    if (m_homeFixed || m_homeSearch) {
+    if (m_homeFixed || m_homeSearch || !m_homeChannelId.isEmpty()) {
         m_homeFixed = false;
         m_homeSearch = false;
+        m_homeChannelId.clear();
         m_homeChannel.clear();
         for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
             chip->setChecked(chip->text() == QLatin1String("All"));
@@ -621,6 +623,7 @@ void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &
     ++m_homeSerial;
     m_homeFixed = true;
     m_homeSearch = false;
+    m_homeChannelId.clear();
     m_homeLoading = false;
     m_home.clear();
     m_homeSeen.clear();
@@ -665,6 +668,7 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
 
 void SearchPage::searchInGrid(const QString &query)
 {
+    m_homeChannelId.clear();
     // YouTube's results as its home's cards (channel pictures, length,
     // views), page after page as it is scrolled, the chips above.
     m_views->setCurrentWidget(m_homeGrid->parentWidget());
@@ -688,8 +692,40 @@ void SearchPage::searchInGrid(const QString &query)
     QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
 }
 
+void SearchPage::showChannel(const QString &channelId, const QString &name)
+{
+    if (channelId.isEmpty())
+        return;
+    if (m_views->currentWidget() != m_homeGrid->parentWidget())
+        showYouTubeHome();
+    m_views->setCurrentWidget(m_homeGrid->parentWidget());
+    ++m_homeSerial;
+    m_homeFixed = false;
+    m_homeSearch = false;
+    m_homeLoading = false;
+    m_home.clear();
+    m_homeSeen.clear();
+    m_homeSeeded.clear();
+    m_homeSeeds.clear();
+    m_homeNext.clear();
+    m_homeGrid->clear();
+    m_homeChannel.clear();
+    m_homeChannelId = channelId;
+    m_homeChannelName = name;
+    for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
+        chip->setChecked(false);
+    m_homeStatus->setText(name.isEmpty() ? QStringLiteral("Loading the channel...") : name);
+    m_homeStatus->show();
+    m_homeGrid->verticalScrollBar()->setValue(0);
+    homeMore();
+    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+    if (onChannelShown)
+        onChannelShown(channelId, name);
+}
+
 void SearchPage::homeChip(const QString &channel)
 {
+    m_homeChannelId.clear();
     m_homeSearch = false;
     m_homeFixed = false;
     m_homeChannel = channel;
@@ -745,6 +781,28 @@ void SearchPage::homeMore()
         return appendHome(items) > 0;
     };
 
+    // A channel's page: its Videos tab, page after page.
+    if (!m_homeChannelId.isEmpty()) {
+        if (!m_home.isEmpty() && m_homeNext.isEmpty())
+            return;
+        m_homeLoading = true;
+        m_client.channelVideos(m_homeChannelId, m_homeNext, [this, add, serial](ytmusic::ChannelPage page) {
+            if (serial != m_homeSerial)
+                return;
+            m_homeNext = page.next;
+            if (!page.name.isEmpty()) {
+                m_homeChannelName = page.name;
+                m_homeStatus->setText(page.about.isEmpty() ? page.name : page.name + QStringLiteral("  \u00b7  ") + page.about);
+            }
+            for (ytmusic::Item &it : page.videos) {
+                it.artist = m_homeChannelName;
+                if (it.avatar.isEmpty())
+                    it.avatar = page.avatar.isEmpty() ? m_avatarOf.value(m_homeChannelId) : page.avatar;
+            }
+            add(page.videos);
+        });
+        return;
+    }
     const bool search = !m_homeChannel.isEmpty() || (m_homeSeeds.isEmpty() && m_home.isEmpty())
                         || (m_homeSeeds.isEmpty() && !m_homeNext.isEmpty());
     if (search) {
@@ -877,6 +935,22 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
 {
     if (m_homeGrid && watched == m_homeGrid->viewport() && event->type() == QEvent::Resize)
         QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+    // The channel's picture on a card opens the channel, as on YouTube. Its
+    // place is the card delegate's: under the 16:9 thumbnail, at the left.
+    if (m_homeGrid && watched == m_homeGrid->viewport() && event->type() == QEvent::MouseButtonRelease &&
+        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+        const QPoint at = static_cast<QMouseEvent *>(event)->position().toPoint();
+        if (QListWidgetItem *item = m_homeGrid->itemAt(at)) {
+            const QRectF card = QRectF(m_homeGrid->visualItemRect(item)).adjusted(8, 8, -8, -4);
+            const qreal size = qRound(34 * theme::zoom());
+            const QRectF circle(card.left() + 2, card.top() + card.width() * 9 / 16 + 10, size, size);
+            const ytmusic::Item it = m_home.value(item->data(tiles::kEntryRole).toInt());
+            if (circle.adjusted(-4, -4, 4, 4).contains(at) && !it.channelId.isEmpty()) {
+                showChannel(it.channelId, it.artist);
+                return true;
+            }
+        }
+    }
     if (event->type() == QEvent::Wheel && watched->parent() && watched->parent()->property("pageScrolls").toBool()) {
         QCoreApplication::sendEvent(m_resultsScroll->viewport(), event);
         return true;

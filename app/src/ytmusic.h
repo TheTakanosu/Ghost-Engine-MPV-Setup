@@ -40,6 +40,15 @@ struct Item {
     QString target() const;
 };
 
+// A channel's page: its name and picture, then its videos, newest first.
+struct ChannelPage {
+    QString name;
+    QString avatar;
+    QString about;       // "756 subscribers  •  27 videos"
+    QVector<Item> videos;
+    QString next;        // the next page's token, empty at the end
+};
+
 struct PlaylistPage {
     QString id;
     QString title;
@@ -80,6 +89,9 @@ public:
     // A channel's latest videos (~15) from its public feed, no sign-in:
     // what the Following page is made of.
     void channelFeed(const QString &channelId, std::function<void(QVector<Item>)> done);
+    // The channel's Videos tab, every upload page by page (~30 a page):
+    // `next` empty for the first page with the channel's header.
+    void channelVideos(const QString &channelId, const QString &next, std::function<void(ChannelPage)> done);
 
     // The region results are ranked for (Turkish songs first in Turkey).
     void setRegion(const QString &countryCode) { m_region = countryCode; }

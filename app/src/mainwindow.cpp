@@ -397,6 +397,11 @@ MainWindow::MainWindow()
     m_searchPage->onSave = [this](const QString &name, const QVector<ytmusic::Item> &items) { saveFound(name, items); };
     m_searchPage->onMenu = [this](const QVector<ytmusic::Item> &items, const QPoint &at) { foundMenu(items, at); };
     m_searchPage->onToast = [this](const QString &text) { toast(text); };
+    // A channel's page is none of the menu's items.
+    m_searchPage->onChannelShown = [this](const QString &, const QString &) {
+        for (QPushButton *b : m_ytNav)
+            b->setChecked(false);
+    };
     // The YouTube home is made from the videos watched here (newest first)
     // and the channels watched most.
     m_searchPage->watchedVideos = [this] {
@@ -3700,7 +3705,9 @@ QWidget *MainWindow::buildYouTubeSidebar()
     m_ytNav << home;
     sectionTitle("Collection");
     QPushButton *history = nav(QChar(0xE81C), "History");
-    m_ytNav << history << followingNav;   // indexes kept: 0 Home, 1 History, 2 Following
+    QPushButton *later = nav(QChar(0xE823), "Watch later");
+    m_ytNav << history << followingNav << later;   // indexes kept: 0 Home, 1 History, 2 Following, 3 Watch later
+    connect(later, &QPushButton::clicked, this, &MainWindow::showWatchLater);
     connect(home, &QPushButton::clicked, this, &MainWindow::showYouTube);
     connect(history, &QPushButton::clicked, this, &MainWindow::showVideoHistory);
     connect(followingNav, &QPushButton::clicked, this, [this] { showFollowing(); });
@@ -3734,8 +3741,13 @@ QWidget *MainWindow::buildYouTubeSidebar()
     theme::style(m_ytChannels, listStyle);
     connect(m_ytChannels, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         const QString id = item->data(Qt::UserRole).toString();
-        if (!id.isEmpty())
-            showFollowing(id);
+        if (!id.isEmpty()) {
+            showYouTube();
+            for (QPushButton *b : m_ytNav)
+                b->setChecked(false);
+            m_ytChannels->setCurrentItem(item);
+            m_searchPage->showChannel(id, item->text());
+        }
     });
     m_ytChannels->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_ytChannels, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
@@ -3918,6 +3930,56 @@ void MainWindow::showFollowing(const QString &onlyChannel)
 void MainWindow::updateFollowButton()
 {
     m_panel->setFollow(!m_panelChannelId.isEmpty(), follows(m_panelChannelId));
+}
+
+QVector<ytmusic::Item> MainWindow::watchLater() const
+{
+    QVector<ytmusic::Item> out;
+    const QJsonArray saved = QJsonDocument::fromJson(QSettings().value("youtube/watchLater").toByteArray()).array();
+    for (const QJsonValue &v : saved) {
+        const QJsonObject o = v.toObject();
+        ytmusic::Item it;
+        it.kind = ytmusic::Kind::Video;
+        it.id = o.value("id").toString();
+        it.title = o.value("title").toString();
+        it.artist = o.value("channel").toString();
+        it.channelId = o.value("channelId").toString();
+        it.avatar = o.value("avatar").toString();
+        it.duration = o.value("length").toString();
+        if (!it.id.isEmpty())
+            out << it;
+    }
+    return out;
+}
+
+void MainWindow::setWatchLater(const QVector<ytmusic::Item> &items, bool keep)
+{
+    QVector<ytmusic::Item> list = watchLater();
+    QSet<QString> ids;
+    for (const ytmusic::Item &it : items)
+        ids.insert(it.id);
+    list.erase(std::remove_if(list.begin(), list.end(), [&ids](const ytmusic::Item &it) { return ids.contains(it.id); }), list.end());
+    if (keep)
+        list = items + list;   // newest first
+    QJsonArray saved;
+    for (const ytmusic::Item &it : list)
+        saved.append(QJsonObject{{"id", it.id}, {"title", it.title}, {"channel", it.artist}, {"channelId", it.channelId},
+                                 {"avatar", it.avatar}, {"length", it.duration}});
+    QSettings().setValue("youtube/watchLater", QJsonDocument(saved).toJson(QJsonDocument::Compact));
+    toast(keep ? (items.size() == 1 ? QStringLiteral("Saved to Watch later") : QStringLiteral("%1 videos saved to Watch later").arg(items.size()))
+               : QStringLiteral("Removed from Watch later"));
+    if (m_ytNav.size() > 3 && m_ytNav[3]->isChecked())
+        showWatchLater();
+}
+
+void MainWindow::showWatchLater()
+{
+    showYouTube();
+    for (int i = 0; i < m_ytNav.size(); ++i)
+        m_ytNav[i]->setChecked(i == 3);
+    const QVector<ytmusic::Item> items = watchLater();
+    m_searchPage->showVideos(items.isEmpty() ? QStringLiteral("Watch later: nothing yet. Right-click a video, then Save to Watch later.")
+                                             : QStringLiteral("Watch later"), items);
 }
 
 void MainWindow::showVideoHistory()
@@ -5906,6 +5968,26 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
                    [this, items, videos] { playFound(items, items.size() > 1 ? QStringLiteral("Search: %1").arg(m_searchPage->query()) : items.first().title, 0, false, !videos); });
     if (items.size() == 1 && !videos)
         menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
+    if (videos) {
+        bool allKept = true;
+        QSet<QString> kept;
+        for (const ytmusic::Item &it : watchLater())
+            kept.insert(it.id);
+        for (const ytmusic::Item &it : items)
+            allKept = allKept && kept.contains(it.id);
+        menu.addAction(allKept ? QStringLiteral("Remove from Watch later") : QStringLiteral("Save to Watch later"), this,
+                       [this, items, allKept] { setWatchLater(items, !allKept); });
+    }
+    if (items.size() == 1 && videos && !items.first().channelId.isEmpty()) {
+        const ytmusic::Item it = items.first();
+        menu.addAction(QStringLiteral("Go to %1").arg(it.artist.isEmpty() ? QStringLiteral("the channel") : it.artist), this,
+                       [this, it] {
+            showYouTube();
+            for (QPushButton *b : m_ytNav)
+                b->setChecked(false);
+            m_searchPage->showChannel(it.channelId, it.artist);
+        });
+    }
     if (items.size() == 1 && videos && !items.first().channelId.isEmpty()) {
         const ytmusic::Item it = items.first();
         const bool on = follows(it.channelId);

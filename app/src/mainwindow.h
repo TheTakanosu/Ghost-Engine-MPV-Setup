@@ -120,6 +120,10 @@ private:
     QWidget *buildYouTubeSidebar();
     void fillYouTubeSidebar();
     void showVideoHistory();
+    // Watch later: videos kept to watch, newest first (youtube/watchLater, JSON).
+    QVector<ytmusic::Item> watchLater() const;
+    void setWatchLater(const QVector<ytmusic::Item> &items, bool keep);
+    void showWatchLater();
     // Followed channels, kept as "id<TAB>name" lines in the settings.
     QList<QPair<QString, QString>> following() const;
     bool follows(const QString &channelId) const;
