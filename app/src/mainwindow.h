@@ -67,6 +67,8 @@ private:
     QPushButton *m_youtubeButton = nullptr;
     QList<QPushButton *> m_ytNav;   // Home, History
     class QListWidget *m_ytLists = nullptr;
+    class QListWidget *m_ytChannels = nullptr;
+    ytmusic::Client m_ytClient;   // channel feeds for Following
     QWidget *buildHome();
     QWidget *buildPlaylistPage();
     QListWidget *makeShelf();
@@ -108,6 +110,15 @@ private:
     QWidget *buildYouTubeSidebar();
     void fillYouTubeSidebar();
     void showVideoHistory();
+    // Followed channels, kept as "id<TAB>name" lines in the settings.
+    QList<QPair<QString, QString>> following() const;
+    bool follows(const QString &channelId) const;
+    void setFollowing(const QString &channelId, const QString &name, bool on);
+    void showFollowing(const QString &onlyChannel = QString());
+    void updateFollowButton();
+    int m_followSerial = 0;
+    QString m_panelChannelId;        // the playing video's channel, for Follow
+    QString m_panelChannelName;
     void showProfile();
     void showSettings();
     void showShortcuts();

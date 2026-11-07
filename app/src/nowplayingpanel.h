@@ -78,6 +78,9 @@ public:
     // A video list plays (a YouTuber, not a song): the card is the channel's,
     // and the lyrics and credits, a song's, stay hidden.
     void setChannelMode(bool channel);
+    // The channel card's Follow button: `shown` for a video's channel.
+    void setFollow(bool shown, bool following);
+    std::function<void()> onFollow;
 
     std::function<void()> onSwitchVideo;
     std::function<void()> onMiniVideo;
@@ -108,6 +111,7 @@ private:
     class ArtistPhoto *m_artistPhoto;
     QLabel *m_artistName;
     QLabel *m_artistAudience;
+    QPushButton *m_follow;
     QLabel *m_artistAbout;
     QLabel *m_artistSource;
     QWidget *m_creditsCard;

@@ -30,6 +30,8 @@ struct Item {
     QString duration;    // "3:12"
     QString extra;       // "143M plays", "28M views", "50 songs"
     QString thumbnail;   // a picture URL YouTube gave with the row
+    QString channelId;   // YouTube videos: the channel's "UC..." id, to follow it
+    qint64 published = 0;   // a followed channel's video: when, in seconds since 1970
 
     // The playlist line it plays as: "#EXTINF:-1, <artist> - <title>" over a
     // watch URL, the way the bot writes the lists.
@@ -73,6 +75,10 @@ public:
     // What YouTube shows beside a video to watch next (~20), the way its
     // home page is made: the YouTube mode's home is built from these.
     void related(const QString &videoId, std::function<void(QVector<Item>)> done);
+
+    // A channel's latest videos (~15) from its public feed, no sign-in:
+    // what the Following page is made of.
+    void channelFeed(const QString &channelId, std::function<void(QVector<Item>)> done);
 
     // The region results are ranked for (Turkish songs first in Turkey).
     void setRegion(const QString &countryCode) { m_region = countryCode; }

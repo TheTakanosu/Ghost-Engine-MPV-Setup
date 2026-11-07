@@ -369,6 +369,18 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     artistText->setSpacing(4);
     artistText->addWidget(m_artistName);
     artistText->addWidget(m_artistAudience);
+    m_follow = new QPushButton("Follow");
+    m_follow->setObjectName("chip");
+    m_follow->setCheckable(true);
+    m_follow->setCursor(Qt::PointingHandCursor);
+    m_follow->setToolTip("Its new videos on your Following page");
+    m_follow->hide();
+    connect(m_follow, &QPushButton::clicked, this, [this] { if (onFollow) onFollow(); });
+    auto *followRow = new QHBoxLayout;
+    followRow->setContentsMargins(0, 6, 0, 2);
+    followRow->addWidget(m_follow);
+    followRow->addStretch();
+    artistText->addLayout(followRow);
     artistText->addWidget(m_artistAbout);
     artistText->addWidget(m_artistSource);
     auto *artistBox = new QVBoxLayout(m_artistCard);
@@ -612,6 +624,13 @@ void NowPlayingPanel::setChannelMode(bool channel)
         m_lyricsCard->hide();
         m_creditsCard->hide();
     }
+}
+
+void NowPlayingPanel::setFollow(bool shown, bool following)
+{
+    m_follow->setVisible(shown && m_channelMode);
+    m_follow->setChecked(following);
+    m_follow->setText(following ? QStringLiteral("Following") : QStringLiteral("Follow"));
 }
 
 void NowPlayingPanel::setArtist(const ArtistInfo *artist)

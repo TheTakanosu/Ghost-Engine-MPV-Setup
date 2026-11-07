@@ -624,7 +624,7 @@ void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &
     m_homeGrid->clear();
     for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
         chip->setChecked(false);
-    m_homeStatus->setText(items.isEmpty() ? title + QStringLiteral(": nothing watched here yet.") : title);
+    m_homeStatus->setText(title);
     m_homeStatus->show();
     appendHome(items);
     m_homeGrid->verticalScrollBar()->setValue(0);

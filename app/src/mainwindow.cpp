@@ -605,6 +605,9 @@ MainWindow::MainWindow()
                      track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist);
     };
     m_panel->onPlayNext = [this] { m_mpv.command({"playlist-next"}); };
+    m_panel->onFollow = [this] {
+        setFollowing(m_panelChannelId, m_panelChannelName, !follows(m_panelChannelId));
+    };
     connect(&m_artists, &ArtistLookup::ready, this, [this](const QString &channel) {
         if (channel == m_panelChannel)
             m_panel->setArtist(m_artists.known(channel));
@@ -3613,8 +3616,10 @@ QWidget *MainWindow::buildYouTubeSidebar()
     };
     QPushButton *home = nav(kIconHome, "Home");
     QPushButton *history = nav(QChar(0xE81C), "History");
+    QPushButton *followingNav = nav(QChar(0xE734), "Following");
     connect(home, &QPushButton::clicked, this, &MainWindow::showYouTube);
     connect(history, &QPushButton::clicked, this, &MainWindow::showVideoHistory);
+    connect(followingNav, &QPushButton::clicked, this, [this] { showFollowing(); });
 
     auto *line = new QFrame;
     line->setFixedHeight(1);
@@ -3640,6 +3645,35 @@ QWidget *MainWindow::buildYouTubeSidebar()
         openPlaylist(item->data(Qt::UserRole).toInt());
     });
     box->addWidget(m_ytLists, 1);
+
+    auto *channelsTitle = new QLabel("Channels you follow");
+    channelsTitle->setObjectName("panelTitle");
+    channelsTitle->setContentsMargins(10, 8, 0, 4);
+    box->addWidget(channelsTitle);
+    m_ytChannels = new QListWidget;
+    m_ytChannels->setObjectName("songs");
+    m_ytChannels->setFrameShape(QFrame::NoFrame);
+    m_ytChannels->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_ytChannels->setMouseTracking(true);
+    theme::style(m_ytChannels, QStringLiteral("QListWidget::item { min-height: 36px; padding-left: 10px; border-radius: 8px; color: @text; }"
+                                              "QListWidget::item:hover { background: @raised; }"
+                                              "QListWidget::item:selected { background: @raisedHover; color: @textBright; }"));
+    connect(m_ytChannels, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+        const QString id = item->data(Qt::UserRole).toString();
+        if (!id.isEmpty())
+            showFollowing(id);
+    });
+    m_ytChannels->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_ytChannels, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QListWidgetItem *item = m_ytChannels->itemAt(pos);
+        if (!item || item->data(Qt::UserRole).toString().isEmpty())
+            return;
+        const QString id = item->data(Qt::UserRole).toString(), name = item->text();
+        QMenu menu(this);
+        menu.addAction(QStringLiteral("Unfollow %1").arg(name), this, [this, id, name] { setFollowing(id, name, false); });
+        menu.exec(m_ytChannels->viewport()->mapToGlobal(pos));
+    });
+    box->addWidget(m_ytChannels, 1);
     return panel;
 }
 
@@ -3661,6 +3695,115 @@ void MainWindow::fillYouTubeSidebar()
         row->setFlags(Qt::NoItemFlags);
         m_ytLists->addItem(row);
     }
+    m_ytChannels->clear();
+    for (const auto &[id, name] : following()) {
+        auto *row = new QListWidgetItem(name);
+        row->setData(Qt::UserRole, id);
+        row->setToolTip("Click for its videos, right-click to unfollow");
+        m_ytChannels->addItem(row);
+    }
+    if (!m_ytChannels->count()) {
+        auto *row = new QListWidgetItem("None yet: Follow on a video's channel card");
+        row->setFlags(Qt::NoItemFlags);
+        m_ytChannels->addItem(row);
+    }
+}
+
+QList<QPair<QString, QString>> MainWindow::following() const
+{
+    QList<QPair<QString, QString>> out;
+    for (const QString &line : QSettings().value("youtube/following").toStringList()) {
+        const int tab = line.indexOf('\t');
+        if (tab > 0)
+            out.append({line.left(tab), line.mid(tab + 1)});
+    }
+    return out;
+}
+
+bool MainWindow::follows(const QString &channelId) const
+{
+    for (const auto &[id, name] : following())
+        if (id == channelId)
+            return true;
+    return false;
+}
+
+void MainWindow::setFollowing(const QString &channelId, const QString &name, bool on)
+{
+    if (channelId.isEmpty())
+        return;
+    QStringList lines;
+    for (const auto &[id, n] : following())
+        if (id != channelId)
+            lines << id + '\t' + n;
+    if (on)
+        lines.prepend(channelId + '\t' + (name.isEmpty() ? channelId : name));
+    QSettings().setValue("youtube/following", lines);
+    toast(on ? QStringLiteral("Following %1").arg(name) : QStringLiteral("Unfollowed %1").arg(name));
+    fillYouTubeSidebar();
+    updateFollowButton();
+}
+
+void MainWindow::showFollowing(const QString &onlyChannel)
+{
+    showYouTube();
+    for (QPushButton *b : m_ytNav)
+        b->setChecked(onlyChannel.isEmpty() && b == m_ytNav.value(2));
+    if (!onlyChannel.isEmpty()) {
+        for (int i = 0; i < m_ytChannels->count(); ++i)
+            if (m_ytChannels->item(i)->data(Qt::UserRole).toString() == onlyChannel)
+                m_ytChannels->setCurrentRow(i);
+    } else {
+        m_ytChannels->clearSelection();
+    }
+    QList<QPair<QString, QString>> channels;
+    QString title = QStringLiteral("Following");
+    for (const auto &c : following())
+        if (onlyChannel.isEmpty() || c.first == onlyChannel) {
+            channels << c;
+            if (!onlyChannel.isEmpty())
+                title = c.second;
+        }
+    if (channels.isEmpty()) {
+        m_searchPage->showVideos("Following: no channels yet. Play a video, then press Follow on its channel card "
+                                 "(right panel), or right-click a video.", {});
+        return;
+    }
+    m_searchPage->showVideos(title + QStringLiteral(": loading..."), {});
+    // Every channel's feed, then all of them together, newest first.
+    const int serial = ++m_followSerial;
+    auto all = std::make_shared<QVector<ytmusic::Item>>();
+    auto waiting = std::make_shared<int>(channels.size());
+    for (const auto &[id, name] : channels) {
+        m_ytClient.channelFeed(id, [this, serial, all, waiting, title](QVector<ytmusic::Item> items) {
+            if (serial != m_followSerial)
+                return;
+            *all += items;
+            if (--*waiting > 0)
+                return;
+            std::sort(all->begin(), all->end(), [](const ytmusic::Item &a, const ytmusic::Item &b) { return a.published > b.published; });
+            const qint64 now = QDateTime::currentSecsSinceEpoch();
+            for (ytmusic::Item &it : *all) {
+                const qint64 ago = now - it.published;
+                const QString when = ago < 3600 ? QStringLiteral("%1 min ago").arg(qMax<qint64>(1, ago / 60))
+                                   : ago < 86400 ? QStringLiteral("%1 h ago").arg(ago / 3600)
+                                   : ago < 86400 * 30 ? QStringLiteral("%1 d ago").arg(ago / 86400)
+                                   : ago < 86400 * 365 ? QStringLiteral("%1 mo ago").arg(ago / (86400 * 30))
+                                                       : QStringLiteral("%1 y ago").arg(ago / (86400 * 365));
+                const qint64 views = it.extra.toLongLong();
+                const QString count = views >= 1000000 ? QStringLiteral("%1M views").arg(views / 1000000)
+                                    : views >= 1000 ? QStringLiteral("%1K views").arg(views / 1000)
+                                                    : QStringLiteral("%1 views").arg(views);
+                it.extra = count + QStringLiteral("  \u2022  ") + when;
+            }
+            m_searchPage->showVideos(title, *all);
+        });
+    }
+}
+
+void MainWindow::updateFollowButton()
+{
+    m_panel->setFollow(!m_panelChannelId.isEmpty(), follows(m_panelChannelId));
 }
 
 void MainWindow::showVideoHistory()
@@ -3743,12 +3886,12 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate)
 
 void MainWindow::showYouTube()
 {
-    if (m_ytNav.size() > 1) {
-        m_ytNav[0]->setChecked(true);
-        m_ytNav[1]->setChecked(false);
-        if (m_ytLists)
-            m_ytLists->clearSelection();
-    }
+    for (int i = 0; i < m_ytNav.size(); ++i)
+        m_ytNav[i]->setChecked(i == 0);
+    if (m_ytLists)
+        m_ytLists->clearSelection();
+    if (m_ytChannels)
+        m_ytChannels->clearSelection();
     QWidget *now = m_pages->currentWidget();
     if (now != m_searchPage)
         m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;
@@ -5175,6 +5318,8 @@ void MainWindow::refreshPanel()
     if (!id.isEmpty() && id != m_panelFacts) {
         m_panelFacts = id;
         m_panelChannel.clear();
+        m_panelChannelId.clear();
+        updateFollowButton();
         m_panel->setCredits({}, false);
         m_panel->setArtist(nullptr);
         fetchSongInfo(id, QStringLiteral("https://www.youtube.com/watch?v=") + id, [this, id](const QString &printed) {
@@ -5183,6 +5328,9 @@ void MainWindow::refreshPanel()
             const songinfo::Facts facts = songinfo::parse(printed);
             m_panel->setCredits(facts.credits, true);
             const QString artist = playingSong().first;
+            m_panelChannelId = facts.channelId;
+            m_panelChannelName = artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist;
+            updateFollowButton();
             m_panelChannel = ArtistLookup::keyFor(artist.isEmpty() ? facts.channelId : artist);
             m_panel->setArtist(m_artists.known(m_panelChannel));
             m_artists.fetch(artist, facts.channelId);
@@ -5599,6 +5747,12 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
                    [this, items, videos] { playFound(items, items.size() > 1 ? QStringLiteral("Search: %1").arg(m_searchPage->query()) : items.first().title, 0, false, !videos); });
     if (items.size() == 1 && !videos)
         menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
+    if (items.size() == 1 && videos && !items.first().channelId.isEmpty()) {
+        const ytmusic::Item it = items.first();
+        const bool on = follows(it.channelId);
+        menu.addAction(on ? QStringLiteral("Unfollow %1").arg(it.artist) : QStringLiteral("Follow %1").arg(it.artist), this,
+                       [this, it, on] { setFollowing(it.channelId, it.artist, !on); });
+    }
     QMenu *to = menu.addMenu(items.size() > 1 ? QStringLiteral("Add %1 songs to playlist").arg(items.size()) : QStringLiteral("Add to playlist"));
     QVector<PlaylistEntry> entries;
     for (const ytmusic::Item &it : items)

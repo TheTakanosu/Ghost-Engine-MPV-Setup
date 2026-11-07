@@ -6,6 +6,7 @@
 #include <QRegularExpression>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QXmlStreamReader>
 
 namespace ytmusic {
 
@@ -260,6 +261,7 @@ void Client::searchYouTube(const QString &query, const QString &next,
             item.id = row.value("videoId").toString();
             item.title = runs(row.value("title"));
             item.artist = runs(row.value("ownerText"));
+            item.channelId = first(row.value("ownerText"), "browseEndpoint").value("browseId").toString();
             item.duration = runs(row.value("lengthText"));   // empty for a live stream
             QStringList extra;
             for (const char *key : {"shortViewCountText", "publishedTimeText"}) {
@@ -326,11 +328,66 @@ void Client::related(const QString &videoId, std::function<void(QVector<Item>)> 
             }
             item.extra = extra.join(QStringLiteral("  \u2022  "));
             item.duration = first(row.value("contentImage"), "thumbnailBadgeViewModel").value("text").toString();
+            item.channelId = first(row.value("metadata"), "browseEndpoint").value("browseId").toString();
             if (!item.id.isEmpty() && !item.title.isEmpty())
                 items << item;
         }
         done(items);
     }, true);
+}
+
+void Client::channelFeed(const QString &channelId, std::function<void(QVector<Item>)> done)
+{
+    QNetworkRequest request(QUrl(QStringLiteral("https://www.youtube.com/feeds/videos.xml?channel_id=") + channelId));
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
+    request.setTransferTimeout(15000);
+    QNetworkReply *reply = m_net.get(request);
+    connect(reply, &QNetworkReply::finished, this, [reply, channelId, done] {
+        reply->deleteLater();
+        QVector<Item> items;
+        if (reply->error() != QNetworkReply::NoError) {
+            done(items);
+            return;
+        }
+        QXmlStreamReader xml(reply->readAll());
+        Item item;
+        bool inEntry = false, inAuthor = false;
+        while (!xml.atEnd()) {
+            xml.readNext();
+            const QStringView name = xml.name();
+            if (xml.isStartElement()) {
+                if (name == u"entry") {
+                    inEntry = true;
+                    item = Item();
+                    item.kind = Kind::Video;
+                    item.channelId = channelId;
+                } else if (!inEntry) {
+                    continue;
+                } else if (name == u"author") {
+                    inAuthor = true;
+                } else if (name == u"videoId") {
+                    item.id = xml.readElementText();
+                } else if (name == u"title" && item.title.isEmpty()) {
+                    item.title = xml.readElementText();
+                } else if (name == u"name" && inAuthor) {
+                    item.artist = xml.readElementText();
+                } else if (name == u"published") {
+                    item.published = QDateTime::fromString(xml.readElementText(), Qt::ISODate).toSecsSinceEpoch();
+                } else if (name == u"statistics") {
+                    item.extra = xml.attributes().value("views").toString();
+                }
+            } else if (xml.isEndElement()) {
+                if (name == u"author") {
+                    inAuthor = false;
+                } else if (name == u"entry") {
+                    inEntry = false;
+                    if (!item.id.isEmpty() && !item.title.isEmpty())
+                        items << item;
+                }
+            }
+        }
+        done(items);
+    });
 }
 
 void Client::radio(const QString &videoId, std::function<void(QVector<Item>)> done)
