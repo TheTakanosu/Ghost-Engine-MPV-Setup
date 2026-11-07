@@ -11,8 +11,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QNetworkReply>
+#include <QHBoxLayout>
 #include <QPainter>
+#include <QPushButton>
 #include <QSettings>
+#include <QStyledItemDelegate>
 #include <QUrlQuery>
 #include <QVBoxLayout>
 
@@ -25,6 +28,28 @@ QStringList recent()
 {
     return QSettings().value("search/recent").toStringList();
 }
+
+// An earlier search's row: an x at its right end, drawn here and clicked
+// by place (eventFilter), forgets it.
+class RecentDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QStyledItemDelegate::paint(painter, option, index);
+        if (index.data(kRowKind).toString() != QLatin1String("recent"))
+            return;
+        QFont glyphs(QStringLiteral("Segoe Fluent Icons"));
+        glyphs.setPixelSize(11);
+        painter->save();
+        painter->setFont(glyphs);
+        const bool over = option.state & QStyle::State_MouseOver;
+        painter->setPen(over ? theme::c().textBright : theme::c().dim);
+        painter->drawText(QRect(option.rect.right() - 36, option.rect.top(), 28, option.rect.height()),
+                          Qt::AlignCenter, QString(QChar(0xE711)));
+        painter->restore();
+    }
+};
 
 } // namespace
 
@@ -62,6 +87,22 @@ SearchPopup::SearchPopup(QWidget *owner)
     box->addWidget(m_edit);
     box->addWidget(line);
     box->addWidget(m_list);
+    // Under what was searched before: all of it forgotten at once.
+    m_clearAll = new QPushButton("Clear all");
+    m_clearAll->setCursor(Qt::PointingHandCursor);
+    m_clearAll->setToolTip("Forget every search shown here");
+    theme::style(m_clearAll, QStringLiteral("QPushButton { background: transparent; border: none; color: @dim; font-size: 9pt; padding: 4px 8px; }"
+                                            "QPushButton:hover { color: @textBright; }"));
+    connect(m_clearAll, &QPushButton::clicked, this, [this] {
+        forget(QString());
+        refresh();
+        m_edit->setFocus();
+    });
+    auto *clearRow = new QHBoxLayout;
+    clearRow->setContentsMargins(0, 0, 0, 0);
+    clearRow->addStretch();
+    clearRow->addWidget(m_clearAll);
+    box->addLayout(clearRow);
 
     m_soon.setSingleShot(true);
     m_soon.setInterval(160);
@@ -73,6 +114,9 @@ SearchPopup::SearchPopup(QWidget *owner)
     });
     connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) { run(item->data(Qt::UserRole).toString()); });
     m_edit->installEventFilter(this);
+    m_list->setItemDelegate(new RecentDelegate(m_list));
+    m_list->setMouseTracking(true);
+    m_list->viewport()->installEventFilter(this);
 }
 
 void SearchPopup::remember(const QString &query)
@@ -84,6 +128,16 @@ void SearchPopup::remember(const QString &query)
     list.removeAll(q);
     list.prepend(q);
     QSettings().setValue("search/recent", list.mid(0, kRecentMax));
+}
+
+void SearchPopup::forget(const QString &query)
+{
+    QStringList list = recent();
+    if (query.isEmpty())
+        list.clear();
+    else
+        list.removeAll(query);
+    QSettings().setValue("search/recent", list);
 }
 
 void SearchPopup::open(const QString &text, const QString &placeholder)
@@ -126,6 +180,7 @@ void SearchPopup::refresh()
         if (++shown == (typed.isEmpty() ? 6 : 3))
             break;
     }
+    m_clearAll->setVisible(shown > 0);
     layoutCard();
     if (typed.isEmpty())
         return;
@@ -190,10 +245,35 @@ void SearchPopup::mousePressEvent(QMouseEvent *event)
 
 bool SearchPopup::eventFilter(QObject *watched, QEvent *event)
 {
+    // A click on an earlier search's x forgets it rather than searching it.
+    if (watched == m_list->viewport() && event->type() == QEvent::MouseButtonPress) {
+        const QPoint at = static_cast<QMouseEvent *>(event)->position().toPoint();
+        QListWidgetItem *item = m_list->itemAt(at);
+        if (item && item->data(kRowKind).toString() == QLatin1String("recent") &&
+            at.x() >= m_list->viewport()->width() - 44) {
+            forget(item->data(Qt::UserRole).toString());
+            refresh();
+            m_edit->setFocus();
+            return true;
+        }
+    }
     if (watched == m_edit && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();
         if (key == Qt::Key_Escape) {
             hide();
+            return true;
+        }
+        // Delete on a picked earlier search forgets it, as a browser's bar does.
+        QListWidgetItem *picked = m_list->currentItem();
+        if (key == Qt::Key_Delete && picked && picked->isSelected() &&
+            picked->data(kRowKind).toString() == QLatin1String("recent")) {
+            const int row = m_list->currentRow();
+            forget(picked->data(Qt::UserRole).toString());
+            refresh();
+            if (m_list->count()) {
+                m_list->setCurrentRow(qMin(row, m_list->count() - 1));
+                m_list->currentItem()->setSelected(true);
+            }
             return true;
         }
         if ((key == Qt::Key_Down || key == Qt::Key_Up) && m_list->count()) {

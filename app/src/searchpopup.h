@@ -24,6 +24,7 @@ public:
 
     // What was searched, newest first (search/recent, at most 12).
     static void remember(const QString &query);
+    static void forget(const QString &query);   // one of them; empty: all
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -40,6 +41,7 @@ private:
     QWidget *m_card;
     QLineEdit *m_edit;
     QListWidget *m_list;
+    class QPushButton *m_clearAll;
     QNetworkAccessManager m_net;
     QTimer m_soon;
     int m_serial = 0;
