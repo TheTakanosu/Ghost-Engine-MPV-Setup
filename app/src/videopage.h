@@ -136,6 +136,11 @@ public:
     std::function<void(const QString &target)> onPick;
     std::function<void()> onPopOut;
     std::function<void()> onSwitchToAudio;
+    // The channel under the title: a click opens its page; Follow beside it,
+    // once the channel is known (it comes with the description).
+    void setChannel(const QString &channelId, bool following);
+    std::function<void()> onOpenChannel;
+    std::function<void()> onFollow;
     // A song list's song shown as its video: "Switch to audio" instead of the pop out.
     void setSongVideo(bool song);
     std::function<void()> onBringBack;
@@ -221,6 +226,8 @@ private:
     bool m_paused = false;
     bool m_popped = false;
     QString m_link;
+    QString m_channelId;
+    class QPushButton *m_follow = nullptr;
     bool m_full = false;
     bool m_cinema = false;
     bool m_stacked = false;   // the list under the description

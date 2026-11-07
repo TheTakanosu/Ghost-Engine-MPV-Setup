@@ -133,6 +133,7 @@ private:
     int m_followSerial = 0;
     QString m_panelChannelId;        // the playing video's channel, for Follow
     QString m_panelChannelName;
+    QString m_videoChannelId;        // the video page's channel, from its description
     void showProfile();
     void showSettings();
     void showShortcuts();

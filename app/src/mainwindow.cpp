@@ -630,6 +630,20 @@ MainWindow::MainWindow()
     m_panelSoon.setInterval(150);
     connect(&m_panelSoon, &QTimer::timeout, this, &MainWindow::refreshPanel);
     m_videoPage->onSwitchToAudio = [this] { setSongVideo(false); };
+    m_videoPage->onFollow = [this] {
+        const QString name = m_mpv.property("metadata/by-key/uploader").toString();
+        setFollowing(m_videoChannelId, name, !follows(m_videoChannelId));
+    };
+    m_videoPage->onOpenChannel = [this] {
+        const QString id = m_videoChannelId;
+        const QString name = m_mpv.property("metadata/by-key/uploader").toString();
+        if (!m_youtubeLayout)
+            setYouTubeLayout(true, false);
+        showYouTube();
+        for (QPushButton *b : m_ytNav)
+            b->setChecked(false);
+        m_searchPage->showChannel(id, name);
+    };
 
     m_split = new QSplitter(Qt::Horizontal);
     m_leftStack = new QStackedWidget;
@@ -3929,6 +3943,8 @@ void MainWindow::showFollowing(const QString &onlyChannel)
 
 void MainWindow::updateFollowButton()
 {
+    if (!m_videoChannelId.isEmpty())
+        m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
     m_panel->setFollow(!m_panelChannelId.isEmpty(), follows(m_panelChannelId));
 }
 
@@ -5345,6 +5361,8 @@ void MainWindow::describeVideo(const QString &id)
         if (date.isValid())
             meta << english.toString(date, QStringLiteral("MMM d, yyyy"));
         m_videoPage->setDescription(text, meta.join(QStringLiteral("  ·  ")));
+        m_videoChannelId = facts.value(2).trimmed().startsWith(QLatin1String("UC")) ? facts.value(2).trimmed() : QString();
+        m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
     };
     if (m_descriptions.contains(id)) {
         show(m_descriptions.value(id));
@@ -5373,7 +5391,7 @@ void MainWindow::describeVideo(const QString &id)
     });
     proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
                 {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
-                 "--print", "%(view_count)s|%(upload_date)s", "--print", "description",
+                 "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s", "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
 }
 

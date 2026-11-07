@@ -852,6 +852,14 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_title->setWordWrap(true);
     m_channel = new QLabel;
     m_channel->setObjectName("videoChannel");
+    m_channel->installEventFilter(this);
+    m_follow = new QPushButton("Follow");
+    m_follow->setObjectName("chip");
+    m_follow->setCheckable(true);
+    m_follow->setCursor(Qt::PointingHandCursor);
+    m_follow->setToolTip("Its new videos on your Following page");
+    m_follow->hide();
+    connect(m_follow, &QPushButton::clicked, this, [this] { if (onFollow) onFollow(); });
     auto *popOut = action(QString(QChar(0xE8A7)), "Open in mpv's window");
     m_youtube = action(QString(QChar(0xE774)), "Watch on YouTube");
     m_popOut = popOut;
@@ -866,7 +874,10 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     });
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(8);
-    buttons->addWidget(m_channel, 1);
+    buttons->addWidget(m_channel);
+    buttons->addSpacing(6);
+    buttons->addWidget(m_follow);
+    buttons->addStretch(1);
     buttons->addWidget(m_toAudio);
     buttons->addWidget(popOut);
     buttons->addWidget(m_youtube);
@@ -1296,6 +1307,8 @@ void VideoPage::setPlaying(const QString &target, const QString &title, const QS
         setDescription(QString());
     m_title->setText(title);
     m_channel->setText(channel);
+    if (link != m_link)
+        setChannel(QString(), false);
     m_link = link;
     m_youtube->setVisible(!link.isEmpty());
     for (int i = 0; i < m_list->count(); ++i) {
@@ -1472,8 +1485,23 @@ void VideoPage::hideMini()
             ShowWindow(reinterpret_cast<HWND>(w->winId()), SW_HIDE);
 }
 
+void VideoPage::setChannel(const QString &channelId, bool following)
+{
+    m_channelId = channelId;
+    m_follow->setVisible(!channelId.isEmpty());
+    m_follow->setChecked(following);
+    m_follow->setText(following ? QStringLiteral("Following") : QStringLiteral("Follow"));
+    m_channel->setCursor(channelId.isEmpty() ? Qt::ArrowCursor : Qt::PointingHandCursor);
+    m_channel->setToolTip(channelId.isEmpty() ? QString() : QStringLiteral("Open the channel"));
+}
+
 bool VideoPage::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_channel && event->type() == QEvent::MouseButtonRelease && !m_channelId.isEmpty()) {
+        if (onOpenChannel)
+            onOpenChannel();
+        return true;
+    }
     // Over the description the wheel scrolled its text inside the card (the
     // first lines went out of it); on YouTube it scrolls the page.
     if (m_description && watched == m_description->viewport() && event->type() == QEvent::Wheel) {
