@@ -2507,6 +2507,11 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_ytSidebar && event->type() == QEvent::Resize) {
+        const bool compact = m_ytSidebar->width() < qRound(150 * theme::zoom());
+        if (compact != m_ytCompact)
+            setYtCompact(compact);
+    }
     // The library's search box closes with Esc, or when left empty.
     if (watched == m_librarySearch) {
         // Esc is the window's shortcut for leaving full screen; in the box
@@ -3421,6 +3426,10 @@ void MainWindow::refreshProfileUser()
     p.end();
     m_profileButton->setIcon(QIcon(icon));
     m_profileButton->setToolTip(name.isEmpty() ? QStringLiteral("Profile") : name);
+    if (m_ytProfile) {
+        m_ytProfile->setIcon(QIcon(icon));
+        m_ytProfile->setText(m_ytCompact ? QString() : m_profileButton->toolTip());
+    }
 }
 
 void MainWindow::saveResume()
@@ -3585,25 +3594,87 @@ void MainWindow::trackListening()
         m_profileSoon.start();
 }
 
+namespace {
+
+// The YouTube menu's card: rounded, a little lighter than the window, with a
+// soft shadow under it, so it seems to float beside the page. Painted once
+// per change (no effect redrawing it off screen), so it costs nothing while
+// the page scrolls or a game runs.
+class FloatingCard : public QWidget {
+public:
+    using QWidget::QWidget;
+    static constexpr int kShadow = 10;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF body = QRectF(rect()).adjusted(kShadow - 4, kShadow - 6, -(kShadow - 4), -kShadow);
+        for (int i = kShadow; i > 0; --i) {
+            QPainterPath ring;
+            ring.addRoundedRect(body.adjusted(-i * 0.6, -i * 0.3, i * 0.6, i), 16 + i * 0.6, 16 + i * 0.6);
+            p.fillPath(ring, QColor(0, 0, 0, 9));
+        }
+        QPainterPath card;
+        card.addRoundedRect(body, 16, 16);
+        p.fillPath(card, theme::c().card);
+        p.setPen(QPen(theme::c().line, 1));
+        p.drawPath(card);
+    }
+};
+
+} // namespace
+
 QWidget *MainWindow::buildYouTubeSidebar()
 {
-    auto *panel = new QWidget;
-    panel->setObjectName("libraryPanel");
-    panel->setAttribute(Qt::WA_StyledBackground);
+    auto *panel = new FloatingCard;
+    m_ytSidebar = panel;
+    panel->installEventFilter(this);   // wide or icons only, by its width
+    panel->setMinimumWidth(qRound(76 * theme::zoom()));
+    theme::whenChanged(panel, [panel] { panel->update(); });
     auto *box = new QVBoxLayout(panel);
-    box->setContentsMargins(10, 14, 6, 10);
-    box->setSpacing(4);
-    auto *title = new QLabel("YouTube");
-    title->setObjectName("panelTitle");
-    title->setContentsMargins(10, 0, 0, 8);
-    box->addWidget(title);
+    box->setContentsMargins(FloatingCard::kShadow + 6, FloatingCard::kShadow + 6, FloatingCard::kShadow + 4, FloatingCard::kShadow + 10);
+    box->setSpacing(2);
+
     const QString navStyle = QStringLiteral(
-        "QPushButton { text-align: left; padding: 0 12px; min-height: 40px; border: none; border-radius: 10px;"
+        "QPushButton { text-align: left; padding: 0 12px; min-height: 38px; border: none; border-radius: 10px;"
         " background: transparent; color: @text; font-size: 10.5pt; }"
         "QPushButton:hover { background: @raised; }"
         "QPushButton:checked { background: @raisedHover; color: @textBright; font-weight: 700; }");
+    const auto sectionTitle = [&](const QString &text) {
+        auto *label = new QLabel(text);
+        theme::style(label, QStringLiteral("color: @dim; font-size: 8.5pt; font-weight: 600; background: transparent;"));
+        label->setContentsMargins(12, 12, 0, 4);
+        box->addWidget(label);
+        m_ytWide << label;
+        return label;
+    };
+
+    // The top: the button that folds the menu to icons, and the title.
+    auto *fold = glyphButton(QChar(0xE700), "Collapse or expand the menu");
+    connect(fold, &QPushButton::clicked, this, [this] {
+        const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
+        const int left = m_ytCompact ? qRound(250 * theme::zoom()) : qRound(76 * theme::zoom());
+        m_split->setSizes({left, total - left});
+        setYtCompact(m_split->sizes().value(0) < qRound(150 * theme::zoom()));
+    });
+    auto *title = new QLabel("YouTube");
+    title->setObjectName("panelTitle");
+    auto *top = new QHBoxLayout;
+    top->setContentsMargins(2, 0, 0, 6);
+    top->setSpacing(8);
+    top->addWidget(fold);
+    top->addWidget(title, 1);
+    box->addLayout(top);
+    m_ytWide << title;
+
     const auto nav = [&](QChar glyph, const QString &text) {
-        auto *b = new QPushButton(QString(glyph) + QStringLiteral("    ") + text);
+        auto *b = new QPushButton;
+        b->setProperty("glyph", QString(glyph));
+        b->setProperty("label", text);
+        b->setText(QString(glyph) + QStringLiteral("    ") + text);
+        b->setToolTip(text);
         b->setCheckable(true);
         b->setCursor(Qt::PointingHandCursor);
         theme::style(b, navStyle);
@@ -3611,53 +3682,51 @@ QWidget *MainWindow::buildYouTubeSidebar()
         f.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Segoe Fluent Icons"), QStringLiteral("Segoe MDL2 Assets")});
         b->setFont(f);
         box->addWidget(b);
-        m_ytNav << b;
         return b;
     };
+    QPushButton *search = nav(QChar(0xE721), "Search");
+    search->setCheckable(false);
+    connect(search, &QPushButton::clicked, this, [this] {
+        m_search->setFocus();
+        m_search->selectAll();
+    });
     QPushButton *home = nav(kIconHome, "Home");
-    QPushButton *history = nav(QChar(0xE81C), "History");
     QPushButton *followingNav = nav(QChar(0xE734), "Following");
+    m_ytNav << home;
+    sectionTitle("Collection");
+    QPushButton *history = nav(QChar(0xE81C), "History");
+    m_ytNav << history << followingNav;   // indexes kept: 0 Home, 1 History, 2 Following
     connect(home, &QPushButton::clicked, this, &MainWindow::showYouTube);
     connect(history, &QPushButton::clicked, this, &MainWindow::showVideoHistory);
     connect(followingNav, &QPushButton::clicked, this, [this] { showFollowing(); });
 
-    auto *line = new QFrame;
-    line->setFixedHeight(1);
-    theme::style(line, QStringLiteral("background: @line;"));
-    box->addSpacing(10);
-    box->addWidget(line);
-    box->addSpacing(10);
-    auto *listsTitle = new QLabel("Your video lists");
-    listsTitle->setObjectName("panelTitle");
-    listsTitle->setContentsMargins(10, 0, 0, 4);
-    box->addWidget(listsTitle);
+    const QString listStyle = QStringLiteral(
+        "QListWidget { background: transparent; }"
+        "QListWidget::item { min-height: 34px; padding-left: 12px; border-radius: 8px; color: @text; }"
+        "QListWidget::item:hover { background: @raised; }"
+        "QListWidget::item:selected { background: @raisedHover; color: @textBright; }");
+    sectionTitle("Your video lists");
     m_ytLists = new QListWidget;
     m_ytLists->setObjectName("songs");
     m_ytLists->setFrameShape(QFrame::NoFrame);
     m_ytLists->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_ytLists->setMouseTracking(true);
-    theme::style(m_ytLists, QStringLiteral("QListWidget::item { min-height: 36px; padding-left: 10px; border-radius: 8px; color: @text; }"
-                                           "QListWidget::item:hover { background: @raised; }"
-                                           "QListWidget::item:selected { background: @raisedHover; color: @textBright; }"));
+    theme::style(m_ytLists, listStyle);
     connect(m_ytLists, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         for (QPushButton *b : m_ytNav)
             b->setChecked(false);
         openPlaylist(item->data(Qt::UserRole).toInt());
     });
     box->addWidget(m_ytLists, 1);
+    m_ytWide << m_ytLists;
 
-    auto *channelsTitle = new QLabel("Channels you follow");
-    channelsTitle->setObjectName("panelTitle");
-    channelsTitle->setContentsMargins(10, 8, 0, 4);
-    box->addWidget(channelsTitle);
+    sectionTitle("Channels you follow");
     m_ytChannels = new QListWidget;
     m_ytChannels->setObjectName("songs");
     m_ytChannels->setFrameShape(QFrame::NoFrame);
     m_ytChannels->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_ytChannels->setMouseTracking(true);
-    theme::style(m_ytChannels, QStringLiteral("QListWidget::item { min-height: 36px; padding-left: 10px; border-radius: 8px; color: @text; }"
-                                              "QListWidget::item:hover { background: @raised; }"
-                                              "QListWidget::item:selected { background: @raisedHover; color: @textBright; }"));
+    theme::style(m_ytChannels, listStyle);
     connect(m_ytChannels, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         const QString id = item->data(Qt::UserRole).toString();
         if (!id.isEmpty())
@@ -3674,7 +3743,47 @@ QWidget *MainWindow::buildYouTubeSidebar()
         menu.exec(m_ytChannels->viewport()->mapToGlobal(pos));
     });
     box->addWidget(m_ytChannels, 1);
+    m_ytWide << m_ytChannels;
+
+    // The bottom left: who is listening, Discord's face and name.
+    m_ytProfile = new QPushButton;
+    m_ytProfile->setCursor(Qt::PointingHandCursor);
+    m_ytProfile->setIconSize(QSize(28, 28));
+    theme::style(m_ytProfile, QStringLiteral(
+        "QPushButton { text-align: left; padding: 6px 10px; min-height: 40px; border: none; border-radius: 12px;"
+        " background: @cardAlt; color: @textBright; font-weight: 600; }"
+        "QPushButton:hover { background: @cardAltHover; }"));
+    connect(m_ytProfile, &QPushButton::clicked, this, &MainWindow::showProfile);
+    // Folded to icons, the lists go and this keeps the icons at the top.
+    auto *filler = new QWidget;
+    filler->setObjectName("ytFiller");
+    filler->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    filler->hide();
+    box->addWidget(filler, 1);
+    box->addSpacing(8);
+    box->addWidget(m_ytProfile);
     return panel;
+}
+
+void MainWindow::setYtCompact(bool compact)
+{
+    // Wide: icons with their names, the lists and the profile's name; narrow:
+    // icons alone, centred, as the library's covers-only view.
+    m_ytCompact = compact;
+    for (QWidget *w : m_ytWide)
+        w->setVisible(!compact);
+    if (auto *filler = m_ytSidebar->findChild<QWidget *>("ytFiller"))
+        filler->setVisible(compact);
+    for (QPushButton *b : m_ytSidebar->findChildren<QPushButton *>()) {
+        const QString glyph = b->property("glyph").toString();
+        if (glyph.isEmpty())
+            continue;
+        b->setText(compact ? glyph : glyph + QStringLiteral("    ") + b->property("label").toString());
+        b->setStyleSheet(b->styleSheet().replace(compact ? QStringLiteral("text-align: left") : QStringLiteral("text-align: center"),
+                                                 compact ? QStringLiteral("text-align: center") : QStringLiteral("text-align: left")));
+    }
+    if (m_ytProfile)
+        m_ytProfile->setText(compact ? QString() : m_profileButton->toolTip());
 }
 
 void MainWindow::fillYouTubeSidebar()
@@ -3841,8 +3950,18 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate)
     QPixmap before;
     if (animate && isVisible() && !videoShowing())
         before = m_split->grab();
+    // Each layout keeps its own left width: the library's covers and the
+    // YouTube menu are folded or opened apart.
+    if (animate && youtube != m_youtubeLayout)
+        QSettings().setValue(m_youtubeLayout ? "layout/ytWidth" : "layout/libraryWidth", m_split->sizes().value(0));
     m_youtubeLayout = youtube;
     QSettings().setValue("layout/youtube", youtube);
+    {
+        const int wanted = QSettings().value(youtube ? "layout/ytWidth" : "layout/libraryWidth", -1).toInt();
+        const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
+        if (animate && wanted > 0 && total > wanted)
+            m_split->setSizes({wanted, total - wanted});
+    }
     theme::style(m_youtubeButton, youtube ? QStringLiteral("color: @accent;") : QString());
     m_leftStack->setCurrentIndex(youtube ? 1 : 0);
     if (youtube) {

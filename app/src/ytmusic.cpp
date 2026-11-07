@@ -262,6 +262,7 @@ void Client::searchYouTube(const QString &query, const QString &next,
             item.title = runs(row.value("title"));
             item.artist = runs(row.value("ownerText"));
             item.channelId = first(row.value("ownerText"), "browseEndpoint").value("browseId").toString();
+            item.avatar = picture(first(row, "channelThumbnailWithLinkRenderer").value("thumbnail"));
             item.duration = runs(row.value("lengthText"));   // empty for a live stream
             QStringList extra;
             for (const char *key : {"shortViewCountText", "publishedTimeText"}) {
@@ -329,6 +330,7 @@ void Client::related(const QString &videoId, std::function<void(QVector<Item>)> 
             item.extra = extra.join(QStringLiteral("  \u2022  "));
             item.duration = first(row.value("contentImage"), "thumbnailBadgeViewModel").value("text").toString();
             item.channelId = first(row.value("metadata"), "browseEndpoint").value("browseId").toString();
+            item.avatar = picture(first(row.value("metadata"), "avatarViewModel").value("image"));
             if (!item.id.isEmpty() && !item.title.isEmpty())
                 items << item;
         }

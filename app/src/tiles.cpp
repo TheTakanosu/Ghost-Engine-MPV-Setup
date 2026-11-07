@@ -400,7 +400,27 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
     title.setPointSizeF(title.pointSizeF() * 1.05);
     title.setWeight(QFont::DemiBold);
     const QFontMetricsF tm(title);
-    const QRectF titleBox(card.left() + 2, thumb.bottom() + 8, card.width() - 4, tm.lineSpacing() * 2);
+    // The channel's picture, a circle; its place kept while it loads so the
+    // text does not jump when it comes.
+    qreal indent = 0;
+    if (avatarFor) {
+        const qreal size = qRound(34 * theme::zoom());
+        const QRectF circle(card.left() + 2, thumb.bottom() + 10, size, size);
+        QPainterPath round;
+        round.addEllipse(circle);
+        const QPixmap face = avatarFor(index);
+        if (face.isNull()) {
+            painter->fillPath(round, theme::c().raised);
+        } else {
+            painter->save();
+            painter->setClipPath(round);
+            painter->setRenderHint(QPainter::SmoothPixmapTransform);
+            painter->drawPixmap(circle, face, face.rect());
+            painter->restore();
+        }
+        indent = size + 10;
+    }
+    const QRectF titleBox(card.left() + 2 + indent, thumb.bottom() + 8, card.width() - 4 - indent, tm.lineSpacing() * 2);
     painter->setFont(title);
     painter->setPen(playing ? theme::accent() : theme::text());
     // Two lines at most, the second cut with an ellipsis.

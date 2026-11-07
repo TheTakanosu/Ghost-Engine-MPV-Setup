@@ -1,6 +1,7 @@
 #include "searchpage.h"
 
 #include "icons.h"
+#include "profile.h"
 #include "theme.h"
 #include "thumbnails.h"
 #include "tiles.h"
@@ -303,6 +304,13 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
         return m_covers.get(index.data(Qt::UserRole).toString(), ThumbnailCache::Size::Card);
     }, m_homeGrid);
     m_homeCards->channelFor = [](const QModelIndex &index) { return index.data(tiles::kSubtitleRole).toString(); };
+    // Channel pictures: one small image per channel from YouTube's picture
+    // server, once a session, as a browser fetches them on youtube.com.
+    m_avatars = new RemotePictures(this);
+    m_homeCards->avatarFor = [this](const QModelIndex &index) {
+        return m_avatars->get(index.data(tiles::kAvatarRole).toString());
+    };
+    connect(m_avatars, &RemotePictures::ready, this, [this] { m_homeGrid->viewport()->update(); });
     m_homeGrid->setItemDelegate(m_homeCards);
     m_homeGrid->installEventFilter(this);
     m_homeGrid->viewport()->installEventFilter(this);
@@ -648,6 +656,12 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
         row->setData(tiles::kDurationRole, it.duration.isEmpty() && !m_homeFixed ? QStringLiteral("LIVE") : it.duration);
         row->setData(tiles::kEntryRole, i);
         row->setData(Qt::UserRole, it.id);
+        QString avatar = it.avatar.startsWith(QLatin1String("//")) ? QStringLiteral("https:") + it.avatar : it.avatar;
+        if (!avatar.isEmpty() && !it.channelId.isEmpty())
+            m_avatarOf.insert(it.channelId, avatar);
+        if (avatar.isEmpty())
+            avatar = m_avatarOf.value(it.channelId);
+        row->setData(tiles::kAvatarRole, avatar);
         row->setToolTip(it.title + QStringLiteral("\n") + byline);
         m_homeGrid->addItem(row);
         ++added;

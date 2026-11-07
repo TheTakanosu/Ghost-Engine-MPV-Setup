@@ -68,6 +68,11 @@ private:
     QList<QPushButton *> m_ytNav;   // Home, History
     class QListWidget *m_ytLists = nullptr;
     class QListWidget *m_ytChannels = nullptr;
+    QWidget *m_ytSidebar = nullptr;
+    QList<QWidget *> m_ytWide;        // only while the menu is wide: titles, lists
+    QPushButton *m_ytProfile = nullptr;
+    bool m_ytCompact = false;
+    void setYtCompact(bool compact);
     ytmusic::Client m_ytClient;   // channel feeds for Following
     QWidget *buildHome();
     QWidget *buildPlaylistPage();

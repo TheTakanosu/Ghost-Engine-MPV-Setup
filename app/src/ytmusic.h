@@ -31,6 +31,7 @@ struct Item {
     QString extra;       // "143M plays", "28M views", "50 songs"
     QString thumbnail;   // a picture URL YouTube gave with the row
     QString channelId;   // YouTube videos: the channel's "UC..." id, to follow it
+    QString avatar;      // and the channel's picture, a small one
     qint64 published = 0;   // a followed channel's video: when, in seconds since 1970
 
     // The playlist line it plays as: "#EXTINF:-1, <artist> - <title>" over a

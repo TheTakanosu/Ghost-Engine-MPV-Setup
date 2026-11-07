@@ -85,6 +85,7 @@ constexpr int kAddedAtRole = Qt::UserRole + 11;  // when it was added, for sorti
 constexpr int kKeyRole = Qt::UserRole + 12;      // a library row's key: file name, or "folder:<name>"
 constexpr int kPinnedRole = Qt::UserRole + 13;
 constexpr int kOfflineRole = Qt::UserRole + 14;  // a song kept on disk
+constexpr int kAvatarRole = Qt::UserRole + 16;   // a YouTube card: its channel's picture URL
 
 // Widths of the right-hand columns, shared by the rows and their header.
 constexpr int kAddedColumn = 150;
@@ -113,6 +114,9 @@ public:
 
     VideoCardDelegate(CoverFor coverFor, QObject *parent);
     std::function<QString(const QModelIndex &)> channelFor;
+    // The channel's round picture left of the title (YouTube's grid); left
+    // unset, the text takes the card's whole width as before.
+    std::function<QPixmap(const QModelIndex &)> avatarFor;
     void setCardWidth(int width) { m_width = width; }
     QSize cardSize() const;
 

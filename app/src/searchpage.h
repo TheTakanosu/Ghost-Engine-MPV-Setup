@@ -127,6 +127,8 @@ private:
     QVector<ytmusic::Item> m_home;
     QStringList m_homeSeeds;      // videos whose side lists are still to ask for
     QSet<QString> m_homeSeen;
+    class RemotePictures *m_avatars = nullptr;
+    QHash<QString, QString> m_avatarOf;   // channel id -> its picture URL, for rows without one (feeds)
     QSet<QString> m_homeSeeded;   // videos already asked beside
     QString m_homeChannel;        // the chip picked; empty: All
     QString m_homeNext;           // a chip's search, its next page
