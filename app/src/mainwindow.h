@@ -62,6 +62,11 @@ private:
 
     QWidget *buildTopBar();
     QWidget *buildLibrary();
+    bool m_youtubeLayout = false;
+    class QStackedWidget *m_leftStack = nullptr;
+    QPushButton *m_youtubeButton = nullptr;
+    QList<QPushButton *> m_ytNav;   // Home, History
+    class QListWidget *m_ytLists = nullptr;
     QWidget *buildHome();
     QWidget *buildPlaylistPage();
     QListWidget *makeShelf();
@@ -96,6 +101,13 @@ private:
     void applyPendingOrder();
     void showHome();
     void showYouTube();
+    // Two apps in one: the music layout (library, lyrics, artists) and the
+    // YouTube one (its own menu, home, channels). The top bar's video button
+    // goes from one to the other, the new one sliding in.
+    void setYouTubeLayout(bool youtube, bool animate);
+    QWidget *buildYouTubeSidebar();
+    void fillYouTubeSidebar();
+    void showVideoHistory();
     void showProfile();
     void showSettings();
     void showShortcuts();

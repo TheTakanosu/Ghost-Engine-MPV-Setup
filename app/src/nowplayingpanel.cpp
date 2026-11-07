@@ -228,6 +228,7 @@ protected:
 class ArtistPhoto : public QWidget {
 public:
     QPixmap picture;
+    QString label = QStringLiteral("About the artist");
     ArtistPhoto() { setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred); }
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int w) const override { return picture.isNull() ? 44 : int(w * 0.62); }
@@ -259,7 +260,7 @@ protected:
         font.setWeight(QFont::Bold);
         p.setFont(font);
         p.setPen(Qt::white);
-        p.drawText(box.adjusted(14, 12, -14, 0), Qt::AlignLeft | Qt::AlignTop, QStringLiteral("About the artist"));
+        p.drawText(box.adjusted(14, 12, -14, 0), Qt::AlignLeft | Qt::AlignTop, label);
     }
 };
 
@@ -547,7 +548,7 @@ void NowPlayingPanel::setLyrics(const Lyrics &lyrics, bool searching)
 {
     m_lyrics = lyrics;
     m_shownLine = -2;
-    m_lyricsCard->setVisible(lyrics.found && (!lyrics.lines.isEmpty() || !lyrics.plain.trimmed().isEmpty()));
+    m_lyricsCard->setVisible(!m_channelMode && lyrics.found && (!lyrics.lines.isEmpty() || !lyrics.plain.trimmed().isEmpty()));
     Q_UNUSED(searching);
     showLyricLines();
 }
@@ -598,6 +599,19 @@ void NowPlayingPanel::showLyricLines()
     while (after < m_lyrics.lines.size() && m_lyrics.lines[after].text.trimmed().isEmpty())
         ++after;
     m_lyricsNext->setText(words(after, 2).join('\n'));
+}
+
+void NowPlayingPanel::setChannelMode(bool channel)
+{
+    if (channel == m_channelMode)
+        return;
+    m_channelMode = channel;
+    m_artistPhoto->label = channel ? QStringLiteral("About the channel") : QStringLiteral("About the artist");
+    m_artistPhoto->update();
+    if (channel) {
+        m_lyricsCard->hide();
+        m_creditsCard->hide();
+    }
 }
 
 void NowPlayingPanel::setArtist(const ArtistInfo *artist)
@@ -655,7 +669,7 @@ void NowPlayingPanel::showCredits()
         box->addWidget(role);
         m_creditRows->addWidget(row);
     }
-    m_creditsCard->setVisible(!credits.isEmpty());
+    m_creditsCard->setVisible(!m_channelMode && !credits.isEmpty());
 }
 
 void NowPlayingPanel::setNext(const QString &title, const QString &artist, const QPixmap &cover)

@@ -64,6 +64,8 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QScreen>
+#include <QParallelAnimationGroup>
+#include <QPropertyAnimation>
 #include <QSettings>
 #include <QSplitter>
 #include <QSystemTrayIcon>
@@ -621,7 +623,10 @@ MainWindow::MainWindow()
     m_videoPage->onSwitchToAudio = [this] { setSongVideo(false); };
 
     m_split = new QSplitter(Qt::Horizontal);
-    m_split->addWidget(buildLibrary());
+    m_leftStack = new QStackedWidget;
+    m_leftStack->addWidget(buildLibrary());
+    m_leftStack->addWidget(buildYouTubeSidebar());
+    m_split->addWidget(m_leftStack);
     m_split->addWidget(m_rightSplit);
     m_split->setStretchFactor(1, 1);
     m_split->setHandleWidth(8);
@@ -842,6 +847,8 @@ MainWindow::MainWindow()
     QSettings settings;
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
+    if (settings.value("layout/youtube", false).toBool())
+        QTimer::singleShot(0, this, [this] { setYouTubeLayout(true, false); });
     m_rightSplit->restoreState(settings.value("window/panelSplit").toByteArray());
     setLibraryCompact(m_split->sizes().value(0) < compactBelow());
 
@@ -1203,8 +1210,9 @@ QWidget *MainWindow::buildTopBar()
     auto *home = glyphButton(kIconHome, "Home", "pill");
     connect(home, &QPushButton::clicked, this, &MainWindow::showHome);
     // YouTube: its own home and search, every video and not only music.
-    auto *youtube = glyphButton(QChar(0xE714), "YouTube", "pill");
-    connect(youtube, &QPushButton::clicked, this, &MainWindow::showYouTube);
+    auto *youtube = glyphButton(QChar(0xE714), "YouTube layout (click again for music)", "pill");
+    m_youtubeButton = youtube;
+    connect(youtube, &QPushButton::clicked, this, [this] { setYouTubeLayout(!m_youtubeLayout, true); });
     m_profileButton = new QPushButton;
     m_profileButton->setObjectName("profileButton");
     m_profileButton->setToolTip("Profile");
@@ -3574,8 +3582,173 @@ void MainWindow::trackListening()
         m_profileSoon.start();
 }
 
+QWidget *MainWindow::buildYouTubeSidebar()
+{
+    auto *panel = new QWidget;
+    panel->setObjectName("libraryPanel");
+    panel->setAttribute(Qt::WA_StyledBackground);
+    auto *box = new QVBoxLayout(panel);
+    box->setContentsMargins(10, 14, 6, 10);
+    box->setSpacing(4);
+    auto *title = new QLabel("YouTube");
+    title->setObjectName("panelTitle");
+    title->setContentsMargins(10, 0, 0, 8);
+    box->addWidget(title);
+    const QString navStyle = QStringLiteral(
+        "QPushButton { text-align: left; padding: 0 12px; min-height: 40px; border: none; border-radius: 10px;"
+        " background: transparent; color: @text; font-size: 10.5pt; }"
+        "QPushButton:hover { background: @raised; }"
+        "QPushButton:checked { background: @raisedHover; color: @textBright; font-weight: 700; }");
+    const auto nav = [&](QChar glyph, const QString &text) {
+        auto *b = new QPushButton(QString(glyph) + QStringLiteral("    ") + text);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        theme::style(b, navStyle);
+        QFont f = b->font();
+        f.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Segoe Fluent Icons"), QStringLiteral("Segoe MDL2 Assets")});
+        b->setFont(f);
+        box->addWidget(b);
+        m_ytNav << b;
+        return b;
+    };
+    QPushButton *home = nav(kIconHome, "Home");
+    QPushButton *history = nav(QChar(0xE81C), "History");
+    connect(home, &QPushButton::clicked, this, &MainWindow::showYouTube);
+    connect(history, &QPushButton::clicked, this, &MainWindow::showVideoHistory);
+
+    auto *line = new QFrame;
+    line->setFixedHeight(1);
+    theme::style(line, QStringLiteral("background: @line;"));
+    box->addSpacing(10);
+    box->addWidget(line);
+    box->addSpacing(10);
+    auto *listsTitle = new QLabel("Your video lists");
+    listsTitle->setObjectName("panelTitle");
+    listsTitle->setContentsMargins(10, 0, 0, 4);
+    box->addWidget(listsTitle);
+    m_ytLists = new QListWidget;
+    m_ytLists->setObjectName("songs");
+    m_ytLists->setFrameShape(QFrame::NoFrame);
+    m_ytLists->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_ytLists->setMouseTracking(true);
+    theme::style(m_ytLists, QStringLiteral("QListWidget::item { min-height: 36px; padding-left: 10px; border-radius: 8px; color: @text; }"
+                                           "QListWidget::item:hover { background: @raised; }"
+                                           "QListWidget::item:selected { background: @raisedHover; color: @textBright; }"));
+    connect(m_ytLists, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+        for (QPushButton *b : m_ytNav)
+            b->setChecked(false);
+        openPlaylist(item->data(Qt::UserRole).toInt());
+    });
+    box->addWidget(m_ytLists, 1);
+    return panel;
+}
+
+void MainWindow::fillYouTubeSidebar()
+{
+    // The library's video lists (the song lists stay in the music layout).
+    m_ytLists->clear();
+    const auto &all = m_library.playlists();
+    for (int i = 0; i < all.size(); ++i) {
+        if (all[i].audio)
+            continue;
+        auto *row = new QListWidgetItem(all[i].name);
+        row->setData(Qt::UserRole, i);
+        row->setToolTip(QStringLiteral("%1 videos").arg(all[i].count));
+        m_ytLists->addItem(row);
+    }
+    if (!m_ytLists->count()) {
+        auto *row = new QListWidgetItem("No video lists yet");
+        row->setFlags(Qt::NoItemFlags);
+        m_ytLists->addItem(row);
+    }
+}
+
+void MainWindow::showVideoHistory()
+{
+    for (QPushButton *b : m_ytNav)
+        b->setChecked(b == m_ytNav.value(1));
+    m_ytLists->clearSelection();
+    showYouTube();
+    m_ytNav.value(0)->setChecked(false);
+    m_ytNav.value(1)->setChecked(true);
+    QVector<ytmusic::Item> items;
+    QSet<QString> seen;
+    const QDateTime now = QDateTime::currentDateTime();
+    for (const ListeningStats::Entry &e : m_stats.history()) {
+        if (!e.video || e.id.isEmpty() || seen.contains(e.id))
+            continue;
+        seen.insert(e.id);
+        ytmusic::Item it;
+        it.kind = ytmusic::Kind::Video;
+        it.id = e.id;
+        it.title = e.title;
+        it.artist = e.artist;
+        const qint64 days = e.at.daysTo(now);
+        it.extra = days <= 0 ? QStringLiteral("watched today") : days == 1 ? QStringLiteral("watched yesterday")
+                                                                           : QStringLiteral("watched %1 days ago").arg(days);
+        items << it;
+    }
+    m_searchPage->showVideos("History", items);
+}
+
+void MainWindow::setYouTubeLayout(bool youtube, bool animate)
+{
+    // The page as it is, to slide away; not over a video, whose picture is a
+    // window of its own the slide could not carry.
+    QPixmap before;
+    if (animate && isVisible() && !videoShowing())
+        before = m_split->grab();
+    m_youtubeLayout = youtube;
+    QSettings().setValue("layout/youtube", youtube);
+    theme::style(m_youtubeButton, youtube ? QStringLiteral("color: @accent;") : QString());
+    m_leftStack->setCurrentIndex(youtube ? 1 : 0);
+    if (youtube) {
+        fillYouTubeSidebar();
+        showYouTube();
+    } else {
+        m_search->setPlaceholderText("What do you want to play?");
+        if (m_searchPage->youTubeMode())
+            m_searchPage->setYouTubeMode(false);
+        showHome();
+    }
+    if (before.isNull())
+        return;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    const QPixmap after = m_split->grab();
+    auto *cover = new QWidget(m_split->parentWidget());
+    cover->setGeometry(m_split->geometry());
+    cover->setAttribute(Qt::WA_TransparentForMouseEvents);
+    const int w = m_split->width();
+    const int dir = youtube ? 1 : -1;   // YouTube comes in from the right, music from the left
+    auto *old = new QLabel(cover);
+    old->setPixmap(before);
+    old->setGeometry(0, 0, w, m_split->height());
+    auto *fresh = new QLabel(cover);
+    fresh->setPixmap(after);
+    fresh->setGeometry(dir * w, 0, w, m_split->height());
+    cover->show();
+    cover->raise();
+    auto *group = new QParallelAnimationGroup(cover);
+    for (auto [label, from, to] : {std::tuple{old, 0, -dir * w}, std::tuple{fresh, dir * w, 0}}) {
+        auto *slide = new QPropertyAnimation(label, "pos", group);
+        slide->setDuration(240);
+        slide->setEasingCurve(QEasingCurve::OutCubic);
+        slide->setStartValue(QPoint(from, 0));
+        slide->setEndValue(QPoint(to, 0));
+        group->addAnimation(slide);
+    }
+    connect(group, &QAbstractAnimation::finished, cover, &QObject::deleteLater);
+    group->start();
+}
+
 void MainWindow::showYouTube()
 {
+    if (m_ytNav.size() > 1) {
+        m_ytNav[0]->setChecked(true);
+        m_ytNav[1]->setChecked(false);
+        if (m_ytLists)
+            m_ytLists->clearSelection();
+    }
     QWidget *now = m_pages->currentWidget();
     if (now != m_searchPage)
         m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;
@@ -3595,6 +3768,10 @@ void MainWindow::showYouTube()
 
 void MainWindow::showHome()
 {
+    if (m_youtubeLayout) {
+        showYouTube();
+        return;
+    }
     // The music home: the box searches music again.
     if (m_searchPage->youTubeMode())
         m_searchPage->setYouTubeMode(false);
@@ -4969,6 +5146,11 @@ void MainWindow::refreshPanel()
         m_findingVideo = false;
     if (m_findingMini && panelVideo())
         m_findingMini = false;
+    // A video list (a YouTuber, not a song): no lyrics, a channel.
+    const bool videoPlaying = m_mpv.connected() && !m_mpv.property("path").toString().isEmpty() &&
+                              !m_mpv.property("user-data/ghost/audio").toBool();
+    m_nowPlaying->setLyricsShown(!videoPlaying);
+    m_panel->setChannelMode(videoPlaying);
     updatePanelVisibility();
     if (!m_panel->isVisible())
         return;

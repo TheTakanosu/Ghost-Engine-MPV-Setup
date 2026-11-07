@@ -56,6 +56,9 @@ public:
     // watched here last, newest first, and it goes on as it is scrolled.
     // Chips at the top: All, then the channels watched most.
     void showYouTubeHome();
+    // These videos in the home's grid under a title (the History), until a
+    // chip or the home is picked again.
+    void showVideos(const QString &title, const QVector<ytmusic::Item> &items);
     bool youTubeMode() const { return m_youtube; }
     void setYouTubeMode(bool youtube);
     // The videos watched here, newest first, and the channels watched most.
@@ -82,6 +85,7 @@ private:
     void fillHome(bool reset);
     void homeMore();
     void homeChip(const QString &channel);
+    int appendHome(const QVector<ytmusic::Item> &items);
     QVector<ytmusic::Item> picked(QListWidget *list, const QVector<ytmusic::Item> &items) const;
 
     ThumbnailCache &m_covers;
@@ -127,6 +131,7 @@ private:
     QString m_homeChannel;        // the chip picked; empty: All
     QString m_homeNext;           // a chip's search, its next page
     bool m_homeLoading = false;
+    bool m_homeFixed = false;     // showVideos: nothing more is fetched
     int m_homeSerial = 0;
 
     // The playlist view.

@@ -604,13 +604,59 @@ void SearchPage::showYouTubeHome()
         chips->addWidget(chip);
     }
     static_cast<QHBoxLayout *>(chips)->addStretch();
-    if (m_home.isEmpty() && !m_homeLoading)
+    if (m_homeFixed) {
+        m_homeFixed = false;
         fillHome(true);
+    } else if (m_home.isEmpty() && !m_homeLoading) {
+        fillHome(true);
+    }
     QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+}
+
+void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &items)
+{
+    showYouTubeHome();
+    ++m_homeSerial;
+    m_homeFixed = true;
+    m_homeLoading = false;
+    m_home.clear();
+    m_homeSeen.clear();
+    m_homeGrid->clear();
+    for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
+        chip->setChecked(false);
+    m_homeStatus->setText(items.isEmpty() ? title + QStringLiteral(": nothing watched here yet.") : title);
+    m_homeStatus->show();
+    appendHome(items);
+    m_homeGrid->verticalScrollBar()->setValue(0);
+}
+
+int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
+{
+    int added = 0;
+    for (const ytmusic::Item &it : items) {
+        if (m_homeSeen.contains(it.id))
+            continue;
+        m_homeSeen.insert(it.id);
+        const int i = m_home.size();
+        m_home << it;
+        auto *row = new QListWidgetItem(it.title);
+        QString byline = it.artist;
+        if (!it.extra.isEmpty())
+            byline += QStringLiteral("  \u00b7  ") + it.extra;
+        row->setData(tiles::kSubtitleRole, byline);
+        row->setData(tiles::kDurationRole, it.duration.isEmpty() && !m_homeFixed ? QStringLiteral("LIVE") : it.duration);
+        row->setData(tiles::kEntryRole, i);
+        row->setData(Qt::UserRole, it.id);
+        row->setToolTip(it.title + QStringLiteral("\n") + byline);
+        m_homeGrid->addItem(row);
+        ++added;
+    }
+    return added;
 }
 
 void SearchPage::homeChip(const QString &channel)
 {
+    m_homeFixed = false;
     m_homeChannel = channel;
     for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
         chip->setChecked(chip->text() == (channel.isEmpty() ? QStringLiteral("All") : channel));
@@ -654,33 +700,14 @@ void SearchPage::fillHome(bool reset)
 
 void SearchPage::homeMore()
 {
-    if (m_homeLoading || !m_homeGrid->isVisible() && !m_home.isEmpty())
+    if (m_homeFixed || m_homeLoading || (!m_homeGrid->isVisible() && !m_home.isEmpty()))
         return;
     const int serial = m_homeSerial;
     const auto add = [this, serial](const QVector<ytmusic::Item> &items) {
         if (serial != m_homeSerial)
             return false;
         m_homeLoading = false;
-        int added = 0;
-        for (const ytmusic::Item &it : items) {
-            if (m_homeSeen.contains(it.id))
-                continue;
-            m_homeSeen.insert(it.id);
-            const int i = m_home.size();
-            m_home << it;
-            auto *row = new QListWidgetItem(it.title);
-            QString byline = it.artist;
-            if (!it.extra.isEmpty())
-                byline += QStringLiteral("  \u00b7  ") + it.extra;
-            row->setData(tiles::kSubtitleRole, byline);
-            row->setData(tiles::kDurationRole, it.duration.isEmpty() ? QStringLiteral("LIVE") : it.duration);
-            row->setData(tiles::kEntryRole, i);
-            row->setData(Qt::UserRole, it.id);
-            row->setToolTip(it.title + QStringLiteral("\n") + byline);
-            m_homeGrid->addItem(row);
-            ++added;
-        }
-        return added > 0;
+        return appendHome(items) > 0;
     };
 
     const bool search = !m_homeChannel.isEmpty() || (m_homeSeeds.isEmpty() && m_home.isEmpty())

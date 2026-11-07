@@ -461,3 +461,8 @@ void NowPlayingBar::press(const QString &button)
     else if (button == QLatin1String("repeat"))
         m_repeat->click();
 }
+
+void NowPlayingBar::setLyricsShown(bool shown)
+{
+    m_lyrics->setVisible(shown);
+}

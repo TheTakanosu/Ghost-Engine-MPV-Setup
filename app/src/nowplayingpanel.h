@@ -75,6 +75,9 @@ public:
     void setArtist(const ArtistInfo *artist);
     void setCredits(const QList<QPair<QString, QString>> &credits, bool asked);
     void setNext(const QString &title, const QString &artist, const QPixmap &cover);
+    // A video list plays (a YouTuber, not a song): the card is the channel's,
+    // and the lyrics and credits, a song's, stay hidden.
+    void setChannelMode(bool channel);
 
     std::function<void()> onSwitchVideo;
     std::function<void()> onMiniVideo;
@@ -111,7 +114,8 @@ private:
     QVBoxLayout *m_creditRows;
     QPushButton *m_showAll;
     QList<QPair<QString, QString>> m_credits;
-    bool m_creditsOpen = false;   // all of them, not the first three
+    bool m_creditsOpen = false;
+    bool m_channelMode = false;   // all of them, not the first three
     void showCredits();
     class ClickCard *m_nextCard;
     QLabel *m_nextCover;

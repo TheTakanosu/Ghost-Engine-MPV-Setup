@@ -32,6 +32,8 @@ public:
     // just what the click does ("playPause", "shuffle", "repeat").
     void press(const QString &button);
     void setLyricsOpen(bool open);
+    // A video (a YouTuber's, not a song) has no lyrics: the microphone hides.
+    void setLyricsShown(bool shown);
     void setPanelOpen(bool open);
     // "Pick up where you left off": while nothing plays, the last song stands
     // here, paused at its second, and play starts it again (onResume). An
