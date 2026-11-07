@@ -16,6 +16,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -749,8 +750,13 @@ void SearchPage::homeMore()
 
 void SearchPage::fitHomeGrid()
 {
-    // As many columns as fit at 300 px or more, sharing the width.
-    const int width = m_homeGrid->viewport()->width() - 8;
+    // As many columns as fit at 300 px or more, sharing the width. The
+    // scroll bar's room is always kept: measured with and without it, 15
+    // videos fit in 5 columns without the bar, the bar went, the width grew
+    // to 5 columns... and the grid flicked between 4 and 5 for ever (seen).
+    const int bar = m_homeGrid->verticalScrollBar()->isVisible()
+                        ? 0 : m_homeGrid->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, m_homeGrid->verticalScrollBar());
+    const int width = m_homeGrid->viewport()->width() - bar - 8;
     if (width <= 0)
         return;
     const int columns = qMax(1, width / int(300 * theme::zoom()));
