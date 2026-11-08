@@ -4310,9 +4310,22 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate)
     const bool slideStyle = style == QLatin1String("slide");
     // The page as it is, to slide away; not over a video, whose picture is a
     // window of its own the slide could not carry.
+    // Over a video (its picture is mpv's own window, which a widget's grab
+    // sees black) the page is taken from the screen, and the cover is made a
+    // window of its own so it can lie over mpv's (Batın, 2026-11-08: the
+    // intro did not show while a video was open).
     QPixmap before;
-    if (animate && style != QLatin1String("instant") && isVisible() && !videoShowing())
-        before = m_split->grab();
+    const bool overVideo = videoShowing();
+    if (animate && style != QLatin1String("instant") && isVisible() && !isMinimized()) {
+        if (overVideo) {
+            if (QScreen *screen = m_split->screen()) {
+                const QPoint at = m_split->mapToGlobal(QPoint(0, 0)) - screen->geometry().topLeft();
+                before = screen->grabWindow(0, at.x(), at.y(), m_split->width(), m_split->height());
+            }
+        } else {
+            before = m_split->grab();
+        }
+    }
     // Each layout keeps its own left width: the library's covers and the
     // YouTube menu are folded or opened apart.
     if (animate && youtube != m_youtubeLayout)
@@ -4342,12 +4355,16 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate)
     const QPixmap after = m_split->grab();
     if (!slideStyle) {
         auto *intro = new GhostIntro(m_split->parentWidget(), before, after, youtube ? "YouTube" : "Music");
+        if (overVideo)
+            intro->setAttribute(Qt::WA_NativeWindow);
         intro->setGeometry(m_split->geometry());
         intro->show();
         intro->raise();
         return;
     }
     auto *cover = new QWidget(m_split->parentWidget());
+    if (overVideo)
+        cover->setAttribute(Qt::WA_NativeWindow);
     cover->setGeometry(m_split->geometry());
     cover->setAttribute(Qt::WA_TransparentForMouseEvents);
     const int w = m_split->width();

@@ -371,17 +371,21 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
     }
     const QRectF thumb(card.left(), card.top(), card.width(), card.width() * 9 / 16);
     paintCover(*painter, thumb, m_coverFor ? m_coverFor(index) : QPixmap(), index.data(Qt::DisplayRole).toString(), 12);
-    if (playing) {
+    const QString length = index.data(kDurationRole).toString();
+    // A stream on air now: red round its picture, its badge and its title
+    // (Batın, 2026-11-08). What is playing keeps the accent.
+    const QColor liveRed(0xE5, 0x2B, 0x2B);
+    const bool live = !playing && length.compare(QLatin1String("LIVE"), Qt::CaseInsensitive) == 0;
+    if (playing || live) {
         QPainterPath ring;
         ring.addRoundedRect(thumb.adjusted(1.5, 1.5, -1.5, -1.5), 12, 12);
-        painter->setPen(QPen(theme::accent(), 3.5));
+        painter->setPen(QPen(playing ? theme::accent() : liveRed, playing ? 3.5 : 3));
         painter->drawPath(ring);
     }
 
     QFont small = option.font;
     small.setPointSizeF(small.pointSizeF() * 0.85);
     small.setWeight(QFont::DemiBold);
-    const QString length = index.data(kDurationRole).toString();
     if (!length.isEmpty() || playing) {
         const QString badgeText = playing ? QStringLiteral("Now playing") : length;
         const QFontMetricsF fm(small);
@@ -389,7 +393,7 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
                            fm.horizontalAdvance(badgeText) + 10, fm.height() + 4);
         QPainterPath b;
         b.addRoundedRect(badge, 5, 5);
-        painter->fillPath(b, playing ? theme::accent() : QColor(0, 0, 0, 200));
+        painter->fillPath(b, playing ? theme::accent() : live ? liveRed : QColor(0, 0, 0, 200));
         painter->setFont(small);
         // On the accent: the theme's text for it, dark on violet or white.
         painter->setPen(playing ? theme::c().onAccent : Qt::white);
@@ -422,7 +426,7 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
     }
     const QRectF titleBox(card.left() + 2 + indent, thumb.bottom() + 8, card.width() - 4 - indent, tm.lineSpacing() * 2);
     painter->setFont(title);
-    painter->setPen(playing ? theme::accent() : theme::text());
+    painter->setPen(playing ? theme::accent() : live ? QColor(0xFF, 0x4D, 0x4D) : theme::text());
     // Two lines at most, the second cut with an ellipsis.
     QString text = index.data(Qt::DisplayRole).toString();
     const QString artist = index.data(kArtistRole).toString();
