@@ -733,6 +733,17 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (!m_loading)
             QSettings().setValue("player/embedVideo", on);
     });
+    // Batın, 2026-11-08: the corner player coming up by itself on every
+    // switch got in the way; it is a choice now.
+    m_miniOnLeave = new ToggleSwitch;
+    addRow(window, "Corner player when you leave a video",
+           "On: going to another page keeps the video playing in a small window in the corner. "
+           "Off: it goes on with its sound, and the mini player button on the video's page still opens one.",
+           m_miniOnLeave);
+    connect(m_miniOnLeave, &QAbstractButton::toggled, this, [this](bool on) {
+        if (!m_loading)
+            QSettings().setValue("video/miniOnLeave", on);
+    });
 
     QVBoxLayout *downloads;
     auto *downloadsCard = card("Downloads", downloads);
@@ -1284,6 +1295,7 @@ void SettingsPage::load()
     m_history->setChecked(settings.value("history/keep", true).toBool());
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
     m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
+    m_miniOnLeave->setChecked(QSettings().value("video/miniOnLeave", false).toBool());
     m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));
     m_region->setCurrentIndex(qMax(0, m_region->findData(QSettings().value("search/region").toString().toUpper())));
     m_startup->setChecked(QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),

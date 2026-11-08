@@ -112,6 +112,7 @@ private:
     QComboBox *m_theme;
     QComboBox *m_region;
     QComboBox *m_layoutSwitch;
+    class ToggleSwitch *m_miniOnLeave;
     QComboBox *m_covers;
     ToggleSwitch *m_volumeNumber;
     ToggleSwitch *m_presenceSongs;

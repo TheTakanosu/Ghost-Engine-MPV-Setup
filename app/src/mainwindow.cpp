@@ -508,6 +508,7 @@ MainWindow::MainWindow()
     };
     m_videoPage->onMinimize = [this] {
         // Back to where the video was opened from, the video in the corner.
+        m_miniAsked = true;
         setVideoFullScreen(false);
         QWidget *back = m_beforeVideo && m_beforeVideo != m_videoPage ? m_beforeVideo.data() : nullptr;
         if (back)
@@ -5297,6 +5298,7 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
     rememberPlayed(path);
     m_nowPlaying->expectList(shuffle);
     m_miniClosed = false;
+    m_pictureAway = false;
     m_pendingPath = path;
     m_pendingOrder = order;
     // A list that never loads should not reorder a later one.
@@ -5411,6 +5413,8 @@ void MainWindow::showVideoPage()
     m_videoPage->setVolume(int(m_mpv.property("volume").toDouble()), m_mpv.property("mute").toBool());
     m_videoPage->setCinema(m_compact);
     m_miniClosed = false;
+    m_pictureAway = false;
+    m_miniAsked = false;
     if (m_pages->currentWidget() != m_videoPage) {
         m_beforeVideo = m_pages->currentWidget();
         m_videoPage->ignorePictureClicks();
@@ -5543,7 +5547,13 @@ void MainWindow::placeSurface()
     // "Mini video" plays where the now playing view's cover is, while the
     // view is open; else in the corner, as any video.
     const bool inPanel = video && !onPage && !minimized && panelVideo() && m_panel->isVisible();
-    const bool mini = video && !onPage && !inPanel && !m_miniClosed;
+    // Leaving the video's page for another page: the picture goes away and
+    // the sound goes on, unless the corner player was asked for (its button
+    // on the page, or Settings > Player).
+    if (video && !onPage && !inPanel && m_surfaceOnPage && !m_miniAsked &&
+        !QSettings().value("video/miniOnLeave", false).toBool())
+        m_pictureAway = true;
+    const bool mini = video && !onPage && !inPanel && !m_miniClosed && !m_pictureAway;
     QWidget *miniWindow = m_videoPage->miniWindow();
     if ((m_surfaceDrag || m_surfaceHeld) && (onPage || inPanel)) {
         // Put away until the edge is let go; the thumbnail stands in.
