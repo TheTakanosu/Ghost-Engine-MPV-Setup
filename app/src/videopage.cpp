@@ -1151,6 +1151,13 @@ QWidget *VideoPage::buildControls()
     m_seek->installEventFilter(this);
     m_time = new QLabel(QStringLiteral("--:-- / --:--"));
     m_time->setObjectName("videoTime");
+    // A stream on air (Batın, 2026-11-09): a red "LIVE" at its edge; paused
+    // or wound back, "Go live" takes it to what is on air now.
+    m_live = new QPushButton;
+    m_live->setCursor(Qt::PointingHandCursor);
+    m_live->setFlat(true);
+    m_live->hide();
+    connect(m_live, &QPushButton::clicked, this, [this] { if (onGoLive) onGoLive(); });
 
     // Subtitles, quality and speed open note menus, as YouTube's gear does.
     m_subs = glyphButton(QString(QChar(0xE7F0)), "Subtitles");
@@ -1226,6 +1233,8 @@ QWidget *VideoPage::buildControls()
     row->addWidget(m_volume);
     row->addSpacing(12);
     row->addWidget(m_time);
+    row->addSpacing(8);
+    row->addWidget(m_live);
     row->addStretch();
     auto *miniplayer = glyphButton(QString(), "Mini player (I)");
     static_cast<FlatButton *>(miniplayer)->setPip(true);
@@ -1357,9 +1366,29 @@ void VideoPage::setExpanded(bool expanded)
     QTimer::singleShot(0, this, &VideoPage::fitPlayer);
 }
 
+void VideoPage::setLive(bool live, bool behind)
+{
+    m_isLive = live;
+    m_live->setVisible(live);
+    if (!live)
+        return;
+    m_live->setText(behind ? QStringLiteral("●  Go live") : QStringLiteral("●  LIVE"));
+    m_live->setToolTip(behind ? QStringLiteral("Back to what is on air now") : QStringLiteral("Watching live"));
+    m_live->setEnabled(behind);
+    m_live->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: none; padding: 2px 6px;"
+                                         " font-weight: 700; color: %1; }"
+                                         "QPushButton:hover { color: #ffffff; }")
+                              .arg(behind ? QStringLiteral("#b0b0b0") : QStringLiteral("#ff4d4d")));
+}
+
 void VideoPage::setTimes(double position, double duration)
 {
     m_duration = duration;
+    // On air the end keeps moving: only how long it has been watched.
+    if (m_isLive) {
+        m_time->setText(clock(position));
+        return;
+    }
     m_time->setText(clock(position) + QStringLiteral(" / ") + clock(duration));
     if (!m_dragging)
         m_seek->setValue(duration > 0 && position >= 0 ? int(position / duration * kSeekSteps) : 0);

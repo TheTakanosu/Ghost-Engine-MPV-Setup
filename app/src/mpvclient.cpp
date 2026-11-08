@@ -11,6 +11,7 @@ const char *const kObserved[] = {
     "media-title", "pause", "time-pos", "duration", "volume",
     "playlist-pos", "playlist-count", "path", "user-data/ghost/source",
     "metadata/by-key/uploader", "playlist-path", "loop-playlist", "loop-file", "user-data/ghost/audio", "mute", "pid", "playlist", "track-list", "speed", "ytdl-format", "video-params/aspect", "user-data/ghost/video-on", "user-data/ghost/video-panel",
+    "user-data/ghost/live",   // livesync.lua: a stream on air
 };
 
 } // namespace

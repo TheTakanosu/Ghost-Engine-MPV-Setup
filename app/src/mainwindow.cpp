@@ -879,6 +879,37 @@ MainWindow::MainWindow()
         placeSurface();
     };
     m_chromeButtons << m_island;   // clicked, not a place to drag the window by
+
+    // A stream on air: behind its edge once paused or wound back; "Go live"
+    // opens it again, which always starts at what is on air now.
+    const auto showLive = [this] {
+        m_videoPage->setLive(m_mpv.property("user-data/ghost/live").toBool(), m_liveBehind);
+    };
+    connect(&m_mpv, &MpvClient::propertyChanged, this, [this, showLive](const QString &name) {
+        const bool live = m_mpv.property("user-data/ghost/live").toBool();
+        if (name == "user-data/ghost/live") {
+            m_liveBehind = false;
+            m_liveLast = -1;
+            showLive();
+        } else if (live && name == "pause" && m_mpv.property("pause").toBool() && !m_liveBehind) {
+            m_liveBehind = true;
+            showLive();
+        } else if (live && name == "time-pos") {
+            const double at = m_mpv.property("time-pos").toDouble();
+            if (m_liveLast >= 0 && at < m_liveLast - 1.5 && !m_liveBehind) {
+                m_liveBehind = true;
+                showLive();
+            }
+            m_liveLast = at;
+        }
+    });
+    m_videoPage->onGoLive = [this, showLive] {
+        m_liveBehind = false;
+        m_liveLast = -1;
+        showLive();
+        m_mpv.setProperty("pause", false);
+        m_mpv.command({"playlist-play-index", "current"});
+    };
     connect(m_pages, &QStackedWidget::currentChanged, m_island, [this] { m_island->refresh(); });
 
     // mpv's window lives over the whole window, not in the page, so it can
@@ -4441,9 +4472,14 @@ void MainWindow::applyLayoutColors()
                       int(a.blue() + (b.blue() - a.blue()) * t));
     };
     const theme::Palette &c = theme::c();
-    const QColor ground = mix(c.window, c.card, 0.33);   // Black: 18
-    const QColor page = mix(c.window, c.card, 0.85);     // Black: 24
-    const QColor raised = mix(c.card, c.raised, 0.6);    // Black: 32
+    // Dark themes step lighter towards the eye: ground, page, menu. Light
+    // ones the other way round: their "raised" is a darker hover grey, so the
+    // ground is the grey and the cards are white on it (worked out for Light
+    // before it was seen: the menu came out darker than the ground).
+    const bool light = c.window.lightness() > 128;
+    const QColor ground = light ? mix(c.base, c.window, 0.45) : mix(c.window, c.card, 0.33);   // Black 18, Light ~240
+    const QColor page = light ? c.card : mix(c.window, c.card, 0.85);                          // Black 24, Light 255
+    const QColor raised = light ? c.card : mix(c.card, c.raised, 0.6);                         // Black 32, Light 255
     // The library, the page and the now playing panel are all "#panel"-like
     // cards on the ground; the YouTube menu is a step lighter still.
     centralWidget()->setStyleSheet(QStringLiteral(

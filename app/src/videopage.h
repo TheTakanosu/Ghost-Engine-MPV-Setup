@@ -112,6 +112,8 @@ public:
     // tracks (for the subtitles menu), the height cap, the speed, the
     // volume and the picture's shape.
     void setTimes(double position, double duration);
+    // A stream on air: "LIVE" in red at its edge, "Go live" once behind.
+    void setLive(bool live, bool behind);
     void setPaused(bool paused);
     bool paused() const { return m_paused; }
     void setTracks(const QVariantList &tracks);
@@ -159,6 +161,7 @@ public:
     std::function<void()> onScreenMoved;   // screen() moved or changed size
     std::function<void()> onScrolled;      // the page scrolled: mpv's window must follow now
     std::function<void()> onMinimize;      // to the mini player
+    std::function<void()> onGoLive;        // back to a stream's live edge
     std::function<void()> onRestore;       // the mini player was clicked
     std::function<void()> onCloseMini;
     std::function<void(const QPoint &at)> onMiniMoved;   // dragged there
@@ -212,6 +215,8 @@ private:
     void showSeekTip(int value);
     QList<QWidget *> m_wideOnly;   // left out over the small picture in the now playing view
     QLabel *m_time;
+    QPushButton *m_live = nullptr;
+    bool m_isLive = false;
     QPushButton *m_mute;
     QSlider *m_volume;
     QPushButton *m_subs;

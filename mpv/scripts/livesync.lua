@@ -24,6 +24,11 @@ local function bitrate_for(formats)
     return best > 0 and math.floor(best * 1000) or nil
 end
 
+-- The app shows "LIVE" and "Go live" by this.
+mp.register_event("start-file", function()
+    mp.set_property_native("user-data/ghost/live", false)
+end)
+
 -- After ytdl_hook (on_load, 10): it has asked yt-dlp and left the answer.
 mp.add_hook("on_load", 11, function()
     local raw = mp.get_property("user-data/mpv/ytdl/json-subprocess-result", "")
@@ -43,6 +48,7 @@ mp.add_hook("on_load", 11, function()
     if not string.find(path, info.id, 1, true) then
         return
     end
+    mp.set_property_native("user-data/ghost/live", true)
     local manifest
     for _, f in ipairs(info.formats or {}) do
         if f.manifest_url and string.find(f.protocol or "", "m3u8", 1, true) then

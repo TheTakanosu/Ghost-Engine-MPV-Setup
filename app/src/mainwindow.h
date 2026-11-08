@@ -127,6 +127,8 @@ private:
     bool m_surfaceHeld = false;   // mpv's picture put away while a layout switch plays
     QWidget *m_mainPanel = nullptr;   // the page's card, darker in the YouTube layout
     QWidget *m_shadows = nullptr;     // the cards' shadows on the grey ground
+    bool m_liveBehind = false;   // a live stream paused or wound back
+    double m_liveLast = -1;
     class NowIsland *m_island = nullptr;   // "Now playing" in the top bar while a video plays off its page
     void applyLayoutColors();
     bool m_pictureAway = false;   // left the video's page: sound only, no corner player
