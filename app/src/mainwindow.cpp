@@ -3649,12 +3649,22 @@ class FloatingCard : public QWidget {
 public:
     using QWidget::QWidget;
     static constexpr int kShadow = 10;
+    // Raised (2026-11-08 trial): its shadow is drawn by the layer under
+    // the cards, the card fills its place and needs no hairline.
+    bool raisedLook = false;
+    QColor raisedFill;
 
 protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
+        if (raisedLook) {
+            QPainterPath card;
+            card.addRoundedRect(QRectF(rect()).adjusted(0, 0, -(kShadow - 2), 0), 16, 16);
+            p.fillPath(card, raisedFill);
+            return;
+        }
         // The card's top, bottom and left edges are the page card's and the
         // library's (Batın, 2026-11-08: they were 4 and 10 px off); the
         // shadow falls only to the right, towards the page.
@@ -3669,6 +3679,49 @@ protected:
         p.fillPath(card, theme::c().cardAlt);   // a step lighter than a card, off the darker page
         p.setPen(QPen(theme::c().line, 1));
         p.drawPath(card);
+    }
+};
+
+// The soft shadows under the raised cards, on the window's grey ground.
+// A layer of its own under everything, painted only when the cards move or
+// change size (no graphics effect redrawing a card on every scroll).
+class ShadowLayer : public QWidget {
+public:
+    explicit ShadowLayer(QWidget *ground) : QWidget(ground)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        ground->installEventFilter(this);
+        setGeometry(ground->rect());
+    }
+    std::function<QList<QRect>()> cards;   // in the ground's coordinates
+    void follow(QWidget *card) { card->installEventFilter(this); }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Resize || event->type() == QEvent::Move || event->type() == QEvent::Show ||
+            event->type() == QEvent::Hide) {
+            if (watched == parent())
+                setGeometry(parentWidget()->rect());
+            update();
+        }
+        return false;
+    }
+    void paintEvent(QPaintEvent *) override
+    {
+        if (!cards)
+            return;
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        constexpr int kSpread = 14;
+        for (const QRect &r : cards()) {
+            for (int i = kSpread; i > 0; --i) {
+                QPainterPath ring;
+                ring.addRoundedRect(QRectF(r).adjusted(-i * 0.7, -i * 0.4 + 3, i * 0.7, i + 3), 14 + i * 0.7, 14 + i * 0.7);
+                p.fillPath(ring, QColor(0, 0, 0, 7));
+            }
+        }
     }
 };
 
@@ -4357,16 +4410,60 @@ void MainWindow::applyLayoutColors()
     // page a step darker, between the window's colour and the bar's, with a
     // hairline round it, so the lighter floating menu stands off it. The
     // music layout keeps the theme as it is.
-    if (!m_mainPanel)
+    // Trial (Batın, 2026-11-08): a grey ground under the whole window and
+    // the cards a step lighter on it, each with a soft shadow, as if they
+    // stood off it. Black has no room for a shadow, so the ground goes grey.
+    if (!m_mainPanel || !centralWidget())
         return;
+    auto *menu = static_cast<FloatingCard *>(m_ytSidebar);
     if (!m_youtubeLayout) {
         m_mainPanel->setStyleSheet(QString());
+        centralWidget()->setStyleSheet(QString());
+        if (menu) {
+            menu->raisedLook = false;
+            menu->update();
+        }
+        if (m_shadows)
+            m_shadows->hide();
         return;
     }
-    const QColor w = theme::window(), b = theme::c().base;
-    const QColor page((w.red() + b.red()) / 2, (w.green() + b.green()) / 2, (w.blue() + b.blue()) / 2);
-    m_mainPanel->setStyleSheet(QStringLiteral("QWidget#panel { background: %1; border: 1px solid %2; border-radius: 12px; }")
-                                   .arg(page.name(), theme::c().lineSoft.name()));
+    const auto mix = [](const QColor &a, const QColor &b, double t) {
+        return QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
+                      int(a.blue() + (b.blue() - a.blue()) * t));
+    };
+    const theme::Palette &c = theme::c();
+    const QColor ground = mix(c.window, c.card, 0.33);   // Black: 18
+    const QColor page = mix(c.window, c.card, 0.85);     // Black: 24
+    const QColor raised = mix(c.card, c.raised, 0.6);    // Black: 32
+    centralWidget()->setStyleSheet(QStringLiteral(
+        "QWidget#central, QWidget#topBar, QWidget#nowPlaying { background: %1; }"
+        "QSplitter::handle { background: transparent; }").arg(ground.name()));
+    m_mainPanel->setStyleSheet(QStringLiteral("QWidget#panel { background: %1; border-radius: 12px; }").arg(page.name()));
+    if (menu) {
+        menu->raisedLook = true;
+        menu->raisedFill = raised;
+        menu->update();
+    }
+    if (!m_shadows) {
+        auto *layer = new ShadowLayer(centralWidget());
+        layer->cards = [this] {
+            QList<QRect> out;
+            QWidget *ground = centralWidget();
+            if (m_ytSidebar && m_ytSidebar->isVisible())
+                out << QRect(m_ytSidebar->mapTo(ground, QPoint(0, 0)),
+                             m_ytSidebar->size() - QSize(FloatingCard::kShadow - 2, 0));
+            if (m_mainPanel->isVisible())
+                out << QRect(m_mainPanel->mapTo(ground, QPoint(0, 0)), m_mainPanel->size());
+            return out;
+        };
+        layer->follow(m_mainPanel);
+        if (m_ytSidebar)
+            layer->follow(m_ytSidebar);
+        m_shadows = layer;
+    }
+    m_shadows->show();
+    m_shadows->lower();
+    m_shadows->update();
 }
 
 void MainWindow::holdSurfaceWhile(QObject *animation)
