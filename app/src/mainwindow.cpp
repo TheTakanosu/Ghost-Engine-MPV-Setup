@@ -5545,7 +5545,7 @@ void MainWindow::placeSurface()
     const bool inPanel = video && !onPage && !minimized && panelVideo() && m_panel->isVisible();
     const bool mini = video && !onPage && !inPanel && !m_miniClosed;
     QWidget *miniWindow = m_videoPage->miniWindow();
-    if ((m_surfaceDrag && (onPage || inPanel)) || (m_surfaceHeld && video)) {
+    if ((m_surfaceDrag || m_surfaceHeld) && (onPage || inPanel)) {
         // Put away until the edge is let go; the thumbnail stands in.
         surface->setVisible(false);
         m_videoPage->hideMini();
@@ -5594,8 +5594,11 @@ void MainWindow::placeSurface()
             miniWindow->setGeometry(QRect(at, size));
         m_videoPage->setSurfaceCorner(0);   // the window's own corners are round
         m_videoPage->setSurfaceVisibleArea(QRect());
-        miniWindow->show();
+        // While a layout switch plays the corner player waits, hidden with
+        // the picture in it: put away on its own the picture came back for
+        // a moment in the window's top-left corner (Batin, 2026-11-08).
         surface->place(miniWindow, QRect(QPoint(0, 0), miniWindow->size()));
+        miniWindow->setVisible(!m_surfaceHeld);
     } else {
         m_videoPage->hideMini();
     }
