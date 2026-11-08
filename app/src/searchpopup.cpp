@@ -194,6 +194,7 @@ void SearchPopup::refresh()
     url.setQuery(query);
     QNetworkRequest request(url);
     request.setTransferTimeout(4000);
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);   // a dead HTTP/2 connection over a tunnel stalls every request (2026-11-08)
     QNetworkReply *reply = m_net.get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, serial] {
         reply->deleteLater();

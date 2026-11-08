@@ -244,7 +244,7 @@ QString windowsRegion()
 Client::Client(QObject *parent) : QObject(parent) {}
 
 void Client::post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done,
-                  bool youtube)
+                  bool youtube, bool retry)
 {
     // YouTube Music and YouTube answer the same interface, each to its own
     // web client.
@@ -253,7 +253,13 @@ void Client::post(const QString &endpoint, const QJsonObject &body, std::functio
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Origin", ("https://" + host).toLatin1());
     request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
-    request.setTransferTimeout(15000);
+    // HTTP/1.1, not HTTP/2: over a tunnel (Batın's sing-box) the one shared
+    // HTTP/2 connection went dead and every later request waited on it with
+    // no answer; searches came back empty and live checks never landed
+    // (2026-11-08). On 1.1 each request has its own connection, and a
+    // failed one is tried once more on a fresh connection.
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    request.setTransferTimeout(retry ? 15000 : 8000);
     QJsonObject client = youtube
         ? QJsonObject{{"clientName", "WEB"}, {"clientVersion", "2.20251101.00.00"}, {"hl", "en"}}
         : QJsonObject{{"clientName", "WEB_REMIX"}, {"clientVersion", "1.20241023.01.00"}, {"hl", "en"}};
@@ -262,9 +268,21 @@ void Client::post(const QString &endpoint, const QJsonObject &body, std::functio
     QJsonObject full = body;
     full.insert("context", QJsonObject{{"client", client}});
     QNetworkReply *reply = m_net.post(request, QJsonDocument(full).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [reply, done] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, endpoint, body, done, youtube, retry] {
         reply->deleteLater();
-        done(reply->error() == QNetworkReply::NoError ? QJsonDocument::fromJson(reply->readAll()).object() : QJsonObject());
+        if (reply->error() == QNetworkReply::NoError) {
+            done(QJsonDocument::fromJson(reply->readAll()).object());
+            return;
+        }
+        // A server's own "no" (4xx/5xx) is not tried again; a connection
+        // that broke or never answered is, once, on a new one.
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (!retry && status == 0) {
+            m_net.clearConnectionCache();
+            post(endpoint, body, done, youtube, true);
+            return;
+        }
+        done(QJsonObject());
     });
 }
 
@@ -441,6 +459,7 @@ void Client::channelFeed(const QString &channelId, std::function<void(QVector<It
     QNetworkRequest request(QUrl(QStringLiteral("https://www.youtube.com/feeds/videos.xml?channel_id=") + channelId));
     request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
     request.setTransferTimeout(15000);
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
     QNetworkReply *reply = m_net.get(request);
     connect(reply, &QNetworkReply::finished, this, [reply, channelId, done] {
         reply->deleteLater();

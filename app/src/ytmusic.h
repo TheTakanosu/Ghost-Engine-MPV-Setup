@@ -107,7 +107,7 @@ public:
 
 private:
     void post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done,
-              bool youtube = false);
+              bool youtube = false, bool retry = false);
     void morePages(PlaylistPage page, const QString &token, int pages, std::function<void(PlaylistPage)> done);
 
     QNetworkAccessManager m_net;
