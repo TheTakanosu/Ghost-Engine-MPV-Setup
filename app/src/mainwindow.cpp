@@ -2947,6 +2947,14 @@ void MainWindow::openPlayingList()
     // window: that page is where it is brought back from.
     if ((m_mpvEmbedded || m_videoPoppedOut) && m_mpv.connected() &&
         (!m_mpv.property("user-data/ghost/audio").toBool() || songVideo())) {
+        // A YouTube video seen from the music layout: its page belongs to
+        // the YouTube layout, so the switch comes first (Batın, 2026-11-08:
+        // the page opened among the music menus). A song's video stays.
+        const bool youtubeVideo = !m_mpv.property("user-data/ghost/audio").toBool();
+        if (youtubeVideo && !m_youtubeLayout) {
+            setYouTubeLayout(true, true, [this] { showVideoPage(); });
+            return;
+        }
         showVideoPage();
         return;
     }
@@ -4077,7 +4085,7 @@ void MainWindow::showFollowing(const QString &onlyChannel)
                 return;
             }
             // "5 hours ago", "Streamed 2 weeks ago": about when, for the order.
-            static const QRegularExpression age(QStringLiteral("(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago"));
+            static const QRegularExpression age(QStringLiteral("(\\d+)\\s+(second|minute|hour|day|week|month|year)s?\\s+ago"));
             const qint64 now = QDateTime::currentSecsSinceEpoch();
             for (ytmusic::Item &it : page.videos) {
                 it.artist = page.name.isEmpty() ? channelName : page.name;
@@ -4303,7 +4311,7 @@ private:
 
 } // namespace
 
-void MainWindow::setYouTubeLayout(bool youtube, bool animate)
+void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then)
 {
     // How the layouts change: the ghost intro (default), a slide, or at once.
     const QString style = QSettings().value("look/layoutSwitch", "ghost").toString();
@@ -4349,6 +4357,8 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate)
             m_searchPage->setYouTubeMode(false);
         showHome();
     }
+    if (then)
+        then();
     if (before.isNull())
         return;
     QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);

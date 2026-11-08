@@ -121,7 +121,9 @@ private:
     // Two apps in one: the music layout (library, lyrics, artists) and the
     // YouTube one (its own menu, home, channels). The top bar's video button
     // goes from one to the other, the new one sliding in.
-    void setYouTubeLayout(bool youtube, bool animate);
+    // `then`: a page to open in the new layout (instead of its home), before
+    // the switch's animation takes its picture of it.
+    void setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then = {});
     QWidget *buildYouTubeSidebar();
     void fillYouTubeSidebar();
     void showVideoHistory();

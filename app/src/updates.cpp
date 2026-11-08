@@ -373,6 +373,14 @@ const QList<QPair<QString, QStringList>> &allNotes()
             "Keyboard shortcuts page (Ctrl+/): change any key, mouse back/forward buttons included.",
             "Settings: how far the arrow keys seek, subtitles on or off with your language order, and opening Ghost Engine when Windows starts.",
         }},
+        {QStringLiteral("1.4.0"), {
+            "A YouTube side: the video button at the top switches between Music and YouTube, each with its own menu. Home, History, Watch later and your video lists.",
+            "Search all of YouTube, also from the middle of the window (Ctrl+K), with what you searched before and suggestions. Settings > Appearance picks the country results are ranked for.",
+            "Follow channels: right-click a video or use Follow under it. Following shows their latest videos, a channel's picture opens its page, and a channel live now is marked in red.",
+            "The switch between Music and YouTube plays a short ghost intro. Settings > Appearance can make it a slide or instant.",
+            "A video whose picture stopped while the sound went on now asks for its picture again by itself.",
+            "Lists and sliders in Settings no longer change when the page is scrolled over them.",
+        }},
     };
     return notes;
 }
