@@ -124,6 +124,8 @@ private:
     // `then`: a page to open in the new layout (instead of its home), before
     // the switch's animation takes its picture of it.
     void setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then = {});
+    bool m_surfaceHeld = false;   // mpv's picture put away while a layout switch plays
+    void holdSurfaceWhile(QObject *animation);
     QWidget *buildYouTubeSidebar();
     void fillYouTubeSidebar();
     void showVideoHistory();

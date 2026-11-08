@@ -4191,6 +4191,40 @@ void MainWindow::showVideoHistory()
 
 namespace {
 
+// A widget as it is on screen with mpv's picture in it (a widget's own grab
+// sees that window black), and only this app: Windows draws the window for
+// us (PrintWindow, full content), so a window lying over it (Discord, a
+// browser) is not in the picture as it was with a screen grab.
+QPixmap grabWithVideo(QWidget *widget)
+{
+#ifndef PW_RENDERFULLCONTENT
+#define PW_RENDERFULLCONTENT 0x00000002
+#endif
+    QWidget *top = widget->window();
+    const HWND hwnd = reinterpret_cast<HWND>(top->winId());
+    RECT r;
+    if (!GetWindowRect(hwnd, &r))
+        return {};
+    const int w = r.right - r.left, h = r.bottom - r.top;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, w, h);
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    const bool drawn = PrintWindow(hwnd, dc, PW_RENDERFULLCONTENT);
+    SelectObject(dc, old);
+    const QImage whole = drawn ? QImage::fromHBITMAP(bitmap) : QImage();
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+    if (whole.isNull())
+        return {};
+    const qreal dpr = top->devicePixelRatioF();
+    const QPoint at = (widget->mapToGlobal(QPoint(0, 0)) * dpr) - QPoint(r.left, r.top);
+    QPixmap part = QPixmap::fromImage(whole.copy(QRect(at, widget->size() * dpr)));
+    part.setDevicePixelRatio(dpr);
+    return part;
+}
+
 // The app's ghost (assets/make_icon.py's shape, on its 256 grid) as a path:
 // drawn, not a picture, so it is sharp at any size and takes the accent.
 QPainterPath ghostPath(qreal shift)
@@ -4311,6 +4345,19 @@ private:
 
 } // namespace
 
+void MainWindow::holdSurfaceWhile(QObject *animation)
+{
+    // mpv's picture is a window over the app that no widget can lie on
+    // (it is put back on top whenever the page moves), so while the switch
+    // plays it is put away, the sound going on, and comes back after.
+    m_surfaceHeld = true;
+    placeSurface();
+    connect(animation, &QObject::destroyed, this, [this] {
+        m_surfaceHeld = false;
+        placeSurface();
+    });
+}
+
 void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then)
 {
     // How the layouts change: the ghost intro (default), a slide, or at once.
@@ -4326,10 +4373,9 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     const bool overVideo = videoShowing();
     if (animate && style != QLatin1String("instant") && isVisible() && !isMinimized()) {
         if (overVideo) {
-            if (QScreen *screen = m_split->screen()) {
-                const QPoint at = m_split->mapToGlobal(QPoint(0, 0)) - screen->geometry().topLeft();
-                before = screen->grabWindow(0, at.x(), at.y(), m_split->width(), m_split->height());
-            }
+            before = grabWithVideo(m_split);
+            if (before.isNull())
+                before = m_split->grab();
         } else {
             before = m_split->grab();
         }
@@ -4364,18 +4410,20 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
     const QPixmap after = m_split->grab();
     if (!slideStyle) {
-        auto *intro = new GhostIntro(m_split->parentWidget(), before, after, youtube ? "YouTube" : "Music");
+        // A child of the window itself, as mpv's picture is: only a sibling
+        // can be raised over it.
+        auto *intro = new GhostIntro(this, before, after, youtube ? "YouTube" : "Music");
         if (overVideo)
-            intro->setAttribute(Qt::WA_NativeWindow);
-        intro->setGeometry(m_split->geometry());
+            holdSurfaceWhile(intro);
+        intro->setGeometry(QRect(m_split->mapTo(this, QPoint(0, 0)), m_split->size()));
         intro->show();
         intro->raise();
         return;
     }
-    auto *cover = new QWidget(m_split->parentWidget());
+    auto *cover = new QWidget(this);
     if (overVideo)
-        cover->setAttribute(Qt::WA_NativeWindow);
-    cover->setGeometry(m_split->geometry());
+        holdSurfaceWhile(cover);
+    cover->setGeometry(QRect(m_split->mapTo(this, QPoint(0, 0)), m_split->size()));
     cover->setAttribute(Qt::WA_TransparentForMouseEvents);
     const int w = m_split->width();
     const int dir = youtube ? 1 : -1;   // YouTube comes in from the right, music from the left
@@ -5497,7 +5545,7 @@ void MainWindow::placeSurface()
     const bool inPanel = video && !onPage && !minimized && panelVideo() && m_panel->isVisible();
     const bool mini = video && !onPage && !inPanel && !m_miniClosed;
     QWidget *miniWindow = m_videoPage->miniWindow();
-    if (m_surfaceDrag && (onPage || inPanel)) {
+    if ((m_surfaceDrag && (onPage || inPanel)) || (m_surfaceHeld && video)) {
         // Put away until the edge is let go; the thumbnail stands in.
         surface->setVisible(false);
         m_videoPage->hideMini();
