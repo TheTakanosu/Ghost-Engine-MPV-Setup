@@ -111,6 +111,7 @@ private:
     ToggleSwitch *m_embedVideo;
     QComboBox *m_theme;
     QComboBox *m_region;
+    QComboBox *m_layoutSwitch;
     QComboBox *m_covers;
     ToggleSwitch *m_volumeNumber;
     ToggleSwitch *m_presenceSongs;

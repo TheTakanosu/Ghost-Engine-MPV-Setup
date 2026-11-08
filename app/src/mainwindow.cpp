@@ -48,6 +48,8 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <cmath>
+#include <memory>
 #include <QPainterPath>
 #include <QTextEdit>
 #include <QPlainTextEdit>
@@ -3658,6 +3660,8 @@ protected:
 
 } // namespace
 
+static QString ytProfileSheet(bool compact);
+
 QWidget *MainWindow::buildYouTubeSidebar()
 {
     auto *panel = new FloatingCard;
@@ -3757,9 +3761,19 @@ QWidget *MainWindow::buildYouTubeSidebar()
     m_ytChannels->setFrameShape(QFrame::NoFrame);
     m_ytChannels->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_ytChannels->setMouseTracking(true);
-    theme::style(m_ytChannels, listStyle);
+    // No colour on the rows themselves, so a live channel's red shows.
+    theme::style(m_ytChannels, QString(listStyle)
+                                   .replace(QStringLiteral("QListWidget { background: transparent; }"),
+                                            QStringLiteral("QListWidget { background: transparent; color: @text; }"))
+                                   .replace(QStringLiteral("border-radius: 8px; color: @text; }"), QStringLiteral("border-radius: 8px; }")));
     connect(m_ytChannels, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         const QString id = item->data(Qt::UserRole).toString();
+        // On air now: the click watches the stream.
+        if (m_liveNow.contains(id) && m_searchPage->onPlay) {
+            const ytmusic::Item live = m_liveNow.value(id);
+            m_searchPage->onPlay({live}, live.artist.isEmpty() ? item->text() : live.artist, 0, false, false);
+            return;
+        }
         if (!id.isEmpty()) {
             showYouTube();
             for (QPushButton *b : m_ytNav)
@@ -3775,6 +3789,14 @@ QWidget *MainWindow::buildYouTubeSidebar()
             return;
         const QString id = item->data(Qt::UserRole).toString(), name = item->text();
         QMenu menu(this);
+        if (m_liveNow.contains(id))
+            menu.addAction(QStringLiteral("Go to %1").arg(name), this, [this, id, name, item] {
+                showYouTube();
+                for (QPushButton *b : m_ytNav)
+                    b->setChecked(false);
+                m_ytChannels->setCurrentItem(item);
+                m_searchPage->showChannel(id, name);
+            });
         menu.addAction(QStringLiteral("Unfollow %1").arg(name), this, [this, id, name] { setFollowing(id, name, false); });
         menu.exec(m_ytChannels->viewport()->mapToGlobal(pos));
     });
@@ -3785,10 +3807,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
     m_ytProfile = new QPushButton;
     m_ytProfile->setCursor(Qt::PointingHandCursor);
     m_ytProfile->setIconSize(QSize(28, 28));
-    theme::style(m_ytProfile, QStringLiteral(
-        "QPushButton { text-align: left; padding: 6px 10px; min-height: 40px; border: none; border-radius: 12px;"
-        " background: @cardAlt; color: @textBright; font-weight: 600; }"
-        "QPushButton:hover { background: @cardAltHover; }"));
+    theme::style(m_ytProfile, ytProfileSheet(false));
     connect(m_ytProfile, &QPushButton::clicked, this, &MainWindow::showProfile);
     // Folded to icons, the lists go and this keeps the icons at the top.
     auto *filler = new QWidget;
@@ -3799,6 +3818,16 @@ QWidget *MainWindow::buildYouTubeSidebar()
     box->addSpacing(8);
     box->addWidget(m_ytProfile);
     return panel;
+}
+
+static QString ytProfileSheet(bool compact)
+{
+    return QStringLiteral(
+               "QPushButton { text-align: %1; padding: 6px %2px; min-height: 40px; border: none; border-radius: 12px;"
+               " background: @cardAlt; color: @textBright; font-weight: 600; }"
+               "QPushButton:hover { background: @cardAltHover; }")
+        .arg(compact ? QStringLiteral("center") : QStringLiteral("left"))
+        .arg(compact ? 0 : 10);
 }
 
 void MainWindow::setYtCompact(bool compact)
@@ -3818,8 +3847,11 @@ void MainWindow::setYtCompact(bool compact)
         b->setStyleSheet(b->styleSheet().replace(compact ? QStringLiteral("text-align: left") : QStringLiteral("text-align: center"),
                                                  compact ? QStringLiteral("text-align: center") : QStringLiteral("text-align: left")));
     }
-    if (m_ytProfile)
+    if (m_ytProfile) {
         m_ytProfile->setText(compact ? QString() : m_profileButton->toolTip());
+        // The face alone sits in the middle (Batın, 2026-11-08: it was off to the left).
+        theme::style(m_ytProfile, ytProfileSheet(compact));
+    }
 }
 
 void MainWindow::fillYouTubeSidebar()
@@ -3851,6 +3883,83 @@ void MainWindow::fillYouTubeSidebar()
         auto *row = new QListWidgetItem("None yet: Follow on a video's channel card");
         row->setFlags(Qt::NoItemFlags);
         m_ytChannels->addItem(row);
+    }
+    markLive();
+    // Who is on air: now, then every few minutes while the YouTube layout
+    // is on screen (Batın, 2026-11-08: a live channel's name in red).
+    if (!m_liveTimer) {
+        m_liveTimer = new QTimer(this);
+        m_liveTimer->setInterval(4 * 60 * 1000);
+        connect(m_liveTimer, &QTimer::timeout, this, [this] {
+            if (m_ytSidebar && m_ytSidebar->isVisible() && !isMinimized())
+                checkLive();
+        });
+        m_liveTimer->start();
+        checkLive();
+    }
+}
+
+void MainWindow::checkLive()
+{
+    const auto channels = following();
+    const int serial = ++m_liveSerial;
+    auto found = std::make_shared<QHash<QString, ytmusic::Item>>();
+    auto left = std::make_shared<int>(channels.size());
+    if (channels.isEmpty()) {
+        m_liveNow.clear();
+        markLive();
+        return;
+    }
+    for (const auto &[id, name] : channels) {
+        m_ytClient.liveNow(id, [this, serial, found, left, id = id](const ytmusic::Item &live) {
+            if (serial != m_liveSerial)
+                return;
+            if (!live.id.isEmpty())
+                found->insert(id, live);
+            if (--*left == 0) {
+                m_liveNow = *found;
+                markLive();
+            }
+        });
+    }
+}
+
+void MainWindow::markLive()
+{
+    // A small red LIVE pill before the name, drawn once.
+    static const QIcon pill = [] {
+        const qreal dpr = 2;
+        QPixmap pm(QSize(34, 16) * dpr);
+        pm.setDevicePixelRatio(dpr);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xE5, 0x2B, 0x2B));
+        p.drawRoundedRect(QRectF(0, 1, 34, 14), 4, 4);
+        QFont f(QStringLiteral("Segoe UI"));
+        f.setPixelSize(10);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(Qt::white);
+        p.drawText(QRectF(0, 1, 34, 14), Qt::AlignCenter, QStringLiteral("LIVE"));
+        return QIcon(pm);
+    }();
+    m_ytChannels->setIconSize(QSize(34, 16));
+    for (int i = 0; i < m_ytChannels->count(); ++i) {
+        QListWidgetItem *row = m_ytChannels->item(i);
+        const QString id = row->data(Qt::UserRole).toString();
+        if (id.isEmpty())
+            continue;
+        if (m_liveNow.contains(id)) {
+            row->setIcon(pill);
+            row->setForeground(QColor(0xFF, 0x4D, 0x4D));
+            row->setToolTip(QStringLiteral("Live now: %1\nClick to watch, right-click for the channel").arg(m_liveNow.value(id).title));
+        } else {
+            row->setIcon(QIcon());
+            row->setData(Qt::ForegroundRole, QVariant());
+            row->setToolTip("Click for its videos, right-click to unfollow");
+        }
     }
 }
 
@@ -3885,8 +3994,20 @@ void MainWindow::setFollowing(const QString &channelId, const QString &name, boo
         lines.prepend(channelId + '\t' + (name.isEmpty() ? channelId : name));
     QSettings().setValue("youtube/following", lines);
     toast(on ? QStringLiteral("Following %1").arg(name) : QStringLiteral("Unfollowed %1").arg(name));
+    m_liveNow.remove(channelId);
     fillYouTubeSidebar();
     updateFollowButton();
+    // A channel just followed may be on air now: ask about it at once.
+    if (on)
+        m_ytClient.liveNow(channelId, [this, channelId](const ytmusic::Item &live) {
+            bool still = false;
+            for (const auto &[id, n] : following())
+                still = still || id == channelId;
+            if (!live.id.isEmpty() && still) {
+                m_liveNow.insert(channelId, live);
+                markLive();
+            }
+        });
 }
 
 void MainWindow::showFollowing(const QString &onlyChannel)
@@ -4060,12 +4181,137 @@ void MainWindow::showVideoHistory()
     m_searchPage->showVideos("History", items);
 }
 
+namespace {
+
+// The app's ghost (assets/make_icon.py's shape, on its 256 grid) as a path:
+// drawn, not a picture, so it is sharp at any size and takes the accent.
+QPainterPath ghostPath(qreal shift)
+{
+    static const QPointF body[] = {{56, 226}, {56, 96}, {104, 40}, {160, 40}, {212, 92}, {212, 196}, {198, 232},
+                                   {176, 206}, {154, 236}, {132, 208}, {110, 236}, {88, 208}};
+    static const QPointF eyes[2][4] = {{{90, 106}, {120, 96}, {120, 138}, {90, 148}},
+                                       {{140, 96}, {170, 106}, {170, 148}, {140, 138}}};
+    QPainterPath path;
+    QPolygonF outline;
+    for (const QPointF &p : body)
+        outline << p + QPointF(shift, shift);
+    path.addPolygon(outline);
+    path.closeSubpath();
+    for (const auto &eye : eyes) {
+        QPolygonF hole;
+        for (const QPointF &p : eye)
+            hole << p + QPointF(shift, shift);
+        QPainterPath cut;
+        cut.addPolygon(hole);
+        cut.closeSubpath();
+        path = path.subtracted(cut);
+    }
+    return path;
+}
+
+// The switch between the two layouts as a short intro, the way a game or a
+// TV app opens on its mark (Batın, 2026-11-08): the ghost comes up over the
+// old page, floats a moment with the layout's name, and grows away to show
+// the new one. ~0.75 s; the pages under it are pictures taken before.
+class GhostIntro : public QWidget
+{
+public:
+    GhostIntro(QWidget *parent, const QPixmap &before, const QPixmap &after, const QString &name)
+        : QWidget(parent), m_before(before), m_after(after), m_name(name)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        auto *run = new QVariantAnimation(this);
+        run->setDuration(760);
+        run->setStartValue(0.0);
+        run->setEndValue(1.0);
+        connect(run, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            m_t = v.toReal();
+            update();
+        });
+        connect(run, &QAbstractAnimation::finished, this, &QObject::deleteLater);
+        run->start();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.drawPixmap(0, 0, m_t < 0.45 ? m_before : m_after);
+        // The veil: up fast, held, away at the end.
+        const qreal veil = m_t < 0.22 ? m_t / 0.22 : m_t > 0.68 ? qMax(0.0, 1 - (m_t - 0.68) / 0.32) : 1.0;
+        QColor back = theme::window();
+        back.setAlphaF(veil);
+        p.fillRect(rect(), back);
+        // The ghost: pops in (a little overshoot), floats, grows away.
+        qreal scale, alpha;
+        if (m_t < 0.4) {
+            const qreal k = m_t / 0.4;
+            scale = 0.55 + 0.45 * QEasingCurve(QEasingCurve::OutBack).valueForProgress(k);
+            alpha = qMin(1.0, k * 1.6);
+        } else if (m_t < 0.66) {
+            scale = 1.0;
+            alpha = 1.0;
+        } else {
+            const qreal k = (m_t - 0.66) / 0.34;
+            scale = 1.0 + 0.7 * QEasingCurve(QEasingCurve::InCubic).valueForProgress(k);
+            alpha = 1 - k;
+        }
+        const qreal side = qMin(width(), height()) * 0.22;
+        const qreal floatY = std::sin(m_t * 3.14159265358979 * 2) * side * 0.04;
+        const QPointF centre(width() / 2.0, height() / 2.0 - side * 0.18 + floatY);
+        p.save();
+        p.setOpacity(alpha);
+        // A soft glow of the accent behind it.
+        QColor glow = theme::accent();
+        QRadialGradient halo(centre, side * scale);
+        glow.setAlphaF(0.28);
+        halo.setColorAt(0, glow);
+        glow.setAlphaF(0);
+        halo.setColorAt(1, glow);
+        p.setPen(Qt::NoPen);
+        p.setBrush(halo);
+        p.drawEllipse(centre, side * scale, side * scale);
+        p.translate(centre);
+        p.rotate(std::sin(m_t * 3.14159265358979 * 3) * 4 * (1 - m_t));   // a small sway as it moves
+        p.scale(side * scale / 256.0, side * scale / 256.0);
+        p.translate(-134, -138);
+        p.setBrush(QColor(42, 46, 48));
+        p.drawPath(ghostPath(-8));
+        p.setBrush(theme::accent());
+        p.drawPath(ghostPath(0));
+        p.restore();
+        // The layout's name under it, in only while the ghost holds.
+        const qreal word = m_t < 0.25 ? 0 : m_t < 0.4 ? (m_t - 0.25) / 0.15 : m_t < 0.62 ? 1 : qMax(0.0, 1 - (m_t - 0.62) / 0.12);
+        if (word > 0) {
+            p.setOpacity(word);
+            QFont f = font();
+            f.setPixelSize(qMax(14, int(side * 0.16)));
+            f.setWeight(QFont::DemiBold);
+            f.setLetterSpacing(QFont::AbsoluteSpacing, 1.5);
+            p.setFont(f);
+            p.setPen(theme::c().textBright);
+            p.drawText(QRectF(0, centre.y() + side * 0.62, width(), side * 0.4), Qt::AlignHCenter | Qt::AlignTop, m_name);
+        }
+    }
+
+private:
+    QPixmap m_before, m_after;
+    QString m_name;
+    qreal m_t = 0;
+};
+
+} // namespace
+
 void MainWindow::setYouTubeLayout(bool youtube, bool animate)
 {
+    // How the layouts change: the ghost intro (default), a slide, or at once.
+    const QString style = QSettings().value("look/layoutSwitch", "ghost").toString();
+    const bool slideStyle = style == QLatin1String("slide");
     // The page as it is, to slide away; not over a video, whose picture is a
     // window of its own the slide could not carry.
     QPixmap before;
-    if (animate && isVisible() && !videoShowing())
+    if (animate && style != QLatin1String("instant") && isVisible() && !videoShowing())
         before = m_split->grab();
     // Each layout keeps its own left width: the library's covers and the
     // YouTube menu are folded or opened apart.
@@ -4094,6 +4340,13 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate)
         return;
     QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
     const QPixmap after = m_split->grab();
+    if (!slideStyle) {
+        auto *intro = new GhostIntro(m_split->parentWidget(), before, after, youtube ? "YouTube" : "Music");
+        intro->setGeometry(m_split->geometry());
+        intro->show();
+        intro->raise();
+        return;
+    }
     auto *cover = new QWidget(m_split->parentWidget());
     cover->setGeometry(m_split->geometry());
     cover->setAttribute(Qt::WA_TransparentForMouseEvents);

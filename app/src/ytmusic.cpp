@@ -412,6 +412,30 @@ void Client::channelVideos(const QString &channelId, const QString &next, std::f
     }, true);
 }
 
+void Client::liveNow(const QString &channelId, std::function<void(Item)> done)
+{
+    // "EgdzdHJlYW1z8gYECgJ6AA==" is the channel page's Live tab; a stream on
+    // air now carries the red LIVE badge on its picture.
+    post("browse", {{"browseId", channelId}, {"params", "EgdzdHJlYW1z8gYECgJ6AA=="}}, [channelId, done](const QJsonObject &answer) {
+        for (const QJsonObject &row : all(answer, "lockupViewModel")) {
+            bool live = false;
+            for (const QJsonObject &badge : all(row.value("contentImage").toObject(), "thumbnailBadgeViewModel"))
+                if (badge.value("badgeStyle").toString() == QLatin1String("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE"))
+                    live = true;
+            if (!live)
+                continue;
+            Item item = lockupItem(row, false);
+            item.channelId = channelId;
+            item.duration.clear();
+            if (!item.id.isEmpty()) {
+                done(item);
+                return;
+            }
+        }
+        done(Item());
+    }, true);
+}
+
 void Client::channelFeed(const QString &channelId, std::function<void(QVector<Item>)> done)
 {
     QNetworkRequest request(QUrl(QStringLiteral("https://www.youtube.com/feeds/videos.xml?channel_id=") + channelId));

@@ -99,6 +99,8 @@ public:
     // The channel's Videos tab, every upload page by page (~30 a page):
     // `next` empty for the first page with the channel's header.
     void channelVideos(const QString &channelId, const QString &next, std::function<void(ChannelPage)> done);
+    // The channel's stream on air now, or an empty item (no id) when none.
+    void liveNow(const QString &channelId, std::function<void(Item)> done);
 
     // The region results are ranked for (Turkish songs first in Turkey).
     void setRegion(const QString &countryCode) { m_region = countryCode; }

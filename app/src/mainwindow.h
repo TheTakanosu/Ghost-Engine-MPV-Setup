@@ -74,6 +74,11 @@ private:
     bool m_ytCompact = false;
     void setYtCompact(bool compact);
     ytmusic::Client m_ytClient;   // channel feeds for Following
+    QHash<QString, ytmusic::Item> m_liveNow;   // followed channel id -> its stream on air
+    class QTimer *m_liveTimer = nullptr;
+    int m_liveSerial = 0;
+    void checkLive();
+    void markLive();
     QWidget *buildHome();
     QWidget *buildPlaylistPage();
     QListWidget *makeShelf();

@@ -809,6 +809,18 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         m_region->setMaxVisibleItems(16);
         m_region->setMinimumWidth(190);
     }
+    m_layoutSwitch = new QComboBox;
+    m_layoutSwitch->addItem("Ghost intro", "ghost");
+    m_layoutSwitch->addItem("Slide", "slide");
+    m_layoutSwitch->addItem("Instant", "instant");
+    m_layoutSwitch->setMinimumWidth(190);
+    addRow(look, "Music and YouTube switch",
+           "How the video button changes the layout. Ghost intro: the ghost comes up for a moment. "
+           "Slide: the new layout slides in. Instant: no animation at all.", m_layoutSwitch);
+    connect(m_layoutSwitch, &QComboBox::currentIndexChanged, this, [this] {
+        if (!m_loading)
+            QSettings().setValue("look/layoutSwitch", m_layoutSwitch->currentData().toString());
+    });
     addRow(look, "Search region",
            "The country YouTube ranks searches and the YouTube home page for. What you type matters more, "
            "so it shows most in short or English searches.", m_region);
@@ -1230,6 +1242,7 @@ void SettingsPage::load()
     m_history->setChecked(settings.value("history/keep", true).toBool());
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
     m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
+    m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));
     m_region->setCurrentIndex(qMax(0, m_region->findData(QSettings().value("search/region").toString().toUpper())));
     m_startup->setChecked(QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
                                     QSettings::NativeFormat).contains(QStringLiteral("Ghost Engine")));
