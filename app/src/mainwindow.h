@@ -125,6 +125,8 @@ private:
     // the switch's animation takes its picture of it.
     void setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then = {});
     bool m_surfaceHeld = false;   // mpv's picture put away while a layout switch plays
+    QWidget *m_mainPanel = nullptr;   // the page's card, darker in the YouTube layout
+    void applyLayoutColors();
     bool m_pictureAway = false;   // left the video's page: sound only, no corner player
     bool m_miniAsked = false;     // the page's mini player button was pressed
     void holdSurfaceWhile(QObject *animation);

@@ -577,6 +577,8 @@ MainWindow::MainWindow()
     auto *mainPanel = new QWidget;
     mainPanel->setObjectName("panel");
     mainPanel->setAttribute(Qt::WA_StyledBackground);
+    m_mainPanel = mainPanel;
+    theme::whenChanged(mainPanel, [this] { applyLayoutColors(); });
     auto *mainBox = new QVBoxLayout(mainPanel);
     mainBox->setContentsMargins(0, 0, 0, 0);
     mainBox->addWidget(m_pages);
@@ -3664,7 +3666,7 @@ protected:
         }
         QPainterPath card;
         card.addRoundedRect(body, 16, 16);
-        p.fillPath(card, theme::c().card);
+        p.fillPath(card, theme::c().cardAlt);   // a step lighter than a card, off the darker page
         p.setPen(QPen(theme::c().line, 1));
         p.drawPath(card);
     }
@@ -4349,6 +4351,24 @@ private:
 
 } // namespace
 
+void MainWindow::applyLayoutColors()
+{
+    // The YouTube layout (Batın, 2026-11-08: "the palette feels off"): the
+    // page a step darker, between the window's colour and the bar's, with a
+    // hairline round it, so the lighter floating menu stands off it. The
+    // music layout keeps the theme as it is.
+    if (!m_mainPanel)
+        return;
+    if (!m_youtubeLayout) {
+        m_mainPanel->setStyleSheet(QString());
+        return;
+    }
+    const QColor w = theme::window(), b = theme::c().base;
+    const QColor page((w.red() + b.red()) / 2, (w.green() + b.green()) / 2, (w.blue() + b.blue()) / 2);
+    m_mainPanel->setStyleSheet(QStringLiteral("QWidget#panel { background: %1; border: 1px solid %2; border-radius: 12px; }")
+                                   .arg(page.name(), theme::c().lineSoft.name()));
+}
+
 void MainWindow::holdSurfaceWhile(QObject *animation)
 {
     // mpv's picture is a window over the app that no widget can lie on
@@ -4398,6 +4418,7 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     }
     theme::style(m_youtubeButton, youtube ? QStringLiteral("color: @accent;") : QString());
     m_leftStack->setCurrentIndex(youtube ? 1 : 0);
+    applyLayoutColors();
     if (youtube) {
         fillYouTubeSidebar();
         showYouTube();
