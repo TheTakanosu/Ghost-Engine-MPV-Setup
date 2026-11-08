@@ -3653,10 +3653,13 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        const QRectF body = QRectF(rect()).adjusted(kShadow - 4, kShadow - 6, -(kShadow - 4), -kShadow);
-        for (int i = kShadow; i > 0; --i) {
+        // The card's top, bottom and left edges are the page card's and the
+        // library's (Batın, 2026-11-08: they were 4 and 10 px off); the
+        // shadow falls only to the right, towards the page.
+        const QRectF body = QRectF(rect()).adjusted(0.5, 0.5, -(kShadow - 2) - 0.5, -0.5);
+        for (int i = kShadow - 2; i > 0; --i) {
             QPainterPath ring;
-            ring.addRoundedRect(body.adjusted(-i * 0.6, -i * 0.3, i * 0.6, i), 16 + i * 0.6, 16 + i * 0.6);
+            ring.addRoundedRect(body.adjusted(0, 2, i * 0.8, -2), 16, 16);
             p.fillPath(ring, QColor(0, 0, 0, 9));
         }
         QPainterPath card;
@@ -3679,7 +3682,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
     panel->setMinimumWidth(qRound(76 * theme::zoom()));
     theme::whenChanged(panel, [panel] { panel->update(); });
     auto *box = new QVBoxLayout(panel);
-    box->setContentsMargins(FloatingCard::kShadow + 6, FloatingCard::kShadow + 6, FloatingCard::kShadow + 4, FloatingCard::kShadow + 10);
+    box->setContentsMargins(10, 12, FloatingCard::kShadow + 8, 12);
     box->setSpacing(2);
 
     const QString navStyle = QStringLiteral(
