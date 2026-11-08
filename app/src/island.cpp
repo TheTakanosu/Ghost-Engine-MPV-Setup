@@ -23,6 +23,33 @@ constexpr int kCardWidth = 460;
 constexpr int kCardHeight = 150;
 constexpr int kThumbW = 192, kThumbH = 108;
 
+// A button drawn as a pill by hand: a style sheet's round corners did not
+// hold on the island's see-through ground and they came out square (Batın).
+class PillButton : public QPushButton {
+public:
+    PillButton(const QString &text, QWidget *parent) : QPushButton(text, parent)
+    {
+        setAttribute(Qt::WA_Hover);
+        QFont f = font();
+        f.setWeight(QFont::DemiBold);
+        setFont(f);
+        setFixedSize(QFontMetrics(f).horizontalAdvance(text) + 26, 28);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const theme::Palette &c = theme::c();
+        QPainterPath pill;
+        pill.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), height() / 2.0, height() / 2.0);
+        p.fillPath(pill, isDown() ? c.pressed : underMouse() ? c.raisedHover : c.raised);
+        p.setPen(c.textBright);
+        p.drawText(rect(), Qt::AlignCenter, text());
+    }
+};
+
 QColor mixed(const QColor &a, const QColor &b, qreal t)
 {
     return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t,
@@ -54,12 +81,9 @@ NowIsland::NowIsland(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
     connect(m_hover, &QTimer::timeout, this, [this] { setOpen(m_wantOpen); });
 
     const auto textButton = [this](const QString &text, const QString &tip) {
-        auto *b = new QPushButton(text, this);
+        auto *b = new PillButton(text, this);
         b->setCursor(Qt::PointingHandCursor);
         b->setToolTip(tip);
-        theme::style(b, QStringLiteral("QPushButton { background: @raised; color: @textBright; border: none; border-radius: 13px;"
-                                       " padding: 4px 12px; font-weight: 600; }"
-                                       "QPushButton:hover { background: @raisedHover; }"));
         b->hide();
         return b;
     };
@@ -144,8 +168,6 @@ void NowIsland::place()
     const int y = int(b.bottom()) - 40;
     const int x = int(b.left()) + 12 + kThumbW + 14;
     m_play->move(x, y + 2);
-    m_openButton->adjustSize();
-    m_miniButton->adjustSize();
     m_openButton->move(x + 40, y + 4);
     m_miniButton->move(x + 40 + m_openButton->width() + 8, y + 4);
     for (QWidget *button : {static_cast<QWidget *>(m_play), static_cast<QWidget *>(m_openButton),
