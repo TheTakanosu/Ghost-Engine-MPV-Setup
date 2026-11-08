@@ -842,7 +842,9 @@ void SearchPage::homeMore()
 
 void SearchPage::fitHomeGrid()
 {
-    // As many columns as fit at 300 px or more, sharing the width. The
+    // As many columns as fit at 360 px or more (YouTube's own: 4 across a
+    // 1920 px window with its menu open; Batın, 2026-11-08: 5 felt crowded),
+    // sharing the width. The
     // scroll bar's room is always kept: measured with and without it, 15
     // videos fit in 5 columns without the bar, the bar went, the width grew
     // to 5 columns... and the grid flicked between 4 and 5 for ever (seen).
@@ -851,7 +853,7 @@ void SearchPage::fitHomeGrid()
     const int width = m_homeGrid->viewport()->width() - bar - 8;
     if (width <= 0)
         return;
-    const int columns = qMax(1, width / int(300 * theme::zoom()));
+    const int columns = qMax(1, width / int(360 * theme::zoom()));
     m_homeCards->setCardWidth(width / columns);
     if (m_homeGrid->gridSize() != m_homeCards->cardSize())
         m_homeGrid->setGridSize(m_homeCards->cardSize());

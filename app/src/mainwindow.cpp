@@ -861,6 +861,7 @@ MainWindow::MainWindow()
     central->setObjectName("central");
     central->setLayout(root);
     setCentralWidget(central);
+    QTimer::singleShot(0, this, [this] { applyLayoutColors(); });
 
     // mpv's window lives over the whole window, not in the page, so it can
     // also sit in a corner while another page is open.
@@ -2636,8 +2637,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         finishRename();
         return true;
     }
-    // Ctrl + wheel zooms, as in a browser.
-    if (event->type() == QEvent::Wheel && (static_cast<QWheelEvent *>(event)->modifiers() & Qt::ControlModifier)) {
+    // Ctrl + wheel zooms, as in a browser; only while the app is the window
+    // in use. Windows sends the wheel to whatever is under the pointer, and
+    // in a game Ctrl (crouch) and the wheel (weapons) went on and on over
+    // Ghost Engine on the second screen: it shrank to 0.7 (Batın, 2026-11-08).
+    if (event->type() == QEvent::Wheel && (static_cast<QWheelEvent *>(event)->modifiers() & Qt::ControlModifier) &&
+        isActiveWindow()) {
         changeZoom(static_cast<QWheelEvent *>(event)->angleDelta().y() > 0 ? 0.1 : -0.1);
         return true;
     }
@@ -4406,27 +4411,13 @@ private:
 
 void MainWindow::applyLayoutColors()
 {
-    // The YouTube layout (Batın, 2026-11-08: "the palette feels off"): the
-    // page a step darker, between the window's colour and the bar's, with a
-    // hairline round it, so the lighter floating menu stands off it. The
-    // music layout keeps the theme as it is.
-    // Trial (Batın, 2026-11-08): a grey ground under the whole window and
-    // the cards a step lighter on it, each with a soft shadow, as if they
-    // stood off it. Black has no room for a shadow, so the ground goes grey.
+    // Batın, 2026-11-08: a grey ground under the whole window and the cards
+    // a step lighter on it, each with a soft shadow, as if they stood off it
+    // (Black has no room for a shadow, so the ground goes grey). First the
+    // YouTube layout, then the music layout too, so the two read as one app.
     if (!m_mainPanel || !centralWidget())
         return;
     auto *menu = static_cast<FloatingCard *>(m_ytSidebar);
-    if (!m_youtubeLayout) {
-        m_mainPanel->setStyleSheet(QString());
-        centralWidget()->setStyleSheet(QString());
-        if (menu) {
-            menu->raisedLook = false;
-            menu->update();
-        }
-        if (m_shadows)
-            m_shadows->hide();
-        return;
-    }
     const auto mix = [](const QColor &a, const QColor &b, double t) {
         return QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
                       int(a.blue() + (b.blue() - a.blue()) * t));
@@ -4435,10 +4426,13 @@ void MainWindow::applyLayoutColors()
     const QColor ground = mix(c.window, c.card, 0.33);   // Black: 18
     const QColor page = mix(c.window, c.card, 0.85);     // Black: 24
     const QColor raised = mix(c.card, c.raised, 0.6);    // Black: 32
+    // The library, the page and the now playing panel are all "#panel"-like
+    // cards on the ground; the YouTube menu is a step lighter still.
     centralWidget()->setStyleSheet(QStringLiteral(
         "QWidget#central, QWidget#topBar, QWidget#nowPlaying { background: %1; }"
-        "QSplitter::handle { background: transparent; }").arg(ground.name()));
-    m_mainPanel->setStyleSheet(QStringLiteral("QWidget#panel { background: %1; border-radius: 12px; }").arg(page.name()));
+        "QSplitter::handle { background: transparent; }"
+        "QWidget#libraryPanel, QWidget#panel { background: %2; border-radius: 12px; }")
+                                       .arg(ground.name(), page.name()));
     if (menu) {
         menu->raisedLook = true;
         menu->raisedFill = raised;
@@ -4449,23 +4443,25 @@ void MainWindow::applyLayoutColors()
         layer->cards = [this] {
             QList<QRect> out;
             QWidget *ground = centralWidget();
-            if (m_ytSidebar && m_ytSidebar->isVisible())
-                out << QRect(m_ytSidebar->mapTo(ground, QPoint(0, 0)),
-                             m_ytSidebar->size() - QSize(FloatingCard::kShadow - 2, 0));
-            if (m_mainPanel->isVisible())
-                out << QRect(m_mainPanel->mapTo(ground, QPoint(0, 0)), m_mainPanel->size());
+            const auto add = [&](QWidget *w, int trimRight = 0) {
+                if (w && w->isVisible() && w->width() > 0)
+                    out << QRect(w->mapTo(ground, QPoint(0, 0)), w->size() - QSize(trimRight, 0));
+            };
+            add(m_ytSidebar, FloatingCard::kShadow - 2);
+            add(m_libraryPanel);
+            add(m_mainPanel);
+            add(m_panel);
             return out;
         };
-        layer->follow(m_mainPanel);
-        if (m_ytSidebar)
-            layer->follow(m_ytSidebar);
+        for (QWidget *w : {static_cast<QWidget *>(m_mainPanel), m_ytSidebar, m_libraryPanel, static_cast<QWidget *>(m_panel)})
+            if (w)
+                static_cast<ShadowLayer *>(layer)->follow(w);
         m_shadows = layer;
     }
     m_shadows->show();
     m_shadows->lower();
     m_shadows->update();
 }
-
 void MainWindow::holdSurfaceWhile(QObject *animation)
 {
     // mpv's picture is a window over the app that no widget can lie on
@@ -5572,14 +5568,15 @@ void MainWindow::setVideoGrid(bool grid)
 
 void MainWindow::fitVideoGrid()
 {
-    // As many columns as fit at 280 px or more, sharing the width.
+    // As many columns as fit at 360 px or more, sharing the width: the same
+    // cards as the YouTube pages (2026-11-08).
     if (!m_videoGrid)
         return;
     // 8 px to spare: with 4 the view wrapped the last column whenever the
     // cards came to within 4 px of its edge (measured: 3 x 321 in 967 went
     // to two columns), and dragging an edge flicked between the two.
     const int width = m_songs->viewport()->width() - 8;
-    const int columns = qMax(1, width / int(280 * theme::zoom()));
+    const int columns = qMax(1, width / int(360 * theme::zoom()));
     m_cardDelegate->setCardWidth(width / columns);
     if (m_songs->gridSize() != m_cardDelegate->cardSize())
         m_songs->setGridSize(m_cardDelegate->cardSize());

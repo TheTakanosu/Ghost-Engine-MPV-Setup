@@ -126,7 +126,7 @@ private:
     void setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then = {});
     bool m_surfaceHeld = false;   // mpv's picture put away while a layout switch plays
     QWidget *m_mainPanel = nullptr;   // the page's card, darker in the YouTube layout
-    QWidget *m_shadows = nullptr;     // the cards' shadows on the grey ground (YouTube layout)
+    QWidget *m_shadows = nullptr;     // the cards' shadows on the grey ground
     void applyLayoutColors();
     bool m_pictureAway = false;   // left the video's page: sound only, no corner player
     bool m_miniAsked = false;     // the page's mini player button was pressed
