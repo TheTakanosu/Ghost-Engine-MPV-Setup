@@ -49,6 +49,10 @@ mp.add_hook("on_load", 11, function()
         return
     end
     mp.set_property_native("user-data/ghost/live", true)
+    -- A stream on air opens at what is on air now, never at a second kept
+    -- from before ("pick up where you left off" asked for 1:00:59 of an
+    -- hour long window and the picture stayed black).
+    mp.set_property("file-local-options/start", "none")
     local manifest
     for _, f in ipairs(info.formats or {}) do
         if f.manifest_url and string.find(f.protocol or "", "m3u8", 1, true) then

@@ -1384,12 +1384,13 @@ void VideoPage::setLive(bool live, bool behind)
 void VideoPage::setTimes(double position, double duration)
 {
     m_duration = duration;
-    // On air the end keeps moving: only how long it has been watched.
-    if (m_isLive) {
+    // On air the end keeps moving: only how long it has been watched. The
+    // bar still shows where it is in the hour or so that can be wound back,
+    // its right end being what is on air now.
+    if (m_isLive)
         m_time->setText(clock(position));
-        return;
-    }
-    m_time->setText(clock(position) + QStringLiteral(" / ") + clock(duration));
+    else
+        m_time->setText(clock(position) + QStringLiteral(" / ") + clock(duration));
     if (!m_dragging)
         m_seek->setValue(duration > 0 && position >= 0 ? int(position / duration * kSeekSteps) : 0);
 }

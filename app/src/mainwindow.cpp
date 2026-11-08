@@ -880,8 +880,11 @@ MainWindow::MainWindow()
     };
     m_chromeButtons << m_island;   // clicked, not a place to drag the window by
 
-    // A stream on air: behind its edge once paused or wound back; "Go live"
-    // opens it again, which always starts at what is on air now.
+    // A stream on air, opened from its master playlist (livesync.lua): the
+    // timeline is the last hour or so and its end is what is on air now.
+    // Behind = more than 12 s from that end; "Go live" goes to it on the
+    // timeline (reopening the stream, as first done, left it where it was
+    // after a click on the timeline: Batın, 2026-11-09).
     const auto showLive = [this] {
         m_videoPage->setLive(m_mpv.property("user-data/ghost/live").toBool(), m_liveBehind);
     };
@@ -889,26 +892,26 @@ MainWindow::MainWindow()
         const bool live = m_mpv.property("user-data/ghost/live").toBool();
         if (name == "user-data/ghost/live") {
             m_liveBehind = false;
-            m_liveLast = -1;
             showLive();
-        } else if (live && name == "pause" && m_mpv.property("pause").toBool() && !m_liveBehind) {
-            m_liveBehind = true;
-            showLive();
-        } else if (live && name == "time-pos") {
+        } else if (live && (name == "time-pos" || name == "duration" || name == "pause")) {
             const double at = m_mpv.property("time-pos").toDouble();
-            if (m_liveLast >= 0 && at < m_liveLast - 1.5 && !m_liveBehind) {
-                m_liveBehind = true;
+            const double end = m_mpv.property("duration").toDouble();
+            const bool behind = end > 0 && end - at > 12;
+            if (behind != m_liveBehind) {
+                m_liveBehind = behind;
                 showLive();
             }
-            m_liveLast = at;
         }
     });
     m_videoPage->onGoLive = [this, showLive] {
-        m_liveBehind = false;
-        m_liveLast = -1;
-        showLive();
+        const double end = m_mpv.property("duration").toDouble();
         m_mpv.setProperty("pause", false);
-        m_mpv.command({"playlist-play-index", "current"});
+        if (end > 0)
+            m_mpv.command({"seek", qMax(0.0, end - 3), "absolute"});
+        else
+            m_mpv.command({"playlist-play-index", "current"});
+        m_liveBehind = false;
+        showLive();
     };
     connect(m_pages, &QStackedWidget::currentChanged, m_island, [this] { m_island->refresh(); });
 

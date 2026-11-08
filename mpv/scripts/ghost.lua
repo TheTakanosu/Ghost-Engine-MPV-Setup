@@ -134,6 +134,10 @@ mp.register_event("start-file", function()
     local title = pos >= 0 and mp.get_property("playlist/" .. pos .. "/title") or nil
     loading_timer = mp.add_timeout(1, function()
         loading_timer = nil
+        -- Inside the Ghost Engine app (mpv drawing into its window, --wid)
+        -- the app shows the loading itself; the line over the picture was
+        -- in the way (Batin, 2026-11-09).
+        if mp.get_property_number("wid", -1) ~= -1 then return end
         -- Top left: the bottom belongs to the on-screen controls.
         loading.data = "{\\an7\\fs28\\bord2}Loading" ..
             (title and (": " .. ass_escape(title:match("^%s*(.-)%s*$"))) or "") .. " ..."
