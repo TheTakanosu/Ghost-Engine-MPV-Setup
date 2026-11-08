@@ -63,6 +63,13 @@ struct PlaylistPage {
 QString playlistIdIn(const QString &text);
 QString videoIdIn(const QString &text);
 
+// The country searches and the home page are ranked for: the one picked in
+// Settings ("search/region"), or Windows' Location (Settings > Time &
+// language > Region), not the format locale, which is often en-US.
+QString searchRegion();
+// Windows' Location as a two-letter code, empty when it is not a country.
+QString windowsRegion();
+
 class Client : public QObject {
     Q_OBJECT
 public:

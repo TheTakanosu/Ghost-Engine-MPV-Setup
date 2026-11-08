@@ -383,7 +383,8 @@ MainWindow::MainWindow()
     m_profileScroll = profileScroll;
     m_pages->addWidget(m_profileScroll);
     m_searchPage = new SearchPage(m_covers);
-    m_searchPage->setRegion(QLocale::territoryToCode(QLocale::system().territory()));
+    m_searchPage->setRegion(ytmusic::searchRegion());
+    m_ytClient.setRegion(ytmusic::searchRegion());
     m_searchPage->libraryMatches = [this](const QString &query) {
         QVector<SearchPage::LibraryMatch> out;
         for (const Playlist &p : m_library.playlists())
@@ -703,6 +704,10 @@ MainWindow::MainWindow()
     QTimer::singleShot(1500, this, [this] { WhatsNewDialog::showIfUpdated(this); });
     m_settings->onLookChanged = [this] { applyLook(); };
     m_settings->onSearchPlaceChanged = [this](bool middle) { setSearchMiddle(middle); };
+    m_settings->onRegionChanged = [this] {
+        m_searchPage->setRegion(ytmusic::searchRegion());
+        m_ytClient.setRegion(ytmusic::searchRegion());
+    };
     m_settings->onResumeChanged = [this] { showResume(); };
     m_settings->onHistoryChanged = [this](bool on) {
         m_stats.setKeepHistory(on);

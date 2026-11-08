@@ -2,6 +2,9 @@
 
 #include "icons.h"
 #include "theme.h"
+#include "ytmusic.h"
+
+#include <algorithm>
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -782,6 +785,44 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (onSearchPlaceChanged)
             onSearchPlaceChanged(on);
     });
+    // Which country YouTube ranks results for (Batın, 2026-11-08). The words
+    // searched matter more, so it mostly shows in short or English searches
+    // and the YouTube home page.
+    m_region = new QComboBox;
+    {
+        const QLocale::Territory own = QLocale::codeToTerritory(ytmusic::windowsRegion());
+        m_region->addItem(own != QLocale::AnyTerritory
+                              ? QStringLiteral("Windows (%1)").arg(QLocale::territoryToString(own))
+                              : QStringLiteral("Windows"),
+                          QString());
+        QList<QPair<QString, QString>> countries;
+        for (int t = 1; t <= int(QLocale::LastTerritory); ++t) {
+            const QString code = QLocale::territoryToCode(QLocale::Territory(t));
+            if (code.size() == 2 && code.at(0).isLetter())
+                countries.append({QLocale::territoryToString(QLocale::Territory(t)), code});
+        }
+        std::sort(countries.begin(), countries.end(), [](const auto &a, const auto &b) {
+            return QString::localeAwareCompare(a.first, b.first) < 0;
+        });
+        for (const auto &c : countries)
+            m_region->addItem(c.first, c.second);
+        m_region->setMaxVisibleItems(16);
+        m_region->setMinimumWidth(190);
+    }
+    addRow(look, "Search region",
+           "The country YouTube ranks searches and the YouTube home page for. What you type matters more, "
+           "so it shows most in short or English searches.", m_region);
+    connect(m_region, &QComboBox::currentIndexChanged, this, [this] {
+        if (m_loading)
+            return;
+        const QString code = m_region->currentData().toString();
+        if (code.isEmpty())
+            QSettings().remove("search/region");
+        else
+            QSettings().setValue("search/region", code);
+        if (onRegionChanged)
+            onRegionChanged();
+    });
     // The accent over any theme (Batın, 2026-11-02: "e.g. 100,20,255"): the
     // theme's own, a few ready ones, or any colour by RGB or hex.
     {
@@ -1189,6 +1230,7 @@ void SettingsPage::load()
     m_history->setChecked(settings.value("history/keep", true).toBool());
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
     m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
+    m_region->setCurrentIndex(qMax(0, m_region->findData(QSettings().value("search/region").toString().toUpper())));
     m_startup->setChecked(QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
                                     QSettings::NativeFormat).contains(QStringLiteral("Ghost Engine")));
     m_presenceVideos->setChecked(settings.value("presence/videos", true).toBool());

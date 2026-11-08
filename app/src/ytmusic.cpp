@@ -2,6 +2,12 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLocale>
+#include <QSettings>
+#ifdef Q_OS_WIN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include <QNetworkReply>
 #include <QRegularExpression>
 #include <QUrl>
@@ -211,6 +217,28 @@ QString videoIdIn(const QString &text)
         id = url.path().mid(8);
     static const QRegularExpression valid(QStringLiteral("^[A-Za-z0-9_-]{11}$"));
     return valid.match(id).hasMatch() ? id : QString();
+}
+
+QString searchRegion()
+{
+    const QString picked = QSettings().value("search/region").toString();
+    if (picked.size() == 2)
+        return picked.toUpper();
+    const QString windows = windowsRegion();
+    return !windows.isEmpty() ? windows : QLocale::territoryToCode(QLocale::system().territory());
+}
+
+QString windowsRegion()
+{
+#ifdef Q_OS_WIN
+    wchar_t geo[16] = {};
+    if (GetUserDefaultGeoName(geo, 16) > 0) {
+        const QString code = QString::fromWCharArray(geo);
+        if (code.size() == 2 && code.at(0).isLetter())   // UN codes like "001" are not countries
+            return code.toUpper();
+    }
+#endif
+    return {};
 }
 
 Client::Client(QObject *parent) : QObject(parent) {}
