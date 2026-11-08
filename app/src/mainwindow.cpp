@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+
+#include "island.h"
 #include "searchpopup.h"
 
 #include "covercrop.h"
@@ -862,6 +864,22 @@ MainWindow::MainWindow()
     central->setLayout(root);
     setCentralWidget(central);
     QTimer::singleShot(0, this, [this] { applyLayoutColors(); });
+
+    // The island: a YouTube video playing whose page is not open.
+    m_island = new NowIsland(&m_mpv, &m_covers, this);
+    m_island->shouldShow = [this] {
+        return m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool() && !m_videoFull &&
+               m_pages->currentWidget() != m_videoPage;
+    };
+    m_island->onOpen = [this] { openPlayingList(); };
+    m_island->onMini = [this] {
+        m_miniAsked = true;
+        m_pictureAway = false;
+        m_miniClosed = false;
+        placeSurface();
+    };
+    m_chromeButtons << m_island;   // clicked, not a place to drag the window by
+    connect(m_pages, &QStackedWidget::currentChanged, m_island, [this] { m_island->refresh(); });
 
     // mpv's window lives over the whole window, not in the page, so it can
     // also sit in a corner while another page is open.
