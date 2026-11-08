@@ -104,7 +104,6 @@ void LyricsSource::ask(const QString &key, const QString &query, double duration
     QNetworkRequest request(QUrl(QStringLiteral("https://lrclib.net/api/search?") + query));
     request.setHeader(QNetworkRequest::UserAgentHeader, QString::fromLatin1(kAgent));
     request.setTransferTimeout(10000);
-    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);   // a dead HTTP/2 connection over a tunnel stalls every request (2026-11-08)
     QNetworkReply *reply = m_net.get(request);
     connect(reply, &QNetworkReply::finished, this, [=] {
         reply->deleteLater();

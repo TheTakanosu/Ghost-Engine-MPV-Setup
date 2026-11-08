@@ -106,7 +106,6 @@ void ThumbnailCache::fetch(const QString &videoId, Size size)
                                 ? QUrl(videoId)
                                 : QUrl(QStringLiteral("https://i.ytimg.com/vi/%1/%2").arg(videoId, file)));
     request.setTransferTimeout(10000);
-    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);   // a dead HTTP/2 connection over a tunnel stalls every request (2026-11-08)
     QNetworkReply *reply = m_net.get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, videoId, size, k] {
         reply->deleteLater();

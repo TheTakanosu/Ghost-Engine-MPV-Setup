@@ -64,7 +64,6 @@ void ArtistLookup::post(const QString &endpoint, const QJsonObject &body, std::f
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Origin", "https://music.youtube.com");
     request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
-    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);   // a dead HTTP/2 connection over a tunnel stalls every request (2026-11-08)
     request.setTransferTimeout(15000);
     const QJsonObject client{{"clientName", "WEB_REMIX"}, {"clientVersion", "1.20241023.01.00"}, {"hl", "en"}};
     QJsonObject full = body;

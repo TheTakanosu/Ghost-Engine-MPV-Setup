@@ -172,6 +172,38 @@ bool setOption(const QString &name, const QString &value)
 
 } // namespace mpvconf
 
+namespace {
+
+// The wheel scrolls the page, not a list or slider the pointer passes over
+// on the way: one tick on the region list made it Afghanistan (its first
+// country) and YouTube then found nothing (Batın, 2026-11-08). A list or
+// slider takes the wheel only once it was clicked.
+class WheelGuard : public QObject
+{
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Wheel) {
+            auto *widget = static_cast<QWidget *>(watched);
+            if (!widget->hasFocus()) {
+                // On to the page, which scrolls.
+                for (QWidget *up = widget->parentWidget(); up; up = up->parentWidget())
+                    if (auto *area = qobject_cast<QAbstractScrollArea *>(up)) {
+                        QCoreApplication::sendEvent(area->viewport(), event);
+                        break;
+                    }
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+} // namespace
+
 // -- switch --------------------------------------------------------------------
 
 ToggleSwitch::ToggleSwitch(QWidget *parent) : QAbstractButton(parent)
@@ -1177,6 +1209,16 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (onLookChanged)
             onLookChanged();
     });
+    auto *guard = new WheelGuard(this);
+    QList<QWidget *> wheeled;
+    for (QComboBox *box : findChildren<QComboBox *>())
+        wheeled << box;
+    for (QSlider *slider : findChildren<QSlider *>())
+        wheeled << slider;
+    for (QWidget *w : wheeled) {
+        w->setFocusPolicy(Qt::StrongFocus);
+        w->installEventFilter(guard);
+    }
     load();
 }
 
