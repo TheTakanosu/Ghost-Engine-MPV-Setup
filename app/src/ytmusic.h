@@ -105,12 +105,17 @@ public:
     // The region results are ranked for (Turkish songs first in Turkey).
     void setRegion(const QString &countryCode) { m_region = countryCode; }
 
+    // The last request came to nothing because the network did not answer
+    // (no name lookup, no connection), not because YouTube said no.
+    bool unreachable() const { return m_unreachable; }
+
 private:
     void post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done,
-              bool youtube = false, bool retry = false);
+              bool youtube = false, int attempt = 0);
     void morePages(PlaylistPage page, const QString &token, int pages, std::function<void(PlaylistPage)> done);
 
     QNetworkAccessManager m_net;
+    bool m_unreachable = false;
     QString m_region;
     int m_searchSerial = 0;
     int m_youtubeSerial = 0;

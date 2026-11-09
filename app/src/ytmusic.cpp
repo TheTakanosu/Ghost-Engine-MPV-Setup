@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QLocale>
 #include <QSettings>
+#include <QTimer>
 #ifdef Q_OS_WIN
 #define NOMINMAX
 #include <windows.h>
@@ -247,8 +248,9 @@ QString windowsRegion()
 Client::Client(QObject *parent) : QObject(parent) {}
 
 void Client::post(const QString &endpoint, const QJsonObject &body, std::function<void(const QJsonObject &)> done,
-                  bool youtube, bool retry)
+                  bool youtube, int attempt)
 {
+    const bool retry = attempt > 0;
     // YouTube Music and YouTube answer the same interface, each to its own
     // web client.
     const QString host = youtube ? QStringLiteral("www.youtube.com") : QStringLiteral("music.youtube.com");
@@ -268,7 +270,7 @@ void Client::post(const QString &endpoint, const QJsonObject &body, std::functio
     full.insert("context", QJsonObject{{"client", client}});
     QNetworkReply *reply = m_net.post(request, QJsonDocument(full).toJson(QJsonDocument::Compact));
     const qint64 sent = QDateTime::currentMSecsSinceEpoch();
-    connect(reply, &QNetworkReply::finished, this, [this, reply, endpoint, body, done, youtube, retry, sent] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, endpoint, body, done, youtube, attempt, retry, sent] {
         reply->deleteLater();
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray data = reply->error() == QNetworkReply::NoError ? reply->readAll() : QByteArray();
@@ -283,20 +285,33 @@ void Client::post(const QString &endpoint, const QJsonObject &body, std::functio
                 log.write(QStringLiteral("%1 %2 %3 status=%4 error=%5 \"%6\" bytes=%7 %8ms%9\n")
                               .arg(QDateTime::currentDateTime().toString(Qt::ISODate), youtube ? "yt" : "ytm", endpoint)
                               .arg(status).arg(int(reply->error())).arg(reply->errorString()).arg(data.size())
-                              .arg(QDateTime::currentMSecsSinceEpoch() - sent).arg(retry ? " retry" : "")
+                              .arg(QDateTime::currentMSecsSinceEpoch() - sent).arg(retry ? QStringLiteral(" retry %1").arg(attempt) : QString())
                               .toUtf8());
         }
         if (reply->error() == QNetworkReply::NoError) {
+            m_unreachable = false;
             done(answer);
             return;
         }
         // A server's own "no" (4xx/5xx) is not tried again; a connection
-        // that broke or never answered is, once, on a new one.
+        // that broke or never answered is, once at once, on a new one.
         if (!retry && status == 0) {
             m_net.clearConnectionCache();
-            post(endpoint, body, done, youtube, true);
+            post(endpoint, body, done, youtube, 1);
             return;
         }
+        // A network that is not there yet (the computer just started, a
+        // tunnel coming up) fails in milliseconds: two more tries, 2 and 4 s
+        // later. A request that waited for its timeout is not waited on again.
+        const qint64 took = QDateTime::currentMSecsSinceEpoch() - sent;
+        if (status == 0 && attempt < 3 && took < 3000) {
+            QTimer::singleShot(2000 * attempt, this, [this, endpoint, body, done, youtube, attempt] {
+                m_net.clearConnectionCache();
+                post(endpoint, body, done, youtube, attempt + 1);
+            });
+            return;
+        }
+        m_unreachable = status == 0;
         done(QJsonObject());
     });
 }

@@ -111,6 +111,11 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_status = new QLabel;
     m_status->setObjectName("heroInfo");
     m_status->setWordWrap(true);
+    connect(m_status, &QLabel::linkActivated, this, [this] {
+        const QString query = m_query;
+        m_query.clear();
+        setQuery(query);
+    });
     column->addWidget(m_status);
 
     m_libraryChips = new QWidget;
@@ -432,6 +437,15 @@ void SearchPage::updateEmpty()
     if (m_pending > 0)
         return;
     const bool nothing = m_songs.isEmpty() && m_videos.isEmpty() && m_playlists.isEmpty() && m_ytVideos.isEmpty();
+    // Nothing came because nothing answered: say so, with a way to ask again,
+    // rather than "nothing found" (the computer had just started, 2026-11-09).
+    if (nothing && m_client.unreachable()) {
+        setStatus(QStringLiteral("Can't reach %1 right now. Check your connection, then "
+                                 "<a href=\"retry\" style=\"color: %2;\">try again</a>.")
+                      .arg(m_youtube ? QStringLiteral("YouTube") : QStringLiteral("YouTube Music"),
+                           theme::accent().name()));
+        return;
+    }
     if (m_youtube) {
         setStatus(nothing ? QStringLiteral("Nothing found on YouTube for “%1”. If every search says this, "
                                            "YouTube may be out of reach from here.").arg(m_query)
