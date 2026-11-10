@@ -895,7 +895,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
             b->setCheckable(true);
             b->setCursor(Qt::PointingHandCursor);
             b->setToolTip(tip);
-            theme::style(b, QStringLiteral("QPushButton { background: %1; border-radius: 13px; border: 2px solid @window;"
+            theme::style(b, QStringLiteral("QPushButton { background: %1; border-radius: 12px; border: 2px solid @window; padding: 0;"
                                            " min-width: 22px; max-width: 22px; min-height: 22px; max-height: 22px; }"
                                            "QPushButton:hover { border-color: @muted; }"
                                            "QPushButton:checked { border-color: @text; }").arg(color.name()));
@@ -943,7 +943,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
             mine->setVisible(now.isValid() && !matched);
             if (now.isValid() && !matched) {
                 mine->setProperty("accent", now);
-                theme::style(mine, QStringLiteral("QPushButton { background: %1; border-radius: 13px; border: 2px solid @text;"
+                theme::style(mine, QStringLiteral("QPushButton { background: %1; border-radius: 12px; border: 2px solid @text; padding: 0;"
                                                   " min-width: 22px; max-width: 22px; min-height: 22px; max-height: 22px; }").arg(now.name()));
                 mine->setChecked(true);
             }
