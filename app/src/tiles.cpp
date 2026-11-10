@@ -457,7 +457,9 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
     if (byline.isEmpty() && !index.data(kAddedRole).toString().isEmpty())
         parts << index.data(kAddedRole).toString();   // until the video's own date is known
     const QString under = QFontMetricsF(small).elidedText(parts.join(QStringLiteral("  ·  ")), Qt::ElideRight, titleBox.width());
-    painter->drawText(QRectF(titleBox.left(), titleBox.bottom() + 2, titleBox.width(), QFontMetricsF(small).lineSpacing()),
+    // Right under the title: one line of title leaves no gap (Batın, 2026-11-10).
+    const qreal underTop = titleBox.top() + tm.lineSpacing() * (cut < text.size() ? 2 : 1) + 2;
+    painter->drawText(QRectF(titleBox.left(), underTop, titleBox.width(), QFontMetricsF(small).lineSpacing()),
                       Qt::AlignLeft | Qt::AlignVCenter, under);
     painter->restore();
 }

@@ -118,6 +118,9 @@ public:
     bool paused() const { return m_paused; }
     void setTracks(const QVariantList &tracks);
     void setQualityCap(int height);   // 0: best
+    // The tallest picture this video has (0: not known yet): the quality menu
+    // offers no more than that.
+    void setAvailableHeight(int height) { m_maxHeight = height; }
     void setSpeed(double speed);
     void setVolume(int volume, bool muted);
     void setAspect(double aspect);
@@ -224,6 +227,7 @@ private:
     QPushButton *m_speed;
     QVariantList m_tracks;
     int m_cap = 0;
+    int m_maxHeight = 0;
     double m_speedNow = 1;
     double m_duration = 0;
     double m_aspect = 16.0 / 9.0;

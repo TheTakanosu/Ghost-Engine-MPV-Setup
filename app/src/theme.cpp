@@ -429,8 +429,10 @@ void apply(QApplication &app)
         QPushButton#chrome:hover { background: @raised; color: @strong; }
         QPushButton#chromeClose:hover { background: @danger; color: white; }
         QLineEdit#topSearch { background: @card; border-radius: 17px; padding: 0 16px 0 6px; min-height: 34px; max-height: 34px; }
-        QPushButton#chip { border-radius: 14px; padding: 0 12px; min-height: 28px; max-height: 28px; font-size: 9pt; }
-        QPushButton#chip:checked { background: @text; border-color: @text; color: @window; }
+        QPushButton#chip { background: @raised; border: none; border-radius: 14px; padding: 0 12px;
+            min-height: 28px; max-height: 28px; font-size: 9pt; }
+        QPushButton#chip:hover { background: @pressed; }
+        QPushButton#chip:checked { background: @text; color: @window; }
         QPushButton#primary {
             background: @accent; border: none; color: @onAccent; font-weight: 700;
             border-radius: 20px; padding: 0 28px; min-height: 40px; max-height: 40px;

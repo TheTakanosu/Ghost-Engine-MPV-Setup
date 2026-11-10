@@ -1197,7 +1197,14 @@ QWidget *VideoPage::buildControls()
     m_quality = textButton(QStringLiteral("Auto"), "Quality");
     connect(m_quality, &QPushButton::clicked, this, [this] {
         QMenu menu(this);
-        for (int h : kHeights) {
+        QList<int> heights;
+        for (int h : kHeights)
+            if (h == 0 || m_maxHeight <= 0 || h <= m_maxHeight)
+                heights << h;
+        // A video smaller than every step (240p) still offers its own size.
+        if (m_maxHeight > 0 && !heights.contains(m_maxHeight))
+            heights.insert(1, m_maxHeight);
+        for (int h : heights) {
             QAction *a = menu.addAction(h > 0 ? QStringLiteral("Up to %1p").arg(h) : QStringLiteral("Best available"));
             a->setCheckable(true);
             a->setChecked(h == m_cap);

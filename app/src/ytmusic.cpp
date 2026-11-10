@@ -465,6 +465,8 @@ void Client::liveNow(const QString &channelId, std::function<void(Item)> done)
     // "EgdzdHJlYW1z8gYECgJ6AA==" is the channel page's Live tab; a stream on
     // air now carries the red LIVE badge on its picture.
     post("browse", {{"browseId", channelId}, {"params", "EgdzdHJlYW1z8gYECgJ6AA=="}}, [channelId, done](const QJsonObject &answer) {
+        // The page's header gives the channel's picture too (the list's rows show it).
+        const QString avatar = picture(first(first(answer, "pageHeaderViewModel").value("image"), "avatarViewModel").value("image"));
         for (const QJsonObject &row : all(answer, "lockupViewModel")) {
             bool live = false;
             for (const QJsonObject &badge : all(row.value("contentImage").toObject(), "thumbnailBadgeViewModel"))
@@ -475,12 +477,15 @@ void Client::liveNow(const QString &channelId, std::function<void(Item)> done)
             Item item = lockupItem(row, false);
             item.channelId = channelId;
             item.duration.clear();
+            item.avatar = avatar;
             if (!item.id.isEmpty()) {
                 done(item);
                 return;
             }
         }
-        done(Item());
+        Item none;   // not on air: no id, only the picture
+        none.avatar = avatar;
+        done(none);
     }, true);
 }
 

@@ -75,6 +75,7 @@ private:
     void setYtCompact(bool compact);
     ytmusic::Client m_ytClient;   // channel feeds for Following
     QHash<QString, ytmusic::Item> m_liveNow;   // followed channel id -> its stream on air
+    QHash<QString, QString> m_channelAvatars;  // channel id -> its picture's URL (youtube/avatars)
     class QTimer *m_liveTimer = nullptr;
     int m_liveSerial = 0;
     void checkLive();

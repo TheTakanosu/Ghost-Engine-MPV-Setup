@@ -4011,6 +4011,19 @@ void MainWindow::fillYouTubeSidebar()
         m_ytLists->addItem(row);
     }
     m_ytChannels->clear();
+    if (m_channelAvatars.isEmpty()) {
+        QSettings saved;
+        saved.beginGroup(QStringLiteral("youtube/avatars"));
+        for (const QString &id : saved.childKeys())
+            m_channelAvatars.insert(id, saved.value(id).toString());
+        connect(&m_pictures, &RemotePictures::ready, this, [this](const QString &url) {
+            for (const QString &known : std::as_const(m_channelAvatars))
+                if (known == url) {
+                    markLive();
+                    return;
+                }
+        });
+    }
     for (const auto &[id, name] : following()) {
         auto *row = new QListWidgetItem(name);
         row->setData(Qt::UserRole, id);
@@ -4052,6 +4065,11 @@ void MainWindow::checkLive()
         m_ytClient.liveNow(id, [this, serial, found, left, id = id](const ytmusic::Item &live) {
             if (serial != m_liveSerial)
                 return;
+            const QString avatar = live.avatar.startsWith(QLatin1String("//")) ? QStringLiteral("https:") + live.avatar : live.avatar;
+            if (!avatar.isEmpty() && m_channelAvatars.value(id) != avatar) {
+                m_channelAvatars.insert(id, avatar);
+                QSettings().setValue(QStringLiteral("youtube/avatars/") + id, avatar);
+            }
             if (!live.id.isEmpty())
                 found->insert(id, live);
             if (--*left == 0) {
@@ -4064,37 +4082,59 @@ void MainWindow::checkLive()
 
 void MainWindow::markLive()
 {
-    // A small red LIVE pill before the name, drawn once.
-    static const QIcon pill = [] {
-        const qreal dpr = 2;
-        QPixmap pm(QSize(34, 16) * dpr);
+    // Each channel's own picture before its name, round; one on air has a red
+    // ring and a small LIVE under it, as YouTube draws it (Batın, 2026-11-10).
+    const qreal dpr = 2;
+    const int side = 26;
+    const auto face = [&](const QString &id, bool live) {
+        QPixmap pm(QSize(side, side) * dpr);
         pm.setDevicePixelRatio(dpr);
         pm.fill(Qt::transparent);
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0xE5, 0x2B, 0x2B));
-        p.drawRoundedRect(QRectF(0, 1, 34, 14), 4, 4);
-        QFont f(QStringLiteral("Segoe UI"));
-        f.setPixelSize(10);
-        f.setBold(true);
-        p.setFont(f);
-        p.setPen(Qt::white);
-        p.drawText(QRectF(0, 1, 34, 14), Qt::AlignCenter, QStringLiteral("LIVE"));
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        const QRectF circle = live ? QRectF(3, 2, side - 6, side - 6) : QRectF(1, 1, side - 2, side - 2);
+        QPainterPath round;
+        round.addEllipse(circle);
+        const QPixmap picture = m_pictures.get(m_channelAvatars.value(id));
+        if (picture.isNull()) {
+            p.fillPath(round, theme::c().raised);
+        } else {
+            p.save();
+            p.setClipPath(round);
+            p.drawPixmap(circle, picture, QRectF(picture.rect()));
+            p.restore();
+        }
+        if (live) {
+            const QColor red(0xE5, 0x2B, 0x2B);
+            p.setPen(QPen(red, 1.6));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(circle.adjusted(-1.5, -1.5, 1.5, 1.5));
+            const QRectF tag(4, side - 9, side - 8, 9);
+            p.setPen(Qt::NoPen);
+            p.setBrush(red);
+            p.drawRoundedRect(tag, 2, 2);
+            QFont f(QStringLiteral("Segoe UI"));
+            f.setPixelSize(7);
+            f.setBold(true);
+            p.setFont(f);
+            p.setPen(Qt::white);
+            p.drawText(tag, Qt::AlignCenter, QStringLiteral("LIVE"));
+        }
         return QIcon(pm);
-    }();
-    m_ytChannels->setIconSize(QSize(34, 16));
+    };
+    m_ytChannels->setIconSize(QSize(side, side));
     for (int i = 0; i < m_ytChannels->count(); ++i) {
         QListWidgetItem *row = m_ytChannels->item(i);
         const QString id = row->data(Qt::UserRole).toString();
         if (id.isEmpty())
             continue;
-        if (m_liveNow.contains(id)) {
-            row->setIcon(pill);
+        const bool live = m_liveNow.contains(id);
+        row->setIcon(face(id, live));
+        if (live) {
             row->setForeground(QColor(0xFF, 0x4D, 0x4D));
             row->setToolTip(QStringLiteral("Live now: %1\nClick to watch, right-click for the channel").arg(m_liveNow.value(id).title));
         } else {
-            row->setIcon(QIcon());
             row->setData(Qt::ForegroundRole, QVariant());
             row->setToolTip("Click for its videos, right-click to unfollow");
         }
@@ -5902,6 +5942,7 @@ void MainWindow::updateVideoPage()
     m_videoPage->setPlaying(path, m_mpv.property("media-title").toString(),
                             m_mpv.property("metadata/by-key/uploader").toString(),
                             id.isEmpty() ? QString() : QStringLiteral("https://www.youtube.com/watch?v=") + id);
+    m_videoPage->setAvailableHeight(0);   // until this video's sizes are known
     if (!id.isEmpty())
         describeVideo(id);
 }
@@ -5926,6 +5967,11 @@ void MainWindow::describeVideo(const QString &id)
         if (date.isValid())
             meta << english.toString(date, QStringLiteral("MMM d, yyyy"));
         m_videoPage->setDescription(text, meta.join(QStringLiteral("  ·  ")));
+        // "144, 240, 360, ...": the heights of every format the video has.
+        int tallest = 0;
+        for (const QString &h : facts.value(3).split(QLatin1Char(',')))
+            tallest = qMax(tallest, h.trimmed().toInt());
+        m_videoPage->setAvailableHeight(tallest);
         m_videoChannelId = facts.value(2).trimmed().startsWith(QLatin1String("UC")) ? facts.value(2).trimmed() : QString();
         m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
     };
@@ -5956,7 +6002,7 @@ void MainWindow::describeVideo(const QString &id)
     });
     proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
                 {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
-                 "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s", "--print", "description",
+                 "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s|%(formats.:.height)l", "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
 }
 
