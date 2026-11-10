@@ -24,9 +24,21 @@ local function bitrate_for(formats)
     return best > 0 and math.floor(best * 1000) or nil
 end
 
+-- A stream played as sound, opened with its picture (see below) until it
+-- plays.
+local sound_only = false
+
 -- The app shows "LIVE" and "Go live" by this.
 mp.register_event("start-file", function()
     mp.set_property_native("user-data/ghost/live", false)
+    sound_only = false
+end)
+
+mp.register_event("playback-restart", function()
+    if sound_only then
+        sound_only = false
+        mp.set_property("vid", "no")
+    end
 end)
 
 -- After ytdl_hook (on_load, 10): it has asked yt-dlp and left the answer.
@@ -53,6 +65,20 @@ mp.add_hook("on_load", 11, function()
     -- from before ("pick up where you left off" asked for 1:00:59 of an
     -- hour long window and the picture stayed black).
     mp.set_property("file-local-options/start", "none")
+    -- Played as sound (a song list, a radio found in search; the option,
+    -- as no track is chosen yet while loading). With the picture off from
+    -- the start, mpv took the sound's track only after lavf had read some of
+    -- it, and its refresh seek went to the first segment of the hour YouTube
+    -- keeps: a radio played from an hour ago. The sound's own playlist did
+    -- the same. Opened with the picture, both tracks are taken at once and
+    -- it starts at the live edge; the picture goes off once it plays.
+    local vid = mp.get_property("file-local-options/vid", "")
+    if vid == "" then vid = mp.get_property("options/vid", "auto") end
+    local as_sound = vid == "no"
+    if as_sound then
+        mp.set_property("file-local-options/vid", "auto")
+        sound_only = true
+    end
     local manifest
     for _, f in ipairs(info.formats or {}) do
         if f.manifest_url and string.find(f.protocol or "", "m3u8", 1, true) then
@@ -63,7 +89,9 @@ mp.add_hook("on_load", 11, function()
     if not manifest then
         return
     end
-    local rate = bitrate_for(info.formats or {})
+    -- As sound, a small picture (about 360p, whose sound is the full one;
+    -- the smallest carry a thinner sound): it is read but never shown.
+    local rate = as_sound and 1000000 or bitrate_for(info.formats or {})
     if rate then
         mp.set_property("file-local-options/hls-bitrate", tostring(rate))
     end
