@@ -1,5 +1,7 @@
 #include "ytmusic.h"
 
+#include <climits>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QDateTime>
@@ -448,6 +450,24 @@ void Client::channelVideos(const QString &channelId, const QString &next, std::f
                     about << text;
             }
         page.about = about.join(QStringLiteral("  \u2022  "));
+        if (!rows.isEmpty())
+            page.handle = rows[0].toObject().value("metadataParts").toArray().first().toObject()
+                              .value("text").toObject().value("content").toString();
+        if (!page.handle.startsWith(QLatin1Char('@')))
+            page.handle.clear();
+        // The banner at about the width it is shown, not its largest.
+        int bestGap = INT_MAX;
+        for (const QJsonValue &source : first(header.value("banner"), "imageBannerViewModel").value("image").toObject()
+                                            .value("sources").toArray()) {
+            const int gap = qAbs(source.toObject().value("width").toInt() - 1700);
+            if (gap < bestGap) {
+                bestGap = gap;
+                page.banner = source.toObject().value("url").toString();
+            }
+        }
+        const QJsonObject preview = first(header.value("description"), "descriptionPreviewViewModel");
+        page.description = preview.value("description").toObject().value("content").toString().trimmed();
+        page.aboutToken = first(header.value("description"), "continuationCommand").value("token").toString();
         for (const QJsonObject &row : all(answer, "lockupViewModel")) {
             Item item = lockupItem(row, false);
             if (item.id.isEmpty() || item.title.isEmpty())
@@ -457,6 +477,30 @@ void Client::channelVideos(const QString &channelId, const QString &next, std::f
         }
         page.next = first(answer, "continuationCommand").value("token").toString();
         done(page);
+    }, true);
+}
+
+void Client::channelAbout(const QString &token, std::function<void(ChannelAbout)> done)
+{
+    if (token.isEmpty()) {
+        done(ChannelAbout());
+        return;
+    }
+    post("browse", {{"continuation", token}}, [done](const QJsonObject &answer) {
+        const QJsonObject view = first(answer, "aboutChannelViewModel");
+        ChannelAbout about;
+        about.description = view.value("description").toString().trimmed();
+        for (const QJsonValue &v : view.value("links").toArray()) {
+            const QJsonObject link = v.toObject().value("channelExternalLinkViewModel").toObject();
+            const QString title = link.value("title").toObject().value("content").toString();
+            const QString address = link.value("link").toObject().value("content").toString();
+            if (!address.isEmpty())
+                about.links.append({title.isEmpty() ? address : title, address});
+        }
+        about.joined = view.value("joinedDateText").toObject().value("content").toString();
+        about.views = view.value("viewCountText").toString();
+        about.country = view.value("country").toString();
+        done(about);
     }, true);
 }
 

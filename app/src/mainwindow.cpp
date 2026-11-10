@@ -403,6 +403,8 @@ MainWindow::MainWindow()
     m_searchPage->onMenu = [this](const QVector<ytmusic::Item> &items, const QPoint &at) { foundMenu(items, at); };
     m_searchPage->onToast = [this](const QString &text) { toast(text); };
     // A channel's page is none of the menu's items.
+    m_searchPage->isFollowed = [this](const QString &id) { return follows(id); };
+    m_searchPage->onFollow = [this](const QString &id, const QString &name, bool follow) { setFollowing(id, name, follow); };
     m_searchPage->onChannelShown = [this](const QString &, const QString &) {
         for (QPushButton *b : m_ytNav)
             b->setChecked(false);
@@ -4279,6 +4281,7 @@ void MainWindow::updateFollowButton()
     if (!m_videoChannelId.isEmpty())
         m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
     m_panel->setFollow(!m_panelChannelId.isEmpty(), follows(m_panelChannelId));
+    m_searchPage->refreshFollow();
 }
 
 QVector<ytmusic::Item> MainWindow::watchLater() const

@@ -62,6 +62,10 @@ public:
     // A channel's own videos, all of them page by page, under its name.
     void showChannel(const QString &channelId, const QString &name);
     std::function<void(const QString &channelId, const QString &name)> onChannelShown;
+    // The channel page's Follow: asked and told through the app.
+    std::function<bool(const QString &channelId)> isFollowed;
+    std::function<void(const QString &channelId, const QString &name, bool follow)> onFollow;
+    void refreshFollow();
     bool youTubeMode() const { return m_youtube; }
     void setYouTubeMode(bool youtube);
     // The videos watched here, newest first, and the channels watched most.
@@ -158,6 +162,8 @@ private:
     bool m_listFromLink = false;
 
     void noteView(const QString &key, std::function<void()> go);
+    void showChannelHeader(bool shown);
+    class ChannelHeader *m_channelHeader = nullptr;
     QString m_viewKey;
     std::function<void()> m_viewGo;
 };

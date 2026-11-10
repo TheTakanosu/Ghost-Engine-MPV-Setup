@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QVector>
 
@@ -45,8 +46,21 @@ struct ChannelPage {
     QString name;
     QString avatar;
     QString about;       // "756 subscribers  •  27 videos"
+    QString handle;      // "@LofiGirl"
+    QString banner;      // the wide picture over the page, empty when it has none
+    QString description; // its first lines, as the page shows them
+    QString aboutToken;  // for channelAbout: the whole description and the links
     QVector<Item> videos;
     QString next;        // the next page's token, empty at the end
+};
+
+// A channel's About: all of its description, its links, when it started.
+struct ChannelAbout {
+    QString description;
+    QVector<QPair<QString, QString>> links;   // title, address ("discord.com/invite/...")
+    QString joined;      // "Joined Mar 18, 2015"
+    QString views;       // "2,731,632,938 views"
+    QString country;
 };
 
 struct PlaylistPage {
@@ -99,6 +113,8 @@ public:
     // The channel's Videos tab, every upload page by page (~30 a page):
     // `next` empty for the first page with the channel's header.
     void channelVideos(const QString &channelId, const QString &next, std::function<void(ChannelPage)> done);
+    // The channel's About (from ChannelPage::aboutToken).
+    void channelAbout(const QString &token, std::function<void(ChannelAbout)> done);
     // The channel's stream on air now, or an empty item (no id) when none.
     void liveNow(const QString &channelId, std::function<void(Item)> done);
 

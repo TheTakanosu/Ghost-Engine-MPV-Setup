@@ -1,5 +1,7 @@
 #include "searchpage.h"
 
+#include "channelheader.h"
+
 #include "icons.h"
 #include "profile.h"
 #include "theme.h"
@@ -15,6 +17,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QWheelEvent>
 #include <QSet>
 #include <QSettings>
 #include <QStackedWidget>
@@ -322,6 +325,26 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     };
     connect(m_avatars, &RemotePictures::ready, this, [this] { m_homeGrid->viewport()->update(); });
     m_homeGrid->setItemDelegate(m_homeCards);
+    // A channel's own page: its header over its videos (Batın, 2026-11-10).
+    m_channelHeader = new ChannelHeader(m_avatars);
+    m_channelHeader->hide();
+    m_channelHeader->onFollow = [this](bool follow) {
+        if (onFollow)
+            onFollow(m_homeChannelId, m_homeChannelName, follow);
+    };
+    m_channelHeader->onWheel = [this](QWheelEvent *event) {
+        QWheelEvent copy(event->position(), event->globalPosition(), event->pixelDelta(), event->angleDelta(),
+                         event->buttons(), event->modifiers(), event->phase(), event->inverted());
+        QCoreApplication::sendEvent(m_homeGrid->viewport(), &copy);
+    };
+    homeColumn->addWidget(m_channelHeader);
+    // Scrolled down, the header folds to one row.
+    connect(m_homeGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
+        // Folded past the first row, open again only at the top: the grid
+        // growing as it folds does not flip it back.
+        if (m_channelHeader->isVisible() && (value > 40 || value == 0))
+            m_channelHeader->setFolded(value > 40);
+    });
     m_homeGrid->installEventFilter(this);
     m_homeGrid->viewport()->installEventFilter(this);
     homeColumn->addWidget(m_homeGrid, 1);
@@ -604,6 +627,7 @@ void SearchPage::setYouTubeMode(bool youtube)
 
 void SearchPage::showYouTubeHome()
 {
+    showChannelHeader(false);
     if (!m_youtube)
         setYouTubeMode(true);
     m_views->setCurrentWidget(m_homeGrid->parentWidget());
@@ -693,6 +717,7 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
 
 void SearchPage::searchInGrid(const QString &query)
 {
+    showChannelHeader(false);
     m_homeChannelId.clear();
     // YouTube's results as its home's cards (channel pictures, length,
     // views), page after page as it is scrolled, the chips above.
@@ -743,10 +768,29 @@ void SearchPage::showChannel(const QString &channelId, const QString &name)
     m_homeChannelName = name;
     for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>())
         chip->setChecked(false);
-    m_homeStatus->setText(name.isEmpty() ? QStringLiteral("Loading the channel...") : name);
-    m_homeStatus->show();
+    m_homeStatus->hide();
+    m_channelHeader->reset(channelId, name);
+    m_channelHeader->setFollowed(isFollowed && isFollowed(channelId));
+    showChannelHeader(true);
     m_homeGrid->verticalScrollBar()->setValue(0);
     homeMore();
+    // On air now: its stream leads the videos, the picture ringed in red.
+    const int liveSerial = m_homeSerial;
+    m_client.liveNow(channelId, [this, liveSerial](const ytmusic::Item &live) {
+        if (liveSerial != m_homeSerial || live.id.isEmpty())
+            return;
+        m_channelHeader->setLive(true);
+        ytmusic::Item first = live;
+        first.artist = m_homeChannelName;
+        QVector<ytmusic::Item> items{first};
+        for (const ytmusic::Item &it : std::as_const(m_home))
+            if (it.id != live.id)
+                items << it;
+        m_home.clear();
+        m_homeSeen.clear();
+        m_homeGrid->clear();
+        appendHome(items);
+    });
     QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
     if (onChannelShown)
         onChannelShown(channelId, name);
@@ -755,6 +799,7 @@ void SearchPage::showChannel(const QString &channelId, const QString &name)
 
 void SearchPage::homeChip(const QString &channel)
 {
+    showChannelHeader(false);
     m_homeChannelId.clear();
     m_homeSearch = false;
     m_homeFixed = false;
@@ -823,6 +868,12 @@ void SearchPage::homeMore()
             if (!page.name.isEmpty()) {
                 m_homeChannelName = page.name;
                 m_homeStatus->setText(page.about.isEmpty() ? page.name : page.name + QStringLiteral("  \u00b7  ") + page.about);
+                m_channelHeader->setPage(page);
+                const QString channel = m_homeChannelId;
+                m_client.channelAbout(page.aboutToken, [this, channel](const ytmusic::ChannelAbout &about) {
+                    if (channel == m_homeChannelId)
+                        m_channelHeader->setAbout(about);
+                });
             }
             for (ytmusic::Item &it : page.videos) {
                 it.artist = m_homeChannelName;
@@ -1012,4 +1063,16 @@ void SearchPage::noteView(const QString &key, std::function<void()> go)
     m_viewGo = std::move(go);
     if (onViewChanged)
         onViewChanged();
+}
+
+void SearchPage::showChannelHeader(bool shown)
+{
+    m_channelHeader->setVisible(shown);
+    m_homeChips->setVisible(!shown);
+}
+
+void SearchPage::refreshFollow()
+{
+    if (m_channelHeader && !m_homeChannelId.isEmpty())
+        m_channelHeader->setFollowed(isFollowed && isFollowed(m_homeChannelId));
 }
