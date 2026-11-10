@@ -93,6 +93,7 @@ public:
     QWidget *miniWindow() const { return m_miniWindow; }
     // Its edges being dragged: a still stands in for mpv, which stays hidden.
     bool miniSizing() const;
+    bool miniShown() const { return m_miniWindow && m_miniWindow->isVisible(); }
     // Put away for good, also when Qt thinks it already is: pinned, it kept
     // itself up through the app's minimising behind Qt's back, and Qt's
     // hide() then did nothing.
@@ -212,6 +213,12 @@ private:
     QListWidget *m_list;
     icons::IconButton *m_play;
     icons::IconButton *m_miniPlay;
+    QSlider *m_miniSeek = nullptr;
+    QLabel *m_miniTime = nullptr;
+    QPushButton *m_miniMute = nullptr;
+    QSlider *m_miniVolume = nullptr;
+    QPushButton *m_miniSubs = nullptr;
+    bool m_miniDragging = false;
     QSlider *m_seek;
     QLabel *m_seekTip = nullptr;   // the time the handle is at, over it while dragged
     QElapsedTimer m_scrubClock;

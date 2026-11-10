@@ -1079,7 +1079,7 @@ MainWindow::MainWindow()
             m_videoPage->setAspect(m_mpv.property("video-params/aspect").toDouble());
         // The video page's own controls, also over the picture in the now
         // playing view.
-        if (m_pages->currentWidget() == m_videoPage || panelVideo()) {
+        if (m_pages->currentWidget() == m_videoPage || panelVideo() || m_videoPage->miniShown()) {
             if (name == "time-pos" || name == "duration")
                 m_videoPage->setTimes(m_mpv.property("time-pos").isValid() ? m_mpv.property("time-pos").toDouble() : -1,
                                       m_mpv.property("duration").isValid() ? m_mpv.property("duration").toDouble() : -1);

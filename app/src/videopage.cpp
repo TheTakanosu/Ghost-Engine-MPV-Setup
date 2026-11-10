@@ -462,7 +462,7 @@ protected:
                     setHot(true);
                     if (auto *button = qobject_cast<QAbstractButton *>(b))
                         button->click();
-                    return;
+                    return;   // a bar or the time: shown, not the video opened
                 }
             if (clicked)
                 clicked();
@@ -494,26 +494,62 @@ public:
 private:
     QPoint m_press;
     bool m_pressed = false;
-    // Play in the middle; back to the video and pin at the top left, close
-    // at the top right.
+    // As YouTube's mini player (Batın, 2026-11-11): back, play and forward in
+    // the middle; back to the video and pin at the top left, close at the
+    // top right; along the bottom the seek bar, and under it the sound and
+    // the time on the left, subtitles and full screen on the right.
+    // buttons: 0 play, 1 back to the video, 2 pin, 3 close, 4 back, 5 forward,
+    // 6 seek bar, 7 time, 8 mute, 9 volume, 10 subtitles, 11 full screen.
     void placeButtons()
     {
         if (buttons.size() < 4)
             return;
-        buttons[0]->move((width() - buttons[0]->width()) / 2, (height() - buttons[0]->height()) / 2);
+        const int w = width(), h = height();
+        QWidget *play = buttons[0];
+        play->move((w - play->width()) / 2, (h - play->height()) / 2 - (buttons.size() >= 12 ? 8 : 0));
         buttons[1]->move(8, 8);
         buttons[2]->move(8 + buttons[1]->width() + 4, 8);
-        buttons[3]->move(width() - buttons[3]->width() - 8, 8);
+        buttons[3]->move(w - buttons[3]->width() - 8, 8);
+        if (buttons.size() < 12)
+            return;
+        const int gap = qMax(8, w / 14);
+        buttons[4]->move(play->x() - gap - buttons[4]->width(), play->y() + (play->height() - buttons[4]->height()) / 2);
+        buttons[5]->move(play->geometry().right() + 1 + gap, play->y() + (play->height() - buttons[5]->height()) / 2);
+        // The row along the bottom, and the bar just over it.
+        const int rowH = buttons[8]->height();
+        const int rowY = h - rowH - 6;
+        buttons[6]->setGeometry(10, rowY - 16, w - 20, 16);
+        int x = 8;
+        buttons[8]->move(x, rowY);
+        x += buttons[8]->width() + 2;
+        // The volume bar only where there is room for it.
+        m_volumeRoom = w >= 300;
+        buttons[9]->setGeometry(x, rowY + (rowH - 18) / 2, 64, 18);
+        if (m_volumeRoom)
+            x += 64 + 8;
+        int right = w - 8 - buttons[11]->width();
+        buttons[11]->move(right, rowY);
+        if (subtitles) {
+            right -= buttons[10]->width() + 2;
+            buttons[10]->move(right, rowY);
+        }
+        const int timeW = qMax(0, qMin(buttons[7]->sizeHint().width(), right - x - 4));
+        buttons[7]->setGeometry(x, rowY, timeW, rowH);
     }
     void setHot(bool hot)
     {
         m_hot = hot;
         placeButtons();
-        for (QWidget *b : std::as_const(buttons))
-            b->setVisible(hot);
+        for (int i = 0; i < buttons.size(); ++i)
+            buttons[i]->setVisible(hot && (i != 9 || m_volumeRoom) && (i != 10 || subtitles));
         update();
     }
     bool m_hot = false;
+    bool m_volumeRoom = true;
+
+public:
+    bool subtitles = false;   // the video has some: the button is there
+    void refresh() { if (m_hot) setHot(true); }
 };
 
 // A video in the list on the right: its thumbnail, title, and length, as in
@@ -1302,7 +1338,53 @@ QWidget *VideoPage::buildMini()
     auto *close = miniButton(QString(QChar(0xE8BB)), "Close (pauses the video)");
     close->setParent(face);
     connect(close, &QPushButton::clicked, this, [this] { if (onCloseMini) onCloseMini(); });
-    face->buttons = {m_miniPlay, expand, pin, close};
+    // Back and forward, the bar, the sound, the time, subtitles and full
+    // screen, as YouTube's mini player has (Batın, 2026-11-11).
+    auto *back = new icons::IconButton(icons::Icon::Back10, 32, "Back (Left)", face);
+    back->setColors(QColor(240, 240, 245), Qt::white);
+    connect(back, &QAbstractButton::clicked, this, [this] { if (onSkip) onSkip(-icons::skipSeconds()); });
+    auto *forward = new icons::IconButton(icons::Icon::Forward10, 32, "Forward (Right)", face);
+    forward->setColors(QColor(240, 240, 245), Qt::white);
+    connect(forward, &QAbstractButton::clicked, this, [this] { if (onSkip) onSkip(icons::skipSeconds()); });
+    m_miniSeek = new QSlider(Qt::Horizontal, face);
+    m_miniSeek->setObjectName("seek");
+    m_miniSeek->setRange(0, kSeekSteps);
+    m_miniSeek->setCursor(Qt::PointingHandCursor);
+    connect(m_miniSeek, &QSlider::sliderPressed, this, [this] { m_miniDragging = true; });
+    connect(m_miniSeek, &QSlider::sliderReleased, this, [this] {
+        m_miniDragging = false;
+        if (onSeek && m_duration > 0)
+            onSeek(m_duration * m_miniSeek->value() / kSeekSteps);
+    });
+    m_miniTime = new QLabel(face);
+    m_miniTime->setStyleSheet(QStringLiteral("QLabel { color: rgb(240,240,245); background: transparent; }"));
+    m_miniTime->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_miniMute = miniButton(QString(QChar(0xE767)), "Mute");
+    m_miniMute->setParent(face);
+    connect(m_miniMute, &QPushButton::clicked, this, [this] { if (onToggleMute) onToggleMute(); });
+    m_miniVolume = new QSlider(Qt::Horizontal, face);
+    m_miniVolume->setRange(0, 130);
+    m_miniVolume->setCursor(Qt::PointingHandCursor);
+    connect(m_miniVolume, &QSlider::valueChanged, this, [this](int v) {
+        if ((m_miniVolume->isSliderDown() || m_miniVolume->underMouse()) && onVolume)
+            onVolume(v);
+    });
+    m_miniSubs = miniButton(QString(QChar(0xE7F0)), "Subtitles");
+    m_miniSubs->setParent(face);
+    connect(m_miniSubs, &QPushButton::clicked, this, [this] {
+        bool on = false;
+        for (const QVariant &v : std::as_const(m_tracks))
+            if (v.toMap().value("type").toString() == "sub" && v.toMap().value("selected").toBool())
+                on = true;
+        // Off, or the one mpv picks by the language order in Settings.
+        if (onSubtitle)
+            onSubtitle(on ? QVariant(QStringLiteral("no")) : QVariant(QStringLiteral("auto")));
+    });
+    auto *full = miniButton(QString(QChar(0xE1D9)), "Full screen");
+    full->setParent(face);
+    connect(full, &QPushButton::clicked, this, [this] { if (onFullScreen) onFullScreen(); });
+    face->buttons = {m_miniPlay, expand, pin, close, back, forward, m_miniSeek, m_miniTime,
+                     m_miniMute, m_miniVolume, m_miniSubs, full};
     face->setMouseTracking(true);   // the resize cursor at its edges
     for (QWidget *b : std::as_const(face->buttons))
         b->hide();
@@ -1404,6 +1486,11 @@ void VideoPage::setTimes(double position, double duration)
         m_time->setText(clock(position) + QStringLiteral(" / ") + clock(duration));
     if (!m_dragging)
         m_seek->setValue(duration > 0 && position >= 0 ? int(position / duration * kSeekSteps) : 0);
+    if (m_miniTime) {
+        m_miniTime->setText(m_time->text());
+        if (!m_miniDragging)
+            m_miniSeek->setValue(duration > 0 && position >= 0 ? int(position / duration * kSeekSteps) : 0);
+    }
 }
 
 void VideoPage::setPaused(bool paused)
@@ -1421,6 +1508,15 @@ void VideoPage::setTracks(const QVariantList &tracks)
         if (v.toMap().value("type").toString() == "sub" && v.toMap().value("selected").toBool())
             on = true;
     static_cast<FlatButton *>(m_subs)->setOn(on);
+    if (m_miniSubs) {
+        static_cast<FlatButton *>(m_miniSubs)->setOn(on);
+        bool any = false;
+        for (const QVariant &v : tracks)
+            if (v.toMap().value("type").toString() == "sub")
+                any = true;
+        static_cast<MiniFace *>(m_mini)->subtitles = any;
+        static_cast<MiniFace *>(m_mini)->refresh();
+    }
 }
 
 void VideoPage::setQualityCap(int height)
@@ -1443,6 +1539,14 @@ void VideoPage::setVolume(int volume, bool muted)
     }
     m_mute->setText(QString(QChar(muted || volume <= 0 ? 0xE74F : 0xE767)));
     m_mute->setToolTip(muted ? "Unmute" : "Mute");
+    if (m_miniVolume) {
+        if (!m_miniVolume->isSliderDown()) {
+            const QSignalBlocker quiet(m_miniVolume);
+            m_miniVolume->setValue(volume);
+        }
+        m_miniMute->setText(m_mute->text());
+        m_miniMute->setToolTip(m_mute->toolTip());
+    }
 }
 
 void VideoPage::setAspect(double aspect)
