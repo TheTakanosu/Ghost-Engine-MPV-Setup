@@ -831,6 +831,20 @@ MainWindow::MainWindow()
         if (m_mpv.connected() && m_mpv.property("user-data/ghost/audio").toBool())
             m_mpv.setProperty("force-window", shown ? "yes" : "no");
     };
+    m_nowPlaying->canLike = [this] {
+        return m_mpv.connected() && !playingTarget().isEmpty() && m_mpv.property("user-data/ghost/audio").toBool();
+    };
+    m_nowPlaying->isLiked = [this] {
+        const QString path = likedPath(false);
+        const QString id = youtube::videoId(playingTarget());
+        if (path.isEmpty() || id.isEmpty())
+            return false;
+        for (const PlaylistEntry &e : Playlist::peek(path).readEntries())
+            if (youtube::videoId(e.target) == id)
+                return true;
+        return false;
+    };
+    m_nowPlaying->onLike = [this] { toggleLiked(); };
     m_nowPlaying->numberFor = [this] {
         // The number the song has where it is shown: its row in the open
         // list when that is the one playing, else its place in the file.
@@ -3127,6 +3141,71 @@ void MainWindow::openPlayingList()
     if (!playing.isEmpty() &&
         QDir::cleanPath(QFileInfo(playing).absolutePath()).compare(foundFolder(), Qt::CaseInsensitive) == 0)
         showRadioList(playing);
+}
+
+QString MainWindow::playingTarget() const
+{
+    const QString source = m_mpv.property("user-data/ghost/source").toString();
+    const QString id = youtube::videoId(source.isEmpty() ? m_mpv.property("path").toString() : source);
+    return id.isEmpty() ? QString() : QStringLiteral("https://www.youtube.com/watch?v=") + id;
+}
+
+QString MainWindow::likedPath(bool make)
+{
+    QSettings settings;
+    QString path = settings.value("liked/path").toString();
+    if (!path.isEmpty() && QFileInfo::exists(path))
+        return path;
+    if (!make)
+        return {};
+    path = m_library.createPlaylist(QStringLiteral("Liked songs"), QString());
+    if (!path.isEmpty())
+        settings.setValue("liked/path", path);
+    return path;
+}
+
+void MainWindow::toggleLiked()
+{
+    const QString target = playingTarget();
+    const QString id = youtube::videoId(target);
+    if (id.isEmpty())
+        return;
+    const QString path = likedPath(true);
+    if (path.isEmpty()) {
+        toast("Liked songs couldn't be made.");
+        return;
+    }
+    const QVector<PlaylistEntry> entries = Playlist::peek(path).readEntries();
+    QVector<int> keep;
+    for (int i = 0; i < entries.size(); ++i)
+        if (youtube::videoId(entries[i].target) != id)
+            keep << i;
+    bool ok;
+    if (keep.size() < entries.size()) {
+        ok = Playlist::writeOrder(path, keep);
+        if (ok)
+            toast("Removed from Liked songs");
+    } else {
+        const auto [artist, track] = playingSong();
+        const QString title = track.isEmpty() ? m_mpv.property("media-title").toString().trimmed()
+                                              : (artist.isEmpty() ? track : artist + QStringLiteral(" - ") + track);
+        ok = Playlist::append(path, {PlaylistEntry{title, target, {}}});
+        if (ok)
+            toast("Added to Liked songs");
+    }
+    if (!ok) {
+        toast("Liked songs couldn't be written.");
+        return;
+    }
+    // The library shows the new count; an open Liked songs shows the change.
+    const auto &before = m_library.playlists();
+    const bool open = m_open >= 0 && m_open < before.size() && before[m_open].path.compare(path, Qt::CaseInsensitive) == 0;
+    if (open)
+        reopenAfter(path);
+    else {
+        m_library.rescan();
+        refill();
+    }
 }
 
 void MainWindow::showRadioList(const QString &path)

@@ -7,6 +7,7 @@ class MpvClient;
 class ThumbnailCache;
 class QAbstractButton;
 class QLabel;
+class QPushButton;
 class QSlider;
 namespace icons { class IconButton; }
 
@@ -40,6 +41,13 @@ public:
     // empty title takes it away.
     void setResume(const QString &title, const QString &subtitle, const QString &coverId, double at, double duration);
     std::function<void()> onResume;
+    // Liked songs (Batın, 2026-11-11): the + beside the title adds the song
+    // playing, a tick takes it out. canLike: a song is playing (not a
+    // YouTuber's video); isLiked: it is in the list.
+    std::function<bool()> canLike;
+    std::function<bool()> isLiked;
+    std::function<void()> onLike;
+    void refreshLike();
 
 signals:
     // The cover was clicked: show the list mpv is playing.
@@ -61,6 +69,9 @@ private:
     ThumbnailCache *m_covers;
     QLabel *m_cover;
     QLabel *m_title;
+    QPushButton *m_like = nullptr;
+    QWidget *m_leftBox = nullptr;
+    int titleRoom() const;
     QLabel *m_subtitle;
     QLabel *m_elapsed;
     QLabel *m_total;

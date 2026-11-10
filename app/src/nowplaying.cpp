@@ -110,13 +110,27 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     m_title->setObjectName("npTitle");
     m_subtitle = new QLabel;
     m_subtitle->setObjectName("npSubtitle");
+    m_like = new QPushButton;
+    m_like->setCursor(Qt::PointingHandCursor);
+    m_like->hide();
+    connect(m_like, &QPushButton::clicked, this, [this] {
+        if (onLike)
+            onLike();
+        refreshLike();
+    });
+    auto *titleRow = new QHBoxLayout;
+    titleRow->setSpacing(8);
+    titleRow->addWidget(m_title);
+    titleRow->addWidget(m_like, 0, Qt::AlignVCenter);
+    titleRow->addStretch(1);
     auto *info = new QVBoxLayout;
     info->setSpacing(2);
     info->addStretch();
-    info->addWidget(m_title);
+    info->addLayout(titleRow);
     info->addWidget(m_subtitle);
     info->addStretch();
     auto *leftBox = new QWidget;
+    m_leftBox = leftBox;
     auto *left = new QHBoxLayout(leftBox);
     left->setContentsMargins(0, 0, 0, 0);
     left->setSpacing(12);
@@ -395,8 +409,9 @@ void NowPlayingBar::onProperty(const QString &name)
     if (name == "media-title" || name == "metadata/by-key/uploader" || name == "playlist-pos" ||
         name == "playlist-count" || name == "path") {
         const QString title = m_mpv->property("media-title").toString();
-        m_title->setText(QFontMetrics(m_title->font()).elidedText(title, Qt::ElideRight, qMax(120, m_title->width())));
+        m_title->setText(QFontMetrics(m_title->font()).elidedText(title, Qt::ElideRight, titleRoom()));
         m_title->setToolTip(title);
+        refreshLike();
         const QString uploader = m_mpv->property("metadata/by-key/uploader").toString();
         const int count = m_mpv->property("playlist-count").toInt();
         const int number = numberFor ? numberFor() : 0;
@@ -431,6 +446,34 @@ void NowPlayingBar::onProperty(const QString &name)
                                                         m_mpv->property("mute").toBool());
     if (name == "volume" && !m_volume->isSliderDown())
         m_volume->setValue(int(m_mpv->property("volume").toDouble()));
+}
+
+// The title's room: the left column less the cover and the + beside it.
+// Not the label's own width, which is only as wide as the last title was.
+int NowPlayingBar::titleRoom() const
+{
+    const int like = m_like && m_like->isVisible() ? m_like->width() + 8 : 0;
+    return qMax(60, (m_leftBox ? m_leftBox->width() : 300) - m_cover->width() - 12 - like - 4);
+}
+
+void NowPlayingBar::refreshLike()
+{
+    if (!m_like)
+        return;
+    const bool can = canLike && canLike();
+    m_like->setVisible(can);
+    if (!can)
+        return;
+    const bool liked = isLiked && isLiked();
+    m_like->setText(QString(QChar(liked ? 0xE73E : 0xE710)));
+    m_like->setToolTip(liked ? "Remove from Liked songs" : "Add to Liked songs");
+    // A ring with a + in it; liked, filled in the accent with a tick.
+    theme::style(m_like, QStringLiteral(
+        "QPushButton { font-family: \"Segoe Fluent Icons\", \"Segoe MDL2 Assets\"; font-size: 8pt; padding: 0;"
+        " min-width: 20px; max-width: 20px; min-height: 20px; max-height: 20px; border-radius: 10px; %1 }"
+        "QPushButton:hover { border-color: @text; color: @text; }")
+        .arg(liked ? QStringLiteral("background: @accent; color: @onAccent; border: 1px solid @accent;")
+                   : QStringLiteral("background: transparent; color: @muted; border: 1px solid @muted;")));
 }
 
 void NowPlayingBar::resizeEvent(QResizeEvent *event)

@@ -76,6 +76,10 @@ private:
     bool m_ytCompact = false;
     void setYtCompact(bool compact);
     void padYtChannels();
+    // Liked songs: the list's file (made on the first like), the song playing.
+    QString likedPath(bool make);
+    QString playingTarget() const;
+    void toggleLiked();
     void showRadioList(const QString &path);
     void openLeftPanel(int left, bool grow, const std::function<void(int)> &done);
     int m_ytChannelPad = -1;
