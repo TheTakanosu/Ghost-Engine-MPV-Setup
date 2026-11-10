@@ -483,6 +483,15 @@ void SearchPage::setQuery(const QString &text)
         return;
     }
 
+    noteView(QStringLiteral("results:") + query, [this, query] {
+        if (m_youtube)
+            setYouTubeMode(false);
+        if (m_query == query)
+            showResults();
+        else
+            setQuery(query);
+    });
+
     // A pasted link: its playlist opens; a song or video link shows that
     // one, ready to play with its radio.
     const QString listId = ytmusic::playlistIdIn(query);
@@ -628,7 +637,7 @@ void SearchPage::showYouTubeHome()
     } else if (m_home.isEmpty() && !m_homeLoading) {
         fillHome(true);
     }
-    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);    noteView(QStringLiteral("ythome"), [this] { showYouTubeHome(); });
 }
 
 void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &items)
@@ -647,7 +656,9 @@ void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &
     m_homeStatus->setText(title);
     m_homeStatus->show();
     appendHome(items);
-    m_homeGrid->verticalScrollBar()->setValue(0);
+    m_homeGrid->verticalScrollBar()->setValue(0);    // "Following: loading..." and "Following" are one place.
+    noteView(QStringLiteral("videos:") + title.section(QLatin1Char(':'), 0, 0),
+             [this, title, items] { showVideos(title, items); });
 }
 
 int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
@@ -703,7 +714,11 @@ void SearchPage::searchInGrid(const QString &query)
     m_homeStatus->show();
     m_homeGrid->verticalScrollBar()->setValue(0);
     homeMore();
-    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);    noteView(QStringLiteral("grid:") + query, [this, query] {
+        if (!m_youtube)
+            setYouTubeMode(true);
+        searchInGrid(query);
+    });
 }
 
 void SearchPage::showChannel(const QString &channelId, const QString &name)
@@ -735,6 +750,7 @@ void SearchPage::showChannel(const QString &channelId, const QString &name)
     QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
     if (onChannelShown)
         onChannelShown(channelId, name);
+    noteView(QStringLiteral("channel:") + channelId, [this, channelId, name] { showChannel(channelId, name); });
 }
 
 void SearchPage::homeChip(const QString &channel)
@@ -929,6 +945,7 @@ void SearchPage::openPlaylist(const QString &id, const QString &title)
     m_listSongs->clear();
     m_saveButton->setEnabled(false);
     m_views->setCurrentIndex(1);
+    noteView(QStringLiteral("ytlist:") + id, [this, id, title] { openPlaylist(id, title); });
     const int serial = m_serial;
     m_client.playlist(id, [this, serial, title](ytmusic::PlaylistPage page) {
         if (serial != m_serial || page.id != m_list.id)
@@ -987,4 +1004,12 @@ void SearchPage::refreshCovers(const QString &)
     for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList, m_listSongs, m_homeGrid})
         if (list->isVisible())
             list->viewport()->update();
+}
+
+void SearchPage::noteView(const QString &key, std::function<void()> go)
+{
+    m_viewKey = key;
+    m_viewGo = std::move(go);
+    if (onViewChanged)
+        onViewChanged();
 }

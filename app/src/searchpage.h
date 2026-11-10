@@ -71,6 +71,12 @@ public:
     // A song's radio, then onPlay; the song alone when there is none.
     void playRadio(const ytmusic::Item &song);
 
+    // What the page shows now, as a key and a way to show it again: the
+    // app's Back and Forward. onViewChanged after each new view.
+    QString viewKey() const { return m_viewKey; }
+    std::function<void()> viewRestore() const { return m_viewGo; }
+    std::function<void()> onViewChanged;
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -150,4 +156,8 @@ private:
     QPushButton *m_saveButton = nullptr;
     ytmusic::PlaylistPage m_list;
     bool m_listFromLink = false;
+
+    void noteView(const QString &key, std::function<void()> go);
+    QString m_viewKey;
+    std::function<void()> m_viewGo;
 };

@@ -44,6 +44,8 @@ const QVector<Action> &actions()
         {"subtitles", "Subtitles on / off", "Video", "C"},
         {"search", "Search", "Go to", "Ctrl+K", true},
         {"librarySearch", "Search in Your Library", "Go to", "Ctrl+Shift+F", true},
+        {"goBack", "Back", "Go to", "Alt+Left"},
+        {"goForward", "Forward", "Go to", "Alt+Right"},
         {"home", "Home", "Go to", "Alt+H"},
         {"lyrics", "Lyrics", "Go to", "Alt+L"},
         {"settings", "Settings", "Go to", "Ctrl+,"},

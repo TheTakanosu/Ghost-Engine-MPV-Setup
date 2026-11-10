@@ -422,6 +422,7 @@ void apply(QApplication &app)
             min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; padding: 0; font-size: 12pt;
         }
         QPushButton#pill:hover { background: @raisedHover; }
+        QPushButton#pill:disabled { color: @muted; background: transparent; }
         QPushButton#chrome, QPushButton#chromeClose {
             border-radius: 0; min-width: 46px; max-width: 46px; min-height: 44px; max-height: 44px; padding: 0; font-size: 9pt;
         }

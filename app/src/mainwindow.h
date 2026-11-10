@@ -423,6 +423,25 @@ private:
     QLabel *m_greeting = nullptr;
     QLabel *m_toast = nullptr;
     QTimer m_toastTimer;
+
+    // Back and Forward, as Spotify's arrows: each place visited (a list, a
+    // channel, a search, the video page...) as a key and a way to show it again.
+    struct Place {
+        QString key;
+        bool youtube = false;   // the layout it was in
+        std::function<void()> go;
+    };
+    Place herePlace();
+    void noteVisit();
+    void goHistory(bool forward);
+    void updateHistoryButtons();
+    QVector<Place> m_backPlaces;
+    QVector<Place> m_forwardPlaces;
+    Place m_here;
+    bool m_navigating = false;
+    QTimer m_visitSoon;
+    QPushButton *m_backButton = nullptr;
+    QPushButton *m_forwardButton = nullptr;
     class UpdateChecker *m_updates = nullptr;
     bool m_updateAsked = false;     // the check was asked for, so say "up to date" too
     QPushButton *m_updateButton = nullptr;   // the top bar's, while something is behind

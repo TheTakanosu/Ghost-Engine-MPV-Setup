@@ -935,6 +935,11 @@ MainWindow::MainWindow()
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
     setSearchMiddle(settings.value("search/middle", false).toBool());
+    m_visitSoon.setSingleShot(true);
+    m_visitSoon.setInterval(0);
+    connect(&m_visitSoon, &QTimer::timeout, this, &MainWindow::noteVisit);
+    connect(m_pages, &QStackedWidget::currentChanged, this, [this] { m_visitSoon.start(); });
+    m_searchPage->onViewChanged = [this] { m_visitSoon.start(); };
     if (settings.value("layout/youtube", false).toBool())
         QTimer::singleShot(0, this, [this] { setYouTubeLayout(true, false); });
     m_rightSplit->restoreState(settings.value("window/panelSplit").toByteArray());
@@ -1295,6 +1300,12 @@ void MainWindow::changeEvent(QEvent *event)
 
 QWidget *MainWindow::buildTopBar()
 {
+    m_backButton = glyphButton(QChar(0xE76B), "Go back (Alt+Left)", "pill");
+    m_forwardButton = glyphButton(QChar(0xE76C), "Go forward (Alt+Right)", "pill");
+    connect(m_backButton, &QPushButton::clicked, this, [this] { goHistory(false); });
+    connect(m_forwardButton, &QPushButton::clicked, this, [this] { goHistory(true); });
+    m_backButton->setEnabled(false);
+    m_forwardButton->setEnabled(false);
     auto *home = glyphButton(kIconHome, "Home", "pill");
     connect(home, &QPushButton::clicked, this, &MainWindow::showHome);
     // YouTube: its own home and search, every video and not only music.
@@ -1370,7 +1381,7 @@ QWidget *MainWindow::buildTopBar()
         ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     });
     connect(close, &QPushButton::clicked, this, &MainWindow::close);
-    m_chromeButtons = {m_profileButton, home, youtube, m_search, m_updateButton, gear, minimize, m_maxButton, close};
+    m_chromeButtons = {m_backButton, m_forwardButton, m_profileButton, home, youtube, m_search, m_updateButton, gear, minimize, m_maxButton, close};
 
     m_topBar = new QWidget;
     m_topBar->setObjectName("topBar");
@@ -1379,6 +1390,8 @@ QWidget *MainWindow::buildTopBar()
     auto *row = new QHBoxLayout(m_topBar);
     row->setContentsMargins(8, 0, 0, 0);
     row->setSpacing(8);
+    row->addWidget(m_backButton);
+    row->addWidget(m_forwardButton);
     row->addWidget(home);
     row->addWidget(youtube);
     m_searchButton = glyphButton(QChar(0xE721), "Search", "pill");
@@ -3437,6 +3450,8 @@ void MainWindow::runShortcut(const QString &action)
         if (m_videoFull)
             setVideoFullScreen(false);
         openSearchPopup();
+    } else if (action == QLatin1String("goBack") || action == QLatin1String("goForward")) {
+        goHistory(action == QLatin1String("goForward"));
     } else if (action == QLatin1String("librarySearch")) {
         if (m_compact)
             m_collapse->click();
@@ -4708,6 +4723,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     applySort();   // and filterSongs, which shows the empty hint
     showDownloadState();
     m_pages->setCurrentIndex(1);
+    m_visitSoon.start();   // another list on the same page is another place
     if (keepView) {
         m_songs->verticalScrollBar()->setValue(scrolled);
     } else {
@@ -6615,4 +6631,133 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
         to->addAction(p.folder.isEmpty() ? p.name : p.folder + QStringLiteral("  ›  ") + p.name, this, [addTo, path] { addTo(path); });
     }
     menu.exec(global);
+}
+
+// -- back and forward ---------------------------------------------------------
+
+MainWindow::Place MainWindow::herePlace()
+{
+    Place p;
+    p.youtube = m_youtubeLayout;
+    QWidget *now = m_pages->currentWidget();
+    if (now == m_videoPage) {
+        p.key = QStringLiteral("video");
+        p.go = [this] {
+            // Only while a video is still what plays.
+            if (m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool())
+                showVideoPage();
+        };
+    } else if (now == m_lyricsView) {
+        p.key = QStringLiteral("lyrics");
+        p.go = [this] {
+            if (m_pages->currentWidget() != m_lyricsView)
+                toggleLyrics();
+        };
+    } else if (now == m_settings) {
+        p.key = QStringLiteral("settings");
+        p.go = [this] { showSettings(); };
+    } else if (now == m_shortcutsScroll) {
+        p.key = QStringLiteral("shortcuts");
+        p.go = [this] { showShortcuts(); };
+    } else if (now == m_profileScroll) {
+        p.key = QStringLiteral("profile");
+        p.go = [this] { showProfile(); };
+    } else if (now == m_searchPage) {
+        const QString text = m_search->text();
+        const std::function<void()> view = m_searchPage->viewRestore();
+        // Which of the YouTube menu's rows was lit (Home, History...): lit again.
+        int nav = -1;
+        for (int i = 0; i < m_ytNav.size(); ++i)
+            if (m_ytNav[i]->isChecked())
+                nav = i;
+        p.key = QStringLiteral("search:") + m_searchPage->viewKey();
+        p.go = [this, text, view, nav] {
+            QWidget *was = m_pages->currentWidget();
+            if (was != m_searchPage)
+                m_beforeSearch = was == m_videoPage || was == m_lyricsView ? m_pages->widget(0) : was;
+            {
+                const QSignalBlocker quiet(m_search);
+                m_search->setText(text);
+            }
+            m_searchTimer.stop();
+            if (view)
+                view();
+            m_pages->setCurrentWidget(m_searchPage);
+            for (int i = 0; i < m_ytNav.size(); ++i)
+                m_ytNav[i]->setChecked(i == nav);
+        };
+    } else if (m_pages->currentIndex() == 1 && m_open >= 0 && m_open < m_library.playlists().size()) {
+        // By its file: the indexes move as lists are added or sorted.
+        const QString path = m_library.playlists()[m_open].path;
+        p.key = QStringLiteral("list:") + path;
+        p.go = [this, path] {
+            const auto &all = m_library.playlists();
+            for (int i = 0; i < all.size(); ++i)
+                if (all[i].path == path) {
+                    openPlaylist(i);
+                    return;
+                }
+            showHome();   // the list is gone
+        };
+    } else if (m_pages->currentIndex() == 0) {
+        p.key = QStringLiteral("home");
+        p.go = [this] { showHome(); };
+    } else {
+        const int index = m_pages->currentIndex();
+        p.key = QStringLiteral("page:%1").arg(index);
+        p.go = [this, index] { m_pages->setCurrentIndex(index); };
+    }
+    return p;
+}
+
+void MainWindow::noteVisit()
+{
+    const Place now = herePlace();
+    if (m_navigating) {
+        // Arrived by Back or Forward: no new step.
+        m_navigating = false;
+        m_here = now;
+        updateHistoryButtons();
+        return;
+    }
+    if (now.key == m_here.key && now.youtube == m_here.youtube) {
+        m_here = now;   // the same place, maybe filled in since ("Following: loading...")
+        return;
+    }
+    if (!m_here.key.isEmpty()) {
+        m_backPlaces << m_here;
+        if (m_backPlaces.size() > 50)
+            m_backPlaces.removeFirst();
+    }
+    m_forwardPlaces.clear();
+    m_here = now;
+    updateHistoryButtons();
+}
+
+void MainWindow::goHistory(bool forward)
+{
+    QVector<Place> &from = forward ? m_forwardPlaces : m_backPlaces;
+    QVector<Place> &to = forward ? m_backPlaces : m_forwardPlaces;
+    if (from.isEmpty())
+        return;
+    m_visitSoon.stop();
+    const Place target = from.takeLast();
+    to << herePlace();
+    m_navigating = true;
+    if (m_videoFull)
+        setVideoFullScreen(false);
+    if (target.youtube != m_youtubeLayout)
+        setYouTubeLayout(target.youtube, true, target.go);
+    else if (target.go)
+        target.go();
+    // Even when nothing changed on screen, the arrival is noted.
+    m_visitSoon.start();
+}
+
+void MainWindow::updateHistoryButtons()
+{
+    if (m_backButton)
+        m_backButton->setEnabled(!m_backPlaces.isEmpty());
+    if (m_forwardButton)
+        m_forwardButton->setEnabled(!m_forwardPlaces.isEmpty());
 }
