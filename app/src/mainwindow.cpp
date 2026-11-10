@@ -176,6 +176,9 @@ std::pair<QString, QString> splitTitle(const QString &title)
 } // namespace
 
 
+// A followed channel's name, kept apart from the row's text (empty when folded).
+constexpr int kChannelNameRole = Qt::UserRole + 41;
+
 // Wheel scrolling that glides instead of jumping three rows a notch: each
 // notch moves the target 110 px and the view eases to it, as Spotify's does.
 class SmoothScroll : public QObject {
@@ -405,9 +408,17 @@ MainWindow::MainWindow()
     // A channel's page is none of the menu's items.
     m_searchPage->isFollowed = [this](const QString &id) { return follows(id); };
     m_searchPage->onFollow = [this](const QString &id, const QString &name, bool follow) { setFollowing(id, name, follow); };
-    m_searchPage->onChannelShown = [this](const QString &, const QString &) {
+    m_searchPage->onChannelShown = [this](const QString &channelId, const QString &) {
         for (QPushButton *b : m_ytNav)
             b->setChecked(false);
+        // A followed channel opened from anywhere (a card, a search) is lit
+        // on the left too, as when it is clicked there.
+        if (!m_ytChannels)
+            return;
+        m_ytChannels->clearSelection();
+        for (int i = 0; i < m_ytChannels->count(); ++i)
+            if (m_ytChannels->item(i)->data(Qt::UserRole).toString() == channelId)
+                m_ytChannels->setCurrentRow(i);
     };
     // The YouTube home is made from the videos watched here (newest first)
     // and the channels watched most.
@@ -3920,7 +3931,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
         // On air now: the click watches the stream.
         if (m_liveNow.contains(id) && m_searchPage->onPlay) {
             const ytmusic::Item live = m_liveNow.value(id);
-            m_searchPage->onPlay({live}, live.artist.isEmpty() ? item->text() : live.artist, 0, false, false);
+            m_searchPage->onPlay({live}, live.artist.isEmpty() ? item->data(kChannelNameRole).toString() : live.artist, 0, false, false);
             return;
         }
         if (!id.isEmpty()) {
@@ -3928,7 +3939,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
             for (QPushButton *b : m_ytNav)
                 b->setChecked(false);
             m_ytChannels->setCurrentItem(item);
-            m_searchPage->showChannel(id, item->text());
+            m_searchPage->showChannel(id, item->data(kChannelNameRole).toString());
         }
     });
     m_ytChannels->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -3936,7 +3947,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
         QListWidgetItem *item = m_ytChannels->itemAt(pos);
         if (!item || item->data(Qt::UserRole).toString().isEmpty())
             return;
-        const QString id = item->data(Qt::UserRole).toString(), name = item->text();
+        const QString id = item->data(Qt::UserRole).toString(), name = item->data(kChannelNameRole).toString();
         QMenu menu(this);
         if (m_liveNow.contains(id))
             menu.addAction(QStringLiteral("Go to %1").arg(name), this, [this, id, name, item] {
@@ -3950,7 +3961,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
         menu.exec(m_ytChannels->viewport()->mapToGlobal(pos));
     });
     box->addWidget(m_ytChannels, 1);
-    m_ytWide << m_ytChannels;
+    // Folded, the followed channels stay as their pictures alone (Batın, 2026-11-10).
 
     // The bottom left: who is listening, Discord's face and name.
     m_ytProfile = new QPushButton;
@@ -3987,7 +3998,20 @@ void MainWindow::setYtCompact(bool compact)
     for (QWidget *w : m_ytWide)
         w->setVisible(!compact);
     if (auto *filler = m_ytSidebar->findChild<QWidget *>("ytFiller"))
-        filler->setVisible(compact);
+        filler->setVisible(false);
+    // The followed channels: names when wide, pictures alone (centred) when folded.
+    for (int i = 0; i < m_ytChannels->count(); ++i) {
+        QListWidgetItem *row = m_ytChannels->item(i);
+        const QString name = row->data(kChannelNameRole).toString();
+        if (name.isEmpty())
+            row->setHidden(compact);
+        else
+            row->setText(compact ? QString() : name);
+    }
+    const QString sheet = m_ytChannels->property("ghostThemeSheet").toString();
+    static const QRegularExpression pad(QStringLiteral(R"(padding-left: \d+px)"));
+    const int left = compact ? qMax(0, (m_ytChannels->viewport()->width() - 26) / 2 - 2) : 12;
+    theme::style(m_ytChannels, QString(sheet).replace(pad, QStringLiteral("padding-left: %1px").arg(left)));
     for (QPushButton *b : m_ytSidebar->findChildren<QPushButton *>()) {
         const QString glyph = b->property("glyph").toString();
         if (glyph.isEmpty())
@@ -4036,14 +4060,16 @@ void MainWindow::fillYouTubeSidebar()
         });
     }
     for (const auto &[id, name] : following()) {
-        auto *row = new QListWidgetItem(name);
+        auto *row = new QListWidgetItem(m_ytCompact ? QString() : name);
         row->setData(Qt::UserRole, id);
+        row->setData(kChannelNameRole, name);
         row->setToolTip("Click for its videos, right-click to unfollow");
         m_ytChannels->addItem(row);
     }
     if (!m_ytChannels->count()) {
         auto *row = new QListWidgetItem("None yet: Follow on a video's channel card");
         row->setFlags(Qt::NoItemFlags);
+        row->setHidden(m_ytCompact);
         m_ytChannels->addItem(row);
     }
     markLive();
@@ -4144,10 +4170,11 @@ void MainWindow::markLive()
         row->setIcon(face(id, live));
         if (live) {
             row->setForeground(QColor(0xFF, 0x4D, 0x4D));
-            row->setToolTip(QStringLiteral("Live now: %1\nClick to watch, right-click for the channel").arg(m_liveNow.value(id).title));
+            row->setToolTip(QStringLiteral("%1 · live now: %2\nClick to watch, right-click for the channel")
+                                .arg(row->data(kChannelNameRole).toString(), m_liveNow.value(id).title));
         } else {
             row->setData(Qt::ForegroundRole, QVariant());
-            row->setToolTip("Click for its videos, right-click to unfollow");
+            row->setToolTip(row->data(kChannelNameRole).toString() + QStringLiteral("\nClick for its videos, right-click to unfollow"));
         }
     }
 }
