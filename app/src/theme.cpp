@@ -105,23 +105,27 @@ void useAccent(Palette &p, const QColor &color)
     const bool dark = p.window.lightness() < 128;
     p.accent = color;
     p.accentHover = dark ? color.lighter(115) : color.darker(115);
-    if (dark) {
-        // Towards white until it reads on the dark panels.
-        QColor t = color;
-        for (int i = 0; i < 6 && t.lightness() < 170; ++i)
-            t = QColor::fromRgbF(t.redF() + (1 - t.redF()) * 0.2, t.greenF() + (1 - t.greenF()) * 0.2,
-                                 t.blueF() + (1 - t.blueF()) * 0.2);
-        p.accentText = t;
-    } else {
-        QColor t = color;
-        for (int i = 0; i < 6 && t.lightness() > 110; ++i)
-            t = t.darker(118);
-        p.accentText = t;
-    }
-    // Relative luminance: light accents carry black text, dark ones white.
+    // WCAG's relative luminance and contrast ratio.
     const auto lin = [](qreal v) { return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
-    const qreal lum = 0.2126 * lin(color.redF()) + 0.7152 * lin(color.greenF()) + 0.0722 * lin(color.blueF());
-    p.onAccent = lum > 0.35 ? QColor(16, 14, 22) : QColor(255, 255, 255);
+    const auto lum = [&](const QColor &c) {
+        return 0.2126 * lin(c.redF()) + 0.7152 * lin(c.greenF()) + 0.0722 * lin(c.blueF());
+    };
+    const auto contrast = [&](const QColor &a, const QColor &b) {
+        const qreal x = lum(a), y = lum(b);
+        return (qMax(x, y) + 0.05) / (qMin(x, y) + 0.05);
+    };
+    // Accent-coloured words: towards white (dark themes) or black (Light)
+    // until they read on the panels, 4.5:1, so a dark violet or a light gold
+    // picked by hand still reads (Impeccable review, 2026-11-10).
+    QColor t = color;
+    for (int i = 0; i < 12 && contrast(t, p.window) < 4.5; ++i)
+        t = dark ? QColor::fromRgbF(t.redF() + (1 - t.redF()) * 0.15, t.greenF() + (1 - t.greenF()) * 0.15,
+                                    t.blueF() + (1 - t.blueF()) * 0.15)
+                 : t.darker(115);
+    p.accentText = t;
+    // On the accent: whichever of black and white reads better.
+    const QColor black(16, 14, 22), white(255, 255, 255);
+    p.onAccent = contrast(black, color) > contrast(white, color) ? black : white;
 }
 
 bool windowsIsLight()
@@ -211,12 +215,54 @@ QString kindName(Kind kind)
     return QStringLiteral("default");
 }
 
+// Point sizes and pixel lengths in a sheet follow the zoom: the app's sheet
+// and every widget's own (Impeccable review B5, 2026-11-10: a heading set on
+// its widget stayed 10.5pt while the text under it grew to 16).
+QString scaleUnits(const QString &css)
+{
+    // Radii must shrink
+    // with the boxes: Qt draws a square box once the radius is more than half its height.
+    static const QRegularExpression unit(QStringLiteral(R"((\d+(?:\.\d+)?)(pt|px))"));
+    QString scaled;
+    qsizetype last = 0;
+    for (auto it = unit.globalMatch(css); it.hasNext();) {
+        const auto m = it.next();
+        // The window's own controls (Home, search, settings, minimise...) stop
+        // growing at 120%: past that they were taller than their strip.
+        const qsizetype open = css.lastIndexOf(QLatin1Char('{'), m.capturedStart());
+        const qsizetype close = open < 0 ? -1 : css.lastIndexOf(QLatin1Char('}'), open);
+        const QString selector = open < 0 ? QString() : css.mid(close + 1, open - close - 1);
+        const bool chrome = !selector.contains(QLatin1String("#glyph")) &&
+            (selector.contains(QLatin1String("#pill")) || selector.contains(QLatin1String("#topSearch")) ||
+             selector.contains(QLatin1String("#chrome")) || selector.contains(QLatin1String("#profileButton")));
+        const qreal v = m.captured(1).toDouble() * (chrome ? chromeZoom() : g_zoom);
+        // A radius rounds down, the box it is half of rounds to nearest: two
+        // halves rounded up were wider than the box at some zooms (1.4: 24 + 24
+        // over 47), and the button was drawn square.
+        const qsizetype from = qMax(css.lastIndexOf(QLatin1Char(';'), m.capturedStart()),
+                                    css.lastIndexOf(QLatin1Char('{'), m.capturedStart()));
+        const QString property = css.mid(from, m.capturedStart() - from);
+        const bool radius = property.contains(QLatin1String("radius"));
+        // Border lines stay 1 px: at 2 px Qt left a hairline between a round
+        // border and the background inside it, and the light palette showed
+        // through around search boxes and chips at 160%.
+        const bool line = !radius && property.contains(QLatin1String("border"));
+        const QString n = m.captured(2) == QLatin1String("pt")
+            ? QString::number(v, 'f', 1)
+            : line ? m.captured(1)
+            : QString::number(v <= 0 ? 0 : radius ? qMax(1, int(v)) : qMax(1, qRound(v)));
+        scaled += css.mid(last, m.capturedStart() - last) + n + m.captured(2);
+        last = m.capturedEnd();
+    }
+    return scaled + css.mid(last);
+}
+
 QString css(const QString &sheet) { return fill(sheet); }
 
 void style(QWidget *widget, const QString &sheet)
 {
     widget->setProperty(kSheetProperty, sheet);
-    widget->setStyleSheet(fill(sheet));
+    widget->setStyleSheet(scaleUnits(fill(sheet)));
 }
 
 void whenChanged(QObject *owner, std::function<void()> refresh)
@@ -361,7 +407,7 @@ void apply(QApplication &app)
         QPushButton#bigGlyph:hover { color: @strong; }
         QWidget#columns { border-bottom: 1px solid @lineSoft; }
         QLabel#columnLabel { color: @muted; font-size: 9pt; }
-        QPushButton#link { background: transparent; border: none; color: @accent; padding: 0 4px; }
+        QPushButton#link { background: transparent; border: none; color: @accentText; padding: 0 4px; }
         QPushButton#link:hover { color: @accentHover; text-decoration: underline; }
         QLabel#npVolume { font-weight: 800; font-size: 9.5pt; color: @text; }
         QWidget#downloadRow { background: @raised; border-radius: 8px; }
@@ -505,47 +551,13 @@ void apply(QApplication &app)
         QMenu::item { padding: 6px 18px; border-radius: 6px; }
         QMenu::item:selected { background: @select; }
     )"));
-    // Point sizes and pixel lengths in the sheet follow the zoom too. Radii must shrink
-    // with the boxes: Qt draws a square box once the radius is more than half its height.
-    static const QRegularExpression unit(QStringLiteral(R"((\d+(?:\.\d+)?)(pt|px))"));
-    QString scaled;
-    qsizetype last = 0;
-    for (auto it = unit.globalMatch(css); it.hasNext();) {
-        const auto m = it.next();
-        // The window's own controls (Home, search, settings, minimise...) stop
-        // growing at 120%: past that they were taller than their strip.
-        const qsizetype open = css.lastIndexOf(QLatin1Char('{'), m.capturedStart());
-        const qsizetype close = css.lastIndexOf(QLatin1Char('}'), open);
-        const QString selector = css.mid(close + 1, open - close - 1);
-        const bool chrome = !selector.contains(QLatin1String("#glyph")) &&
-            (selector.contains(QLatin1String("#pill")) || selector.contains(QLatin1String("#topSearch")) ||
-             selector.contains(QLatin1String("#chrome")) || selector.contains(QLatin1String("#profileButton")));
-        const qreal v = m.captured(1).toDouble() * (chrome ? chromeZoom() : g_zoom);
-        // A radius rounds down, the box it is half of rounds to nearest: two
-        // halves rounded up were wider than the box at some zooms (1.4: 24 + 24
-        // over 47), and the button was drawn square.
-        const qsizetype from = qMax(css.lastIndexOf(QLatin1Char(';'), m.capturedStart()),
-                                    css.lastIndexOf(QLatin1Char('{'), m.capturedStart()));
-        const QString property = css.mid(from, m.capturedStart() - from);
-        const bool radius = property.contains(QLatin1String("radius"));
-        // Border lines stay 1 px: at 2 px Qt left a hairline between a round
-        // border and the background inside it, and the light palette showed
-        // through around search boxes and chips at 160%.
-        const bool line = !radius && property.contains(QLatin1String("border"));
-        const QString n = m.captured(2) == QLatin1String("pt")
-            ? QString::number(v, 'f', 1)
-            : line ? m.captured(1)
-            : QString::number(v <= 0 ? 0 : radius ? qMax(1, int(v)) : qMax(1, qRound(v)));
-        scaled += css.mid(last, m.capturedStart() - last) + n + m.captured(2);
-        last = m.capturedEnd();
-    }
-    app.setStyleSheet(scaled + css.mid(last));
+    app.setStyleSheet(scaleUnits(css));
     // Sheets set on single widgets, restyled with the new colours, and every
     // painted widget asked to draw again.
     for (QWidget *w : QApplication::allWidgets()) {
         const QVariant sheet = w->property(kSheetProperty);
         if (sheet.isValid())
-            w->setStyleSheet(fill(sheet.toString()));
+            w->setStyleSheet(scaleUnits(fill(sheet.toString())));
         w->update();
     }
     auto &list = refreshers();

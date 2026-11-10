@@ -332,12 +332,12 @@ void NowPlayingBar::showIdle()
 
 void NowPlayingBar::setLyricsOpen(bool open)
 {
-    theme::style(m_lyrics, open ? QStringLiteral("color: @accent;") : QString());
+    theme::style(m_lyrics, open ? QStringLiteral("color: @accentText;") : QString());
 }
 
 void NowPlayingBar::setPanelOpen(bool open)
 {
-    theme::style(m_panel, open ? QStringLiteral("color: @accent;") : QString());
+    theme::style(m_panel, open ? QStringLiteral("color: @accentText;") : QString());
 }
 
 void NowPlayingBar::setVolumeNumber(bool shown)
@@ -361,7 +361,7 @@ void NowPlayingBar::expectList(bool shuffled)
 
 void NowPlayingBar::showShuffle()
 {
-    const QColor on = theme::accent();
+    const QColor on = theme::accentText();
     m_shuffle->setColors(m_shuffled ? on : theme::c().dim, m_shuffled ? on.lighter(120) : theme::c().strong);
     m_shuffle->setDot(m_shuffled);
     m_shuffle->setToolTip(m_shuffled ? "Shuffle is on: back to the list's order" : "Shuffle what is playing");
@@ -370,7 +370,7 @@ void NowPlayingBar::showShuffle()
 void NowPlayingBar::showRepeat()
 {
     const bool one = looping(m_mpv->property("loop-file")), all = looping(m_mpv->property("loop-playlist"));
-    const QColor on = theme::accent();
+    const QColor on = theme::accentText();
     m_repeat->setIcon(one ? icons::Icon::RepeatOne : icons::Icon::Repeat);
     m_repeat->setColors(one || all ? on : theme::c().dim, one || all ? on.lighter(120) : theme::c().strong);
     m_repeat->setDot(one || all);

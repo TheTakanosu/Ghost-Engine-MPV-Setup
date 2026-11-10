@@ -156,11 +156,20 @@ void NowIsland::place()
     QFont f = font();
     f.setWeight(QFont::DemiBold);
     const int words = QFontMetrics(f).horizontalAdvance(QStringLiteral("Now playing  ·  ") + m_title);
-    const int pillW = qBound(220, words + 56, 420);
+    int pillW = qBound(220, words + 56, 420);
+    int centre = host->width() / 2;
+    if (freeSpan) {
+        const auto [left, right] = freeSpan();
+        if (right - left > 120) {
+            pillW = qMin(pillW, right - left - 16 - 2 * kMargin);
+            pillW = qMax(pillW, 120);
+            centre = (left + right) / 2;
+        }
+    }
     const qreal t = m_open;
     const int w = int(pillW + (kCardWidth - pillW) * t) + 2 * kMargin;
     const int h = int(kPillHeight + (kCardHeight - kPillHeight) * t) + kTop + kMargin;
-    setGeometry((host->width() - w) / 2, 0, w, h);
+    setGeometry(qBound(0, centre - w / 2, qMax(0, host->width() - w)), 0, w, h);
 
     // The buttons only once the card is mostly open.
     const bool shown = t > 0.85;

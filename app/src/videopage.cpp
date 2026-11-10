@@ -564,7 +564,7 @@ public:
         QFont title = option.font;
         title.setWeight(QFont::DemiBold);
         p->setFont(title);
-        p->setPen(now ? theme::accent() : theme::text());
+        p->setPen(now ? theme::accentText() : theme::text());
         const QFontMetricsF tm(title);
         const QRectF titleBox(text.left(), text.top(), text.width(), tm.lineSpacing() * 2);
         const QString shown = tm.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, titleBox.width() * 2 - 20);
@@ -640,7 +640,7 @@ protected:
             f.setWeight(QFont::DemiBold);
         p.setFont(f);
         // On the picture: light whatever the theme.
-        const QColor ink = m_on ? theme::accent() : QColor(240, 240, 245);
+        const QColor ink = m_on ? theme::accentText() : QColor(240, 240, 245);
         if (m_pip) {
             const qreal w = height() * 0.5, h = w * 0.72;
             const QRectF screen(box.center().x() - w / 2, box.center().y() - h / 2, w, h);
@@ -898,8 +898,12 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_description->setFrameShape(QFrame::NoFrame);
     m_description->setOpenLinks(false);
     m_description->document()->setDocumentMargin(0);
-    m_description->document()->setDefaultStyleSheet(
-        QStringLiteral("a { color: rgb(120,170,255); text-decoration: none; }"));
+    const auto linkColour = [this] {
+        m_description->document()->setDefaultStyleSheet(
+            QStringLiteral("a { color: %1; text-decoration: none; }").arg(theme::accentText().name()));
+    };
+    linkColour();
+    theme::whenChanged(m_description, linkColour);
     m_description->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_description->viewport()->installEventFilter(this);
     connect(m_description, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {

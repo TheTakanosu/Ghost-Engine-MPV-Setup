@@ -873,6 +873,15 @@ MainWindow::MainWindow()
         return m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool() && !m_videoFull &&
                m_pages->currentWidget() != m_videoPage;
     };
+    m_island->freeSpan = [this] {
+        // From the last thing on the left (the search box, or its button) to
+        // the first on the right (Update, the profile).
+        QWidget *leftmost = m_search->isVisible() ? static_cast<QWidget *>(m_search) : m_searchButton;
+        QWidget *rightmost = m_updateButton->isVisible() ? m_updateButton : m_profileButton;
+        const int left = leftmost->mapTo(this, QPoint(leftmost->width(), 0)).x();
+        const int right = rightmost->mapTo(this, QPoint(0, 0)).x();
+        return QPair<int, int>(left, right);
+    };
     m_island->onOpen = [this] { openPlayingList(); };
     m_island->onMini = [this] {
         m_miniAsked = true;
@@ -1371,7 +1380,7 @@ QWidget *MainWindow::buildTopBar()
     // Only there while something is behind, in the accent colour: noticed,
     // never in the way, and nothing opens by itself.
     m_updateButton = glyphButton(QChar(0xE896), "Updates are available", "pill");
-    theme::style(m_updateButton, QStringLiteral("color: @accent;"));
+    theme::style(m_updateButton, QStringLiteral("color: @accentText;"));
     m_updateButton->hide();
     connect(m_updateButton, &QPushButton::clicked, this, &MainWindow::showUpdates);
     connect(minimize, &QPushButton::clicked, this, &MainWindow::showMinimized);
@@ -2147,7 +2156,7 @@ QWidget *MainWindow::buildPlaylistPage()
     m_pageShuffle = shuffleButton;
     theme::whenChanged(shuffleButton, [this, shuffleButton] {
         const bool on = m_sortKey == SortKey::Shuffled;
-        shuffleButton->setColors(on ? theme::accent() : theme::c().dim, on ? theme::accent().lighter(120) : theme::c().strong);
+        shuffleButton->setColors(on ? theme::accentText() : theme::c().dim, on ? theme::accentText().lighter(120) : theme::c().strong);
     });
     connect(shuffleButton, &QAbstractButton::clicked, this, [this] {
         // On: the songs in a new random order. Off: back to the list's own.
@@ -4623,7 +4632,7 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
         if (animate && wanted > 0 && total > wanted)
             m_split->setSizes({wanted, total - wanted});
     }
-    theme::style(m_youtubeButton, youtube ? QStringLiteral("color: @accent;") : QString());
+    theme::style(m_youtubeButton, youtube ? QStringLiteral("color: @accentText;") : QString());
     m_leftStack->setCurrentIndex(youtube ? 1 : 0);
     applyLayoutColors();
     if (youtube) {
@@ -4881,7 +4890,7 @@ void MainWindow::applySort()
     if (m_pageShuffle) {
         auto *b = static_cast<icons::IconButton *>(m_pageShuffle);
         const bool on = m_sortKey == SortKey::Shuffled;
-        b->setColors(on ? theme::accent() : theme::c().dim, on ? theme::accent().lighter(120) : theme::c().strong);
+        b->setColors(on ? theme::accentText() : theme::c().dim, on ? theme::accentText().lighter(120) : theme::c().strong);
         b->setDot(on);
     }
     filterSongs();
@@ -5282,7 +5291,7 @@ void MainWindow::showDownloadState()
     const QString path = m_library.playlists()[m_open].path;
     const bool marked = m_offline.isMarked(path);
     const int left = m_offline.pending(path);
-    theme::style(m_downloadButton, marked ? QStringLiteral("color: @accent;") : QString());
+    theme::style(m_downloadButton, marked ? QStringLiteral("color: @accentText;") : QString());
     m_downloadButton->setToolTip(!marked ? QStringLiteral("Download for offline listening")
                                  : left > 0 ? QStringLiteral("Downloading, %1 to go. Click to remove the download.").arg(left)
                                             : QStringLiteral("Downloaded. Click to remove the download."));

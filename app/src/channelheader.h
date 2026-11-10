@@ -26,7 +26,10 @@ public:
     void setAbout(const ytmusic::ChannelAbout &about);
     void setFollowed(bool followed);
     void setLive(bool live);
-    void setFolded(bool folded);
+    // animate: the header shrinks or grows over a moment, so the videos
+    // under it glide up instead of jumping (Batın, 2026-11-10).
+    void setFolded(bool folded, bool animate = false);
+    bool folded() const { return m_folded; }
     QString channelId() const { return m_id; }
 
     std::function<void(bool follow)> onFollow;
@@ -64,4 +67,5 @@ private:
     QLabel *m_facts = nullptr;
     QLabel *m_liveTag = nullptr;
     QPushButton *m_follow = nullptr;
+    class QVariantAnimation *m_heightGlide = nullptr;
 };

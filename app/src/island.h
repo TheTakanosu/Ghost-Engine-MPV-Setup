@@ -6,6 +6,7 @@
 // opens it downward into a card with the picture, the channel and buttons.
 // It replaces the corner player that came up by itself.
 
+#include <QPair>
 #include <QWidget>
 #include <functional>
 
@@ -23,6 +24,10 @@ public:
     std::function<bool()> shouldShow;   // a video playing whose page is not open
     std::function<void()> onOpen;       // to the video's page
     std::function<void()> onMini;       // the corner player instead
+    // The free stretch of the top bar, left and right x in the window: the
+    // pill sits in its middle and no wider (it lay over the search box in a
+    // narrow window, Impeccable review B1, 2026-11-10).
+    std::function<QPair<int, int>()> freeSpan;
 
     // Shows or hides it and lays it out again: on a new video, a page
     // change, a resize of the window.

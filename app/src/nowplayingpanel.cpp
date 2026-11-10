@@ -342,14 +342,18 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_lyricsCard->clicked = [this] { if (onOpenLyrics) onOpenLyrics(); };
     m_lyricsNow = new QLabel;
     m_lyricsNow->setWordWrap(true);
-    m_lyricsNow->setStyleSheet("font-size: 14pt; font-weight: 800; color: white;");
+    theme::style(m_lyricsNow, "font-size: 14pt; font-weight: 800; color: white;");
     m_lyricsNext = new QLabel;
     m_lyricsNext->setWordWrap(true);
-    m_lyricsNext->setStyleSheet("font-size: 14pt; font-weight: 800; color: rgba(255,255,255,0.45);");
+    theme::style(m_lyricsNext, "font-size: 14pt; font-weight: 800; color: rgba(255,255,255,0.6);");
     auto *lyricsBox = new QVBoxLayout(m_lyricsCard);
     lyricsBox->setContentsMargins(14, 12, 14, 14);
     lyricsBox->setSpacing(6);
-    lyricsBox->addWidget(heading("Lyrics preview"));
+    // The card takes the cover's dark tint in every theme: its heading is
+    // white like its lines (Light's dark text vanished on it).
+    QLabel *lyricsHeading = heading("Lyrics preview");
+    theme::style(lyricsHeading, "font-size: 10.5pt; font-weight: 700; color: white; background: transparent;");
+    lyricsBox->addWidget(lyricsHeading);
     lyricsBox->addWidget(m_lyricsNow);
     lyricsBox->addWidget(m_lyricsNext);
 
@@ -364,7 +368,7 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_artistAbout->setWordWrap(true);
     theme::style(m_artistAbout, "color: @textBody;");
     m_artistSource = new QLabel;
-    theme::style(m_artistSource, "color: @faint; font-size: 8.5pt;");
+    theme::style(m_artistSource, "color: @muted; font-size: 8.5pt;");
     auto *artistText = new QVBoxLayout;
     artistText->setContentsMargins(14, 10, 14, 14);
     artistText->setSpacing(4);

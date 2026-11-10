@@ -12,6 +12,7 @@
 #include <QScrollArea>
 #include <QWheelEvent>
 #include <QUrl>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
 
 // The banner: the picture filling a wide rounded strip, cropped, not stretched.
@@ -93,7 +94,7 @@ ChannelHeader::ChannelHeader(RemotePictures *pictures, QWidget *parent) : QWidge
     m_name->setTextInteractionFlags(Qt::TextSelectableByMouse);
     nameRow->addWidget(m_name);
     m_liveTag = new QLabel(QStringLiteral("LIVE"));
-    m_liveTag->setStyleSheet(QStringLiteral("background: #E52B2B; color: white; font-weight: 700; font-size: 8pt;"
+    theme::style(m_liveTag, QStringLiteral("background: #D42020; color: white; font-weight: 700; font-size: 8pt;"
                                             "border-radius: 4px; padding: 1px 6px;"));
     m_liveTag->hide();
     nameRow->addWidget(m_liveTag, 0, Qt::AlignVCenter);
@@ -228,7 +229,7 @@ void ChannelHeader::setAbout(const ytmusic::ChannelAbout &about)
     for (const auto &[title, address] : about.links) {
         const QString url = address.startsWith(QLatin1String("http")) ? address : QStringLiteral("https://") + address;
         links << QStringLiteral("<a href=\"%1\" style=\"color: %2; text-decoration: none;\">%3</a>")
-                     .arg(url.toHtmlEscaped(), theme::accent().name(), title.toHtmlEscaped());
+                     .arg(url.toHtmlEscaped(), theme::accentText().name(), title.toHtmlEscaped());
     }
     m_links->setText(links.join(QStringLiteral("&nbsp;&nbsp;·&nbsp;&nbsp;")));
     QStringList facts;
@@ -252,8 +253,10 @@ void ChannelHeader::setLive(bool live)
     m_avatar->update();
 }
 
-void ChannelHeader::setFolded(bool folded)
+void ChannelHeader::setFolded(bool folded, bool animate)
 {
+    const bool changes = folded != m_folded;
+    const int before = height();
     m_folded = folded;
     m_banner->setVisible(!folded && m_hasBanner);
     const int side = qRound((folded ? 48 : 120) * theme::zoom());
@@ -268,6 +271,31 @@ void ChannelHeader::setFolded(bool folded)
     m_facts->setVisible(!folded && m_more && !m_facts->text().isEmpty());
     theme::style(m_name, QStringLiteral("color: @textBright; font-size: %1pt; font-weight: 800;").arg(folded ? 14 : 24));
     placeBanner();
+    if (!animate || !changes || !isVisible()) {
+        if (m_heightGlide)
+            m_heightGlide->stop();
+        setMaximumHeight(QWIDGETSIZE_MAX);
+        return;
+    }
+    // From the height it had to the one it now wants, eased.
+    const int after = layout()->hasHeightForWidth() ? layout()->totalHeightForWidth(width()) : sizeHint().height();
+    if (!m_heightGlide) {
+        m_heightGlide = new QVariantAnimation(this);
+        m_heightGlide->setDuration(220);
+        m_heightGlide->setEasingCurve(QEasingCurve::OutCubic);
+        connect(m_heightGlide, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            setMaximumHeight(v.toInt());
+            setMinimumHeight(v.toInt());
+        });
+        connect(m_heightGlide, &QVariantAnimation::finished, this, [this] {
+            setMinimumHeight(0);
+            setMaximumHeight(QWIDGETSIZE_MAX);
+        });
+    }
+    m_heightGlide->stop();
+    m_heightGlide->setStartValue(before);
+    m_heightGlide->setEndValue(after);
+    m_heightGlide->start();
 }
 
 void ChannelHeader::showMore(bool more)

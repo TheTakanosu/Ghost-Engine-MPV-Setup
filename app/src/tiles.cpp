@@ -19,7 +19,7 @@ qreal paintPin(QPainter *painter, const QRectF &text, Qt::Alignment vertical)
     f.setPixelSize(11);
     painter->save();
     painter->setFont(f);
-    painter->setPen(theme::accent());
+    painter->setPen(theme::accentText());
     painter->drawText(text, Qt::AlignLeft | vertical, QString(QChar(0xE718)));
     painter->restore();
     return 16;
@@ -201,7 +201,7 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         qreal x = row.left() + 10 + indent;
         if (folder) {
             icons::paint(*painter, icons::Icon::Folder, QRectF(x, row.center().y() - 8, 16, 16),
-                         index.data(kOpenRole).toBool() ? theme::accent() : theme::muted());
+                         index.data(kOpenRole).toBool() ? theme::accentText() : theme::muted());
             x += 24;
         }
         const QRectF text(x, row.top(), row.right() - x - 8, row.height());
@@ -234,7 +234,7 @@ void RowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         const qreal mark = side * 0.42;
         icons::paint(*painter, icons::Icon::Folder,
                      QRectF(cover.center().x() - mark / 2, cover.center().y() - mark / 2, mark, mark),
-                     index.data(kOpenRole).toBool() ? theme::accent() : theme::text());
+                     index.data(kOpenRole).toBool() ? theme::accentText() : theme::text());
     } else {
         paintCollage(*painter, cover, m_coversFor(index), name, 6);
     }
@@ -288,7 +288,7 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (playing || hover) {
         const QRectF mark(number.center().x() - 8, number.center().y() - 8, 16, 16);
         icons::paint(*painter, playing ? icons::Icon::Playing : icons::Icon::Play, mark,
-                     playing ? theme::accent() : theme::text());
+                     playing ? theme::accentText() : theme::text());
     } else {
         painter->setFont(option.font);
         painter->setPen(theme::muted());
@@ -316,7 +316,7 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     QFont titleFont = option.font;
     titleFont.setWeight(QFont::DemiBold);
     painter->setFont(titleFont);
-    painter->setPen(playing ? theme::accent() : selected ? theme::accentText() : theme::text());
+    painter->setPen(playing || selected ? theme::accentText() : theme::text());
     painter->drawText(text, Qt::AlignLeft | Qt::AlignTop,
                       QFontMetrics(titleFont).elidedText(track, Qt::ElideRight, int(text.width())));
     QRectF artistLine = text;
@@ -324,7 +324,7 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         QFont mark(QStringLiteral("Segoe Fluent Icons"));
         mark.setPixelSize(int(12 * theme::zoom()));
         painter->setFont(mark);
-        painter->setPen(theme::accent());
+        painter->setPen(theme::accentText());
         painter->drawText(text, Qt::AlignLeft | Qt::AlignBottom, QString(QChar(0xE896)));   // download
         artistLine.setLeft(text.left() + 18 * theme::zoom());
     }
@@ -426,7 +426,7 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
     }
     const QRectF titleBox(card.left() + 2 + indent, thumb.bottom() + 8, card.width() - 4 - indent, tm.lineSpacing() * 2);
     painter->setFont(title);
-    painter->setPen(playing ? theme::accent() : live ? QColor(0xFF, 0x4D, 0x4D) : theme::text());
+    painter->setPen(playing ? theme::accentText() : live ? QColor(0xFF, 0x4D, 0x4D) : theme::text());
     // Two lines at most, the second cut with an ellipsis.
     QString text = index.data(Qt::DisplayRole).toString();
     const QString artist = index.data(kArtistRole).toString();

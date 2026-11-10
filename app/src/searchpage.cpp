@@ -342,8 +342,8 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     connect(m_homeGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         // Folded past the first row, open again only at the top: the grid
         // growing as it folds does not flip it back.
-        if (m_channelHeader->isVisible() && (value > 40 || value == 0))
-            m_channelHeader->setFolded(value > 40);
+        if (m_channelHeader->isVisible() && (value > 40 || value == 0) && m_channelHeader->folded() != (value > 40))
+            m_channelHeader->setFolded(value > 40, true);
     });
     m_homeGrid->installEventFilter(this);
     m_homeGrid->viewport()->installEventFilter(this);
@@ -466,7 +466,7 @@ void SearchPage::updateEmpty()
         setStatus(QStringLiteral("Can't reach %1 right now. Check your connection, then "
                                  "<a href=\"retry\" style=\"color: %2;\">try again</a>.")
                       .arg(m_youtube ? QStringLiteral("YouTube") : QStringLiteral("YouTube Music"),
-                           theme::accent().name()));
+                           theme::accentText().name()));
         return;
     }
     if (m_youtube) {
