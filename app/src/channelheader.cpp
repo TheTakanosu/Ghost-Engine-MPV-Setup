@@ -243,7 +243,7 @@ void ChannelHeader::setAbout(const ytmusic::ChannelAbout &about)
 void ChannelHeader::setFollowed(bool followed)
 {
     m_follow->setChecked(followed);
-    m_follow->setText(followed ? QStringLiteral("Followed") : QStringLiteral("Follow"));
+    m_follow->setText(followed ? QStringLiteral("Following") : QStringLiteral("Follow"));
 }
 
 void ChannelHeader::setLive(bool live)
