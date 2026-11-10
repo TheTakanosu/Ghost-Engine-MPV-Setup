@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include "library.h"
 #include "lyrics.h"
 #include "offline.h"
@@ -73,6 +75,9 @@ private:
     QPushButton *m_ytProfile = nullptr;
     bool m_ytCompact = false;
     void setYtCompact(bool compact);
+    void padYtChannels();
+    void openLeftPanel(int left, bool grow, const std::function<void(int)> &done);
+    int m_ytChannelPad = -1;
     ytmusic::Client m_ytClient;   // channel feeds for Following
     QHash<QString, ytmusic::Item> m_liveNow;   // followed channel id -> its stream on air
     QHash<QString, QString> m_channelAvatars;  // channel id -> its picture's URL (youtube/avatars)

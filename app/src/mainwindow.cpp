@@ -1444,19 +1444,32 @@ QWidget *MainWindow::buildLibrary()
     m_collapse = glyphButton(kIconCollapse, "Collapse library");
     connect(m_collapse, &QPushButton::clicked, this, [this] {
         const bool compact = !m_compact;
-        const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
         const int left = compact ? compactWidth() : qRound(300 * theme::zoom());
+        const QList<int> before = m_split->sizes();
+        // Nothing is drawn until it is settled: in a small window the library
+        // opened as far as the page let it (a strip of covers) for a frame
+        // and folded back, a flick (Batın, 2026-11-11).
+        setUpdatesEnabled(false);
         // Room made first: in a small window the page and the now playing
         // view kept the library at its covers-only width, and it was drawn
         // as the full panel squeezed into that.
         m_libraryWanted = left;
         updatePanelVisibility();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-        m_split->setSizes({left, total - left});
-        m_libraryWanted = -1;
-        setLibraryCompact(m_split->sizes().value(0) < compactBelow());
-        if (!compact && m_compact)
-            toast("Make the window wider to open the library");
+        setUpdatesEnabled(true);
+        openLeftPanel(left, !compact, [this, compact, before](int got) {
+            setUpdatesEnabled(false);
+            m_libraryWanted = -1;
+            if (!compact && got < compactBelow()) {
+                // Still no room: back as it was, with a word why.
+                m_split->setSizes(before);
+                updatePanelVisibility();
+                toast("Make the window wider to open the library");
+            } else {
+                setLibraryCompact(got < compactBelow());
+            }
+            setUpdatesEnabled(true);
+        });
     });
     auto *add = glyphButton(kIconAdd, "New folder, add a folder, refresh");
     m_addButton = add;
@@ -2631,6 +2644,8 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (m_ytChannels && watched == m_ytChannels->viewport() && event->type() == QEvent::Resize)
+        padYtChannels();
     if (watched == m_ytSidebar && event->type() == QEvent::Resize) {
         const bool compact = m_ytSidebar->width() < qRound(150 * theme::zoom());
         if (compact != m_ytCompact)
@@ -2809,6 +2824,48 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         return true;
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+// The left panel (library or YouTube menu) set to `left` wide, then `done`
+// with the width it got. Opening, a window too narrow for it grows by what
+// it lacks, as far as the screen goes, rather than saying no; the window
+// takes its new size a moment later, so the panel is opened again then. A
+// window that still leaves no usable panel goes back to its size.
+void MainWindow::openLeftPanel(int left, bool grow, const std::function<void(int)> &done)
+{
+    const auto open = [this, left] {
+        const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
+        m_split->setSizes({left, total - left});
+        return m_split->sizes().value(0);
+    };
+    const QList<int> before = m_split->sizes();
+    const int got = open();
+    if (!grow || got >= left || isMaximized() || isFullScreen() || !screen()) {
+        done(got);
+        return;
+    }
+    const QRect room = screen()->availableGeometry();
+    const QRect frame = frameGeometry();
+    const int more = qMin(left - got, room.width() - frame.width());
+    if (more <= 0) {
+        done(got);
+        return;
+    }
+    // Not drawn half open meanwhile: as it was until the window is wider.
+    m_split->setSizes(before);
+    const int x = qBound(room.left(), frame.x(), room.right() + 1 - (frame.width() + more));
+    const QRect was = geometry();
+    setGeometry(was.translated(x - frame.x(), 0).adjusted(0, 0, more, 0));
+    QTimer::singleShot(60, this, [this, open, before, was, done] {
+        const int now = open();
+        if (now >= qRound(150 * theme::zoom())) {
+            done(now);
+            return;
+        }
+        m_split->setSizes(before);
+        setGeometry(was);
+        done(before.value(0));
+    });
 }
 
 void MainWindow::snapCompactLibrary()
@@ -3850,10 +3907,13 @@ QWidget *MainWindow::buildYouTubeSidebar()
     // The top: the button that folds the menu to icons, and the title.
     auto *fold = glyphButton(QChar(0xE700), "Collapse or expand the menu");
     connect(fold, &QPushButton::clicked, this, [this] {
-        const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
-        const int left = m_ytCompact ? qRound(250 * theme::zoom()) : qRound(76 * theme::zoom());
-        m_split->setSizes({left, total - left});
-        setYtCompact(m_split->sizes().value(0) < qRound(150 * theme::zoom()));
+        const bool opening = m_ytCompact;
+        const int left = opening ? qRound(250 * theme::zoom()) : qRound(76 * theme::zoom());
+        openLeftPanel(left, opening, [this](int got) {
+            setUpdatesEnabled(false);
+            setYtCompact(got < qRound(150 * theme::zoom()));
+            setUpdatesEnabled(true);
+        });
     });
     auto *title = new QLabel("YouTube");
     title->setObjectName("panelTitle");
@@ -3921,6 +3981,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
     m_ytChannels->setFrameShape(QFrame::NoFrame);
     m_ytChannels->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_ytChannels->setMouseTracking(true);
+    m_ytChannels->viewport()->installEventFilter(this);
     // No colour on the rows themselves, so a live channel's red shows.
     theme::style(m_ytChannels, QString(listStyle)
                                    .replace(QStringLiteral("QListWidget { background: transparent; }"),
@@ -4008,10 +4069,7 @@ void MainWindow::setYtCompact(bool compact)
         else
             row->setText(compact ? QString() : name);
     }
-    const QString sheet = m_ytChannels->property("ghostThemeSheet").toString();
-    static const QRegularExpression pad(QStringLiteral(R"(padding-left: \d+px)"));
-    const int left = compact ? qMax(0, (m_ytChannels->viewport()->width() - 26) / 2 - 2) : 12;
-    theme::style(m_ytChannels, QString(sheet).replace(pad, QStringLiteral("padding-left: %1px").arg(left)));
+    padYtChannels();
     for (QPushButton *b : m_ytSidebar->findChildren<QPushButton *>()) {
         const QString glyph = b->property("glyph").toString();
         if (glyph.isEmpty())
@@ -4025,6 +4083,22 @@ void MainWindow::setYtCompact(bool compact)
         // The face alone sits in the middle (Batın, 2026-11-08: it was off to the left).
         theme::style(m_ytProfile, ytProfileSheet(compact));
     }
+}
+
+// The pictures of the folded menu sit in the middle of the list as it is now:
+// worked out once, when the menu folded, the list could still be wide and
+// the pictures stood off to the right, cut by the edge (Batın, 2026-11-11).
+void MainWindow::padYtChannels()
+{
+    if (!m_ytChannels)
+        return;
+    const int left = m_ytCompact ? qMax(0, (m_ytChannels->viewport()->width() - 26) / 2 - 2) : 12;
+    if (left == m_ytChannelPad)
+        return;
+    m_ytChannelPad = left;
+    const QString sheet = m_ytChannels->property("ghostThemeSheet").toString();
+    static const QRegularExpression pad(QStringLiteral(R"(padding-left: \d+px)"));
+    theme::style(m_ytChannels, QString(sheet).replace(pad, QStringLiteral("padding-left: %1px").arg(left)));
 }
 
 void MainWindow::fillYouTubeSidebar()
