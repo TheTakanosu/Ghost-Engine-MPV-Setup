@@ -46,6 +46,11 @@ public:
     // Plays these in a list of their own; `audio` false for videos.
     std::function<void(const QVector<ytmusic::Item> &, const QString &name, int start, bool shuffle, bool audio)> onPlay;
     std::function<void(const QString &name, const QVector<ytmusic::Item> &)> onSave;
+    // A list already in hand (the radio a search started), shown as a
+    // playlist is: `playing` marked, Save to library as `saveAs`.
+    void showLocalList(const QString &title, const QString &info, const QVector<ytmusic::Item> &songs, int playing,
+                       const QString &saveAs);
+    void markSaved();
     std::function<void(const QString &path)> onOpenLibrary;
     // The right-click menu for these songs (Play, Add to playlist...).
     std::function<void(const QVector<ytmusic::Item> &, const QPoint &global)> onMenu;

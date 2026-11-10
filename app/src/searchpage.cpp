@@ -996,6 +996,35 @@ void SearchPage::playRadio(const ytmusic::Item &song)
     });
 }
 
+void SearchPage::showLocalList(const QString &title, const QString &info, const QVector<ytmusic::Item> &songs,
+                               int playing, const QString &saveAs)
+{
+    ++m_serial;   // a playlist still loading does not land over it
+    m_list = {};
+    m_list.title = saveAs;   // the name it is saved under
+    m_list.songs = songs;
+    m_list.ok = true;
+    m_listTitle->setText(title);
+    m_listInfo->setText(info);
+    fill(m_listSongs, songs, songs.size());
+    m_saveButton->setText("Save to library");
+    m_saveButton->setEnabled(!songs.isEmpty());
+    m_views->setCurrentIndex(1);
+    if (playing >= 0 && playing < m_listSongs->count()) {
+        m_listSongs->setCurrentRow(playing);
+        QTimer::singleShot(0, this, [this, playing] {
+            if (playing < m_listSongs->count())
+                m_listSongs->scrollToItem(m_listSongs->item(playing), QAbstractItemView::PositionAtCenter);
+        });
+    }
+}
+
+void SearchPage::markSaved()
+{
+    m_saveButton->setText("Saved");
+    m_saveButton->setEnabled(false);
+}
+
 void SearchPage::showResults()
 {
     m_views->setCurrentIndex(0);
@@ -1008,6 +1037,7 @@ void SearchPage::openPlaylist(const QString &id, const QString &title)
     m_listTitle->setText(title.isEmpty() ? QStringLiteral("Loading...") : title);
     m_listInfo->setText("Loading the songs...");
     m_listSongs->clear();
+    m_saveButton->setText("Save to library");
     m_saveButton->setEnabled(false);
     m_views->setCurrentIndex(1);
     noteView(QStringLiteral("ytlist:") + id, [this, id, title] { openPlaylist(id, title); });

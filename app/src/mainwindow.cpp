@@ -3121,6 +3121,49 @@ void MainWindow::openPlayingList()
             });
         return;
     }
+    // Played from a search (a song's radio, "1 of 50"): its list as a page,
+    // the song playing marked, to be kept as "Ghost Engine Radio #n"
+    // (Batın, 2026-11-09).
+    if (!playing.isEmpty() &&
+        QDir::cleanPath(QFileInfo(playing).absolutePath()).compare(foundFolder(), Qt::CaseInsensitive) == 0)
+        showRadioList(playing);
+}
+
+void MainWindow::showRadioList(const QString &path)
+{
+    const Playlist list = Playlist::peek(path);
+    const QVector<PlaylistEntry> entries = list.readEntries();
+    QVector<ytmusic::Item> songs;
+    for (const PlaylistEntry &e : entries) {
+        ytmusic::Item it;
+        it.kind = list.audio ? ytmusic::Kind::Song : ytmusic::Kind::Video;
+        it.id = youtube::videoId(e.target);
+        // "<artist> - <title>", as the line was written.
+        const int dash = e.title.indexOf(QStringLiteral(" - "));
+        it.artist = dash > 0 ? e.title.left(dash).trimmed() : QString();
+        it.title = dash > 0 ? e.title.mid(dash + 3).trimmed() : e.title.trimmed();
+        const int seconds = m_resolver.durationFor(it.id);
+        it.duration = seconds > 0 ? QStringLiteral("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'))
+                                  : QStringLiteral(" ");
+        if (!it.id.isEmpty())
+            songs << it;
+    }
+    int n = 1;
+    for (const Playlist &p : m_library.playlists()) {
+        static const QRegularExpression numbered(QStringLiteral(R"(^Ghost Engine Radio #(\d+)$)"));
+        const auto m = numbered.match(p.name);
+        if (m.hasMatch())
+            n = qMax(n, m.captured(1).toInt() + 1);
+    }
+    const QString title = list.name.isEmpty() ? QStringLiteral("Radio") : list.name;
+    const int at = m_mpv.property("playlist-pos").toInt();
+    if (m_pages->currentWidget() != m_searchPage) {
+        QWidget *now = m_pages->currentWidget();
+        m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;
+    }
+    m_pages->setCurrentWidget(m_searchPage);
+    m_searchPage->showLocalList(title, QStringLiteral("Radio  •  %1 songs, playing %2").arg(songs.size()).arg(at + 1),
+                                songs, at, QStringLiteral("Ghost Engine Radio #%1").arg(n));
 }
 
 void MainWindow::chooseCover(int index)
@@ -6701,6 +6744,7 @@ void MainWindow::saveFound(const QString &name, const QVector<ytmusic::Item> &it
         return;
     }
     toast(QStringLiteral("Saved to your library: %1").arg(name));
+    m_searchPage->markSaved();
     reopenAfter(path);
 }
 

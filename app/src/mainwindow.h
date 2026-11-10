@@ -76,6 +76,7 @@ private:
     bool m_ytCompact = false;
     void setYtCompact(bool compact);
     void padYtChannels();
+    void showRadioList(const QString &path);
     void openLeftPanel(int left, bool grow, const std::function<void(int)> &done);
     int m_ytChannelPad = -1;
     ytmusic::Client m_ytClient;   // channel feeds for Following
