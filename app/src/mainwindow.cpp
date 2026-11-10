@@ -2584,6 +2584,7 @@ void MainWindow::fillDurations()
         item->setData(tiles::kDurationRole, seconds > 0
             ? QStringLiteral("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0')) : QString());
     }
+    markLikedRows();
 }
 
 QString MainWindow::videoByline(const QString &id)
@@ -2787,6 +2788,14 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease && !m_videoGrid) {
         auto *mouse = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_songs->itemAt(mouse->position().toPoint());
+        // The + left of the length: into Liked songs, or out of it.
+        if (item && mouse->button() == Qt::LeftButton &&
+            tiles::SongDelegate::likeRect(m_songs->visualItemRect(item)).adjusted(-4, -4, 4, 4).contains(mouse->position())) {
+            const QString artist = item->data(tiles::kArtistRole).toString();
+            const QString track = item->text();
+            toggleLiked(item->data(Qt::UserRole).toString(), artist.isEmpty() ? track : artist + QStringLiteral(" - ") + track);
+            return true;
+        }
         if (item && mouse->button() == Qt::LeftButton && mouse->position().x() < 48 && m_open >= 0) {
             playOpen(m_songs->row(item));
             return true;
@@ -3166,10 +3175,36 @@ QString MainWindow::likedPath(bool make)
 
 void MainWindow::toggleLiked()
 {
-    const QString target = playingTarget();
-    const QString id = youtube::videoId(target);
+    const auto [artist, track] = playingSong();
+    toggleLiked(playingTarget(), track.isEmpty() ? m_mpv.property("media-title").toString().trimmed()
+                                                 : (artist.isEmpty() ? track : artist + QStringLiteral(" - ") + track));
+}
+
+void MainWindow::markLikedRows()
+{
+    QSet<QString> liked;
+    const QString path = likedPath(false);
+    if (!path.isEmpty())
+        for (const PlaylistEntry &e : Playlist::peek(path).readEntries())
+            liked.insert(youtube::videoId(e.target));
+    for (int row = 0; row < m_songs->count(); ++row) {
+        QListWidgetItem *item = m_songs->item(row);
+        item->setData(tiles::kLikedRole, liked.contains(idForTarget(item->data(Qt::UserRole).toString())));
+    }
+}
+
+void MainWindow::toggleLiked(const QString &given, const QString &title)
+{
+    // A song line found by search (ytdl://ytsearch1:...) is kept as the
+    // video it resolved to.
+    QString id = youtube::videoId(given);
     if (id.isEmpty())
+        id = idForTarget(given);
+    if (id.isEmpty()) {
+        toast("Play the song once, then like it.");
         return;
+    }
+    const QString target = QStringLiteral("https://www.youtube.com/watch?v=") + id;
     const QString path = likedPath(true);
     if (path.isEmpty()) {
         toast("Liked songs couldn't be made.");
@@ -3186,9 +3221,6 @@ void MainWindow::toggleLiked()
         if (ok)
             toast("Removed from Liked songs");
     } else {
-        const auto [artist, track] = playingSong();
-        const QString title = track.isEmpty() ? m_mpv.property("media-title").toString().trimmed()
-                                              : (artist.isEmpty() ? track : artist + QStringLiteral(" - ") + track);
         ok = Playlist::append(path, {PlaylistEntry{title, target, {}}});
         if (ok)
             toast("Added to Liked songs");
@@ -3197,15 +3229,11 @@ void MainWindow::toggleLiked()
         toast("Liked songs couldn't be written.");
         return;
     }
-    // The library shows the new count; an open Liked songs shows the change.
-    const auto &before = m_library.playlists();
-    const bool open = m_open >= 0 && m_open < before.size() && before[m_open].path.compare(path, Qt::CaseInsensitive) == 0;
-    if (open)
-        reopenAfter(path);
-    else {
-        m_library.rescan();
-        refill();
-    }
+    // The library shows the new count; the page open stays open (Liked songs
+    // too, with the change), where it was.
+    rescan();
+    markLikedRows();
+    m_nowPlaying->refreshLike();
 }
 
 void MainWindow::showRadioList(const QString &path)

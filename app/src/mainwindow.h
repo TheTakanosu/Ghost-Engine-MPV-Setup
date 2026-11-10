@@ -80,6 +80,8 @@ private:
     QString likedPath(bool make);
     QString playingTarget() const;
     void toggleLiked();
+    void toggleLiked(const QString &target, const QString &title);
+    void markLikedRows();
     void showRadioList(const QString &path);
     void openLeftPanel(int left, bool grow, const std::function<void(int)> &done);
     int m_ytChannelPad = -1;

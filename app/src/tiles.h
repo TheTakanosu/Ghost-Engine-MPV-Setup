@@ -85,6 +85,7 @@ constexpr int kAddedAtRole = Qt::UserRole + 11;  // when it was added, for sorti
 constexpr int kKeyRole = Qt::UserRole + 12;      // a library row's key: file name, or "folder:<name>"
 constexpr int kPinnedRole = Qt::UserRole + 13;
 constexpr int kOfflineRole = Qt::UserRole + 14;  // a song kept on disk
+constexpr int kLikedRole = Qt::UserRole + 17;    // a song in Liked songs
 constexpr int kAvatarRole = Qt::UserRole + 16;   // a YouTube card: its channel's picture URL
 
 // Widths of the right-hand columns, shared by the rows and their header.
@@ -100,6 +101,8 @@ public:
     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;
+    // The + (or tick) left of the length: a click there likes the song.
+    static QRectF likeRect(const QRect &rowRect);
 
 private:
     CoverFor m_coverFor;

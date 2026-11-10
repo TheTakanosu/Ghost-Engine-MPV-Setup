@@ -267,6 +267,14 @@ QSize SongDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) 
     return {400, int(56 * theme::zoom())};
 }
 
+QRectF SongDelegate::likeRect(const QRect &rowRect)
+{
+    const QRectF row = QRectF(rowRect).adjusted(0, 1, -4, -1);
+    const qreal d = 20;
+    const qreal left = row.right() - kDurationColumn - 8 + 4;
+    return {left, row.center().y() - d / 2, d, d};
+}
+
 void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                          const QModelIndex &index) const
 {
@@ -308,6 +316,31 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     painter->setPen(theme::muted());
     const QString length = index.data(kDurationRole).toString();
     painter->drawText(duration, Qt::AlignRight | Qt::AlignVCenter, length.isEmpty() ? QStringLiteral("–") : length);
+    // Liked songs (Batın, 2026-11-07): a + under the mouse, a tick in the
+    // accent on a song already liked, as Spotify's.
+    const bool liked = index.data(kLikedRole).toBool();
+    if (hover || liked) {
+        const QRectF ring = likeRect(option.rect);
+        QFont glyphs = option.font;
+        glyphs.setFamilies({QStringLiteral("Segoe Fluent Icons"), QStringLiteral("Segoe MDL2 Assets")});
+        glyphs.setPointSizeF(option.font.pointSizeF() * 0.72);
+        painter->setFont(glyphs);
+        if (liked) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(theme::accent());
+            painter->drawEllipse(ring);
+            painter->setPen(theme::c().onAccent);
+            painter->drawText(ring, Qt::AlignCenter, QString(QChar(0xE73E)));
+        } else {
+            painter->setPen(QPen(theme::muted(), 1.2));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawEllipse(ring.adjusted(0.5, 0.5, -0.5, -0.5));
+            painter->setPen(theme::text());
+            painter->drawText(ring, Qt::AlignCenter, QString(QChar(0xE710)));
+        }
+        painter->setFont(option.font);
+        painter->setPen(theme::muted());
+    }
     if (roomy)
         painter->drawText(added, Qt::AlignLeft | Qt::AlignVCenter, index.data(kAddedRole).toString());
 
