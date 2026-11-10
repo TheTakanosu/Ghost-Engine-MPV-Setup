@@ -935,7 +935,6 @@ MainWindow::MainWindow()
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
     setSearchMiddle(settings.value("search/middle", false).toBool());
-    connect(new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this), &QShortcut::activated, this, &MainWindow::openSearch);
     if (settings.value("layout/youtube", false).toBool())
         QTimer::singleShot(0, this, [this] { setYouTubeLayout(true, false); });
     m_rightSplit->restoreState(settings.value("window/panelSplit").toByteArray());
@@ -1382,7 +1381,7 @@ QWidget *MainWindow::buildTopBar()
     row->setSpacing(8);
     row->addWidget(home);
     row->addWidget(youtube);
-    m_searchButton = glyphButton(QChar(0xE721), "Search (Ctrl+K)", "pill");
+    m_searchButton = glyphButton(QChar(0xE721), "Search", "pill");
     connect(m_searchButton, &QPushButton::clicked, this, &MainWindow::openSearch);
     m_chromeButtons << m_searchButton;   // clicked, not a place to drag the window by
     row->addWidget(m_searchButton);
@@ -3434,10 +3433,10 @@ void MainWindow::runShortcut(const QString &action)
         if (m_videoPage->onMinimize && m_pages->currentWidget() == m_videoPage)
             m_videoPage->onMinimize();
     } else if (action == QLatin1String("search")) {
+        // The Search shortcut (Ctrl+K unless changed) opens the middle box either way.
         if (m_videoFull)
             setVideoFullScreen(false);
-        m_search->setFocus();
-        m_search->selectAll();
+        openSearchPopup();
     } else if (action == QLatin1String("librarySearch")) {
         if (m_compact)
             m_collapse->click();
@@ -6453,13 +6452,17 @@ void MainWindow::runSearch()
 
 void MainWindow::openSearch()
 {
-    // The middle box when that is chosen (or from Ctrl+K); else the top one.
-    if (!QSettings().value("search/middle", false).toBool() && sender() != nullptr &&
-        !qobject_cast<QShortcut *>(sender())) {
+    // The middle box when that is chosen; else the top one.
+    if (!QSettings().value("search/middle", false).toBool()) {
         m_search->setFocus();
         m_search->selectAll();
         return;
     }
+    openSearchPopup();
+}
+
+void MainWindow::openSearchPopup()
+{
     if (!m_searchPopup) {
         m_searchPopup = new SearchPopup(this);
         m_searchPopup->onSearch = [this](const QString &text) {

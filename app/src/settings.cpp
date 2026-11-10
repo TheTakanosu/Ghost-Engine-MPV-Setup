@@ -820,7 +820,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_searchMiddle = new ToggleSwitch;
     addRow(look, "Search in the middle of the window",
            "On: a search button in the top bar opens the box over the page, with what you searched before and "
-           "suggestions. Off: the box stays in the top bar. Ctrl+K opens the middle one either way.", m_searchMiddle);
+           "suggestions. Off: the box stays in the top bar. The Search shortcut (Ctrl+K) opens the middle one either way.", m_searchMiddle);
     connect(m_searchMiddle, &QAbstractButton::toggled, this, [this](bool on) {
         if (m_loading)
             return;

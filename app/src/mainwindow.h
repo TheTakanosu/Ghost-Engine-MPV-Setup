@@ -115,6 +115,7 @@ private:
     void showYouTube();
     // The search: in the top bar, or the box in the middle (SearchPopup).
     void openSearch();
+    void openSearchPopup();
     void setSearchMiddle(bool middle);
     class SearchPopup *m_searchPopup = nullptr;
     QPushButton *m_searchButton = nullptr;

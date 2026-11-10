@@ -257,6 +257,13 @@ bool SearchPopup::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
+    // The main window's Escape shortcut would take the key first (this box is
+    // its tool window); claim it so Escape closes the box.
+    if (watched == m_edit && event->type() == QEvent::ShortcutOverride &&
+        static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+        event->accept();
+        return true;
+    }
     if (watched == m_edit && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();
         if (key == Qt::Key_Escape) {
