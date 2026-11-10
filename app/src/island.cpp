@@ -16,12 +16,17 @@
 
 namespace {
 
+// Sizes at 100%; the island grows with the top bar it sits in (to 120%,
+// theme::chromeZoom), its words too: at the app's 160% the words grew and
+// the card did not, and its buttons were cut (2026-11-10).
+int z(int v) { return qRound(v * theme::chromeZoom()); }
 constexpr int kMargin = 12;       // room round the body for its shadow
-constexpr int kTop = 9;           // the pill sits in the 50 px top bar
-constexpr int kPillHeight = 32;
-constexpr int kCardWidth = 460;
-constexpr int kCardHeight = 150;
-constexpr int kThumbW = 192, kThumbH = 108;
+#define kTop z(9)                 // the pill sits in the top bar
+#define kPillHeight z(32)
+#define kCardWidth z(460)
+#define kCardHeight z(150)
+#define kThumbW z(192)
+#define kThumbH z(108)
 
 // A button drawn as a pill by hand: a style sheet's round corners did not
 // hold on the island's see-through ground and they came out square (Batın).
@@ -98,8 +103,22 @@ NowIsland::NowIsland(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
         if (onMini)
             onMini();
     });
-    theme::whenChanged(this, [this] {
+    const auto fitFont = [this] {
+        QFont f = font();
+        f.setPointSizeF(10 * theme::chromeZoom());
+        setFont(f);
+        for (QPushButton *b : {static_cast<QPushButton *>(m_openButton), static_cast<QPushButton *>(m_miniButton)}) {
+            QFont bold = f;
+            bold.setWeight(QFont::DemiBold);
+            b->setFont(bold);
+            b->setFixedSize(QFontMetrics(bold).horizontalAdvance(b->text()) + 26, z(28));
+        }
+    };
+    fitFont();
+    theme::whenChanged(this, [this, fitFont] {
         m_play->setColors(theme::c().textBright, theme::accent());
+        fitFont();
+        place();
         update();
     });
     m_play->setColors(theme::c().textBright, theme::accent());
@@ -174,11 +193,11 @@ void NowIsland::place()
     // The buttons only once the card is mostly open.
     const bool shown = t > 0.85;
     const QRectF b = body();
-    const int y = int(b.bottom()) - 40;
-    const int x = int(b.left()) + 12 + kThumbW + 14;
+    const int y = int(b.bottom()) - z(40);
+    const int x = int(b.left()) + 12 + kThumbW + z(14);
     m_play->move(x, y + 2);
-    m_openButton->move(x + 40, y + 4);
-    m_miniButton->move(x + 40 + m_openButton->width() + 8, y + 4);
+    m_openButton->move(x + z(40), y + 4);
+    m_miniButton->move(x + z(40) + m_openButton->width() + 8, y + 4);
     for (QWidget *button : {static_cast<QWidget *>(m_play), static_cast<QWidget *>(m_openButton),
                             static_cast<QWidget *>(m_miniButton)})
         button->setVisible(shown);

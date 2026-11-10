@@ -291,6 +291,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     homeColumn->setContentsMargins(20, 16, 12, 0);
     homeColumn->setSpacing(10);
     m_homeChips = new QWidget;
+    m_homeChips->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);   // the chips that do not fit hide
     auto *homeChipRow = new QHBoxLayout(m_homeChips);
     homeChipRow->setContentsMargins(8, 0, 0, 0);
     homeChipRow->setSpacing(8);
@@ -661,7 +662,8 @@ void SearchPage::showYouTubeHome()
     } else if (m_home.isEmpty() && !m_homeLoading) {
         fillHome(true);
     }
-    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);    noteView(QStringLiteral("ythome"), [this] { showYouTubeHome(); });
+    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+    noteView(QStringLiteral("ythome"), [this] { showYouTubeHome(); });
 }
 
 void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &items)
@@ -739,7 +741,8 @@ void SearchPage::searchInGrid(const QString &query)
     m_homeStatus->show();
     m_homeGrid->verticalScrollBar()->setValue(0);
     homeMore();
-    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);    noteView(QStringLiteral("grid:") + query, [this, query] {
+    QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+    noteView(QStringLiteral("grid:") + query, [this, query] {
         if (!m_youtube)
             setYouTubeMode(true);
         searchInGrid(query);
@@ -936,6 +939,17 @@ void SearchPage::fitHomeGrid()
         return;
     const int columns = qMax(1, width / int(360 * theme::zoom()));
     m_homeCards->setCardWidth(width / columns);
+    // The chips at their own width, as many as fit, in order: squeezed, their
+    // names were cut ("Coffee C", "es Batu" at 160%, 2026-11-10).
+    int room = m_homeChips->width() - 16, used = 0;
+    bool full = false;
+    for (QPushButton *chip : m_homeChips->findChildren<QPushButton *>(Qt::FindDirectChildrenOnly)) {
+        const int w = chip->sizeHint().width();
+        chip->setMinimumWidth(w);
+        full = full || used + w > room;
+        chip->setVisible(!full);
+        used += w + 8;
+    }
     if (m_homeGrid->gridSize() != m_homeCards->cardSize())
         m_homeGrid->setGridSize(m_homeCards->cardSize());
     m_homeGrid->doItemsLayout();

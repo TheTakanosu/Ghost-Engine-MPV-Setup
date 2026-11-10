@@ -303,6 +303,9 @@ void addRow(QVBoxLayout *rows, const QString &name, const QString &about, QWidge
 {
     auto *label = new QLabel(name);
     label->setObjectName("settingName");
+    // Names wrap as the lines under them do: unwrapped, a long one beside a
+    // wide box pushed the row past the page at 160% (the switches were cut).
+    label->setWordWrap(true);
     auto *text = new QLabel(about);
     text->setObjectName("statLabel");
     text->setWordWrap(true);
