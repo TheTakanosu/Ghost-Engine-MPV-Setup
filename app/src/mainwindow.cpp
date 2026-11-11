@@ -2875,6 +2875,43 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
+    // A press over the song rows that some other widget took (an overlay,
+    // a page still on its way in) is logged by name.
+    if (m_songs && m_songs->isVisible() && watched->isWidgetType() && watched != m_songs->viewport() &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)) {
+        const QPoint global = static_cast<QMouseEvent *>(event)->globalPosition().toPoint();
+        const QRect rows(m_songs->viewport()->mapToGlobal(QPoint(0, 0)), m_songs->viewport()->size());
+        if (rows.contains(global))
+            playLog(QStringLiteral("%1 over the rows went to %2 \"%3\"")
+                        .arg(event->type() == QEvent::MouseButtonDblClick ? "double-click" : "press")
+                        .arg(QString::fromLatin1(watched->metaObject()->className()), watched->objectName()));
+    }
+    // A double-click on a song plays it, handled here rather than through
+    // QListWidget's itemDoubleClicked: that one fires only when the second
+    // press lands on the row the view kept from the first, and the first
+    // double-click after a list page opened did nothing at all, not even
+    // reaching the signal (ghost-play.log, 2026-11-11). Presses and
+    // double-clicks are logged, for the next one that does nothing.
+    if (m_songs && watched == m_songs->viewport() && !m_videoGrid &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)) {
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        const QPoint at = mouse->position().toPoint();
+        QListWidgetItem *item = m_songs->itemAt(at);
+        const bool dbl = event->type() == QEvent::MouseButtonDblClick;
+        playLog(QStringLiteral("%1 at %2,%3 on row %4, list %5, scrolled %6, focus %7")
+                    .arg(dbl ? "double-click" : "press").arg(at.x()).arg(at.y())
+                    .arg(item ? m_songs->row(item) : -1).arg(m_open)
+                    .arg(m_songs->verticalScrollBar()->value()).arg(m_songs->hasFocus()));
+        if (dbl && item && mouse->button() == Qt::LeftButton && m_open >= 0) {
+            // The number column and the + play or like on the press's
+            // release already; a double-click there does not do it twice.
+            const bool handled = mouse->position().x() < 48 ||
+                tiles::SongDelegate::likeRect(m_songs->visualItemRect(item)).adjusted(-4, -4, 4, 4).contains(mouse->position());
+            if (!handled)
+                playOpen(m_songs->row(item));
+            return true;
+        }
+    }
     if (m_songs && watched == m_songs->viewport() && event->type() == QEvent::MouseButtonRelease && !m_videoGrid) {
         auto *mouse = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_songs->itemAt(mouse->position().toPoint());
