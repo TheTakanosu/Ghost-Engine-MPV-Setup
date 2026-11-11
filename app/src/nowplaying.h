@@ -51,6 +51,8 @@ public:
     std::function<void()> onLike;
     // The artist line clicked: the artist's page.
     std::function<void()> onArtist;
+    // Play/pause right-clicked: the sleep timer's menu.
+    std::function<void(const QPoint &global)> onSleepMenu;
     // A small "Private" mark beside the song while a private session is on.
     void setPrivate(bool on);
     std::function<void(const QPoint &global)> onLikeMenu;   // the + right-clicked

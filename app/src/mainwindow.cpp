@@ -801,6 +801,23 @@ MainWindow::MainWindow()
         return false;
     };
     m_nowPlaying->onLike = [this] { toggleLiked(); };
+    m_nowPlaying->onSleepMenu = [this](const QPoint &global) { sleepMenu(global); };
+    m_sleep.setSingleShot(true);
+    connect(&m_sleep, &QTimer::timeout, this, [this] {
+        m_mpv.setProperty("pause", true);
+        toast("Sleep timer: paused");
+    });
+    // "End of this song": paused as the next one starts.
+    connect(&m_mpv, &MpvClient::propertyChanged, this, [this](const QString &name) {
+        if (!m_sleepAtSongEnd || (name != "path" && name != "playlist-pos"))
+            return;
+        const QString now = m_mpv.property("path").toString() + QString::number(m_mpv.property("playlist-pos").toInt());
+        if (now == m_sleepSong)
+            return;
+        m_sleepAtSongEnd = false;
+        m_mpv.setProperty("pause", true);
+        toast("Sleep timer: paused");
+    });
     m_nowPlaying->onArtist = [this] {
         const QString artist = playingSong().first;
         goToArtist(artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist);
@@ -7827,4 +7844,38 @@ void MainWindow::setPrivateSession(bool on)
         m_applyPresence();
     toast(on ? QStringLiteral("Private session on: nothing is written down, Discord shows nothing")
              : QStringLiteral("Private session off"));
+}
+
+void MainWindow::sleepMenu(const QPoint &global)
+{
+    QMenu menu(this);
+    const bool on = m_sleep.isActive() || m_sleepAtSongEnd;
+    QString state = QStringLiteral("Sleep timer");
+    if (m_sleep.isActive())
+        state += QStringLiteral(": %1 min left").arg(qMax(1, (m_sleep.remainingTime() + 59999) / 60000));
+    else if (m_sleepAtSongEnd)
+        state += QStringLiteral(": end of this song");
+    menu.addAction(state)->setEnabled(false);
+    menu.addSeparator();
+    for (int minutes : {5, 15, 30, 45, 60, 90})
+        menu.addAction(QStringLiteral("%1 minutes").arg(minutes), this, [this, minutes] {
+            m_sleepAtSongEnd = false;
+            m_sleep.start(minutes * 60 * 1000);
+            toast(QStringLiteral("Pausing in %1 minutes").arg(minutes));
+        });
+    menu.addAction("End of this song", this, [this] {
+        m_sleep.stop();
+        m_sleepAtSongEnd = true;
+        m_sleepSong = m_mpv.property("path").toString() + QString::number(m_mpv.property("playlist-pos").toInt());
+        toast("Pausing when this song ends");
+    });
+    if (on) {
+        menu.addSeparator();
+        menu.addAction("Turn off the sleep timer", this, [this] {
+            m_sleep.stop();
+            m_sleepAtSongEnd = false;
+            toast("Sleep timer off");
+        });
+    }
+    menu.exec(global);
 }

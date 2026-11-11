@@ -153,7 +153,12 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     left->addLayout(info, 1);
 
     auto *prev = new icons::IconButton(icons::Icon::Previous, 32, "Previous");
-    m_playPause = new icons::IconButton(icons::Icon::Play, 40, "Play / pause");
+    m_playPause = new icons::IconButton(icons::Icon::Play, 40, "Play / pause (right-click: sleep timer)");
+    m_playPause->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_playPause, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        if (onSleepMenu)
+            onSleepMenu(m_playPause->mapToGlobal(pos));
+    });
     auto *next = new icons::IconButton(icons::Icon::Next, 32, "Next");
     const auto colour = [this, prev, next] {
         m_playPause->setRound(theme::text(), theme::c().strong, theme::window());

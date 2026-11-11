@@ -91,6 +91,11 @@ private:
     // its last songs, those not in it yet; + adds one, Refresh shows others.
     // Private session (Spotify's): not written down, not on Discord. Not
     // kept: it ends with the app.
+    // Sleep timer: pauses after some minutes, or when the song ends.
+    QTimer m_sleep;
+    bool m_sleepAtSongEnd = false;
+    QString m_sleepSong;          // the song playing when "end of song" was picked
+    void sleepMenu(const QPoint &global);
     bool m_private = false;
     std::function<void()> m_applyPresence;
     void setPrivateSession(bool on);
