@@ -51,6 +51,8 @@ public:
     std::function<void()> onLike;
     // The artist line clicked: the artist's page.
     std::function<void()> onArtist;
+    // A small "Private" mark beside the song while a private session is on.
+    void setPrivate(bool on);
     std::function<void(const QPoint &global)> onLikeMenu;   // the + right-clicked
     void refreshLike();
 
@@ -78,6 +80,7 @@ private:
     QWidget *m_leftBox = nullptr;
     int titleRoom() const;
     QLabel *m_subtitle;
+    QLabel *m_private = nullptr;
     QLabel *m_elapsed;
     QLabel *m_total;
     icons::IconButton *m_playPause;

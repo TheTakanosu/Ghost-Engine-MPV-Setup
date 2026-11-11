@@ -89,6 +89,11 @@ private:
 
     // Recommended songs under a song list (Spotify's): from the radio of
     // its last songs, those not in it yet; + adds one, Refresh shows others.
+    // Private session (Spotify's): not written down, not on Discord. Not
+    // kept: it ends with the app.
+    bool m_private = false;
+    std::function<void()> m_applyPresence;
+    void setPrivateSession(bool on);
     QLabel *m_playlistDesc = nullptr;   // the list's description, or "Add a description"
     void editDescription(int index);
     void showDescription();

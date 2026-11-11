@@ -131,6 +131,12 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     titleRow->setSpacing(8);
     titleRow->addWidget(m_title);
     titleRow->addWidget(m_like, 0, Qt::AlignVCenter);
+    m_private = new QLabel("Private");
+    m_private->setToolTip("Private session: nothing goes to your history, top songs or Discord");
+    theme::style(m_private, "color: @accentText; border: 1px solid @accent; border-radius: 8px; padding: 0 6px; "
+                            "font-size: 8pt; font-weight: 700;");
+    m_private->hide();
+    titleRow->addWidget(m_private, 0, Qt::AlignVCenter);
     titleRow->addStretch(1);
     auto *info = new QVBoxLayout;
     info->setSpacing(2);
@@ -527,4 +533,10 @@ void NowPlayingBar::press(const QString &button)
 void NowPlayingBar::setLyricsShown(bool shown)
 {
     m_lyrics->setVisible(shown);
+}
+
+void NowPlayingBar::setPrivate(bool on)
+{
+    if (m_private)
+        m_private->setVisible(on);
 }

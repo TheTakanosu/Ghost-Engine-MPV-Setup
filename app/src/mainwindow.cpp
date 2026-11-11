@@ -717,9 +717,11 @@ MainWindow::MainWindow()
         if (!m_mpv.connected())
             return;
         QSettings settings;
-        m_mpv.setProperty("user-data/ghost/rpc-songs", settings.value("presence/songs", true).toBool());
-        m_mpv.setProperty("user-data/ghost/rpc-videos", settings.value("presence/videos", true).toBool());
+        m_mpv.setProperty("user-data/ghost/rpc-songs", !m_private && settings.value("presence/songs", true).toBool());
+        m_mpv.setProperty("user-data/ghost/rpc-videos", !m_private && settings.value("presence/videos", true).toBool());
     };
+    m_applyPresence = applyPresence;
+    m_settings->onPrivateChanged = [this](bool on) { setPrivateSession(on); };
     m_settings->onPresenceChanged = [applyPresence](bool, bool) { applyPresence(); };
     connect(&m_mpv, &MpvClient::connectionChanged, this, [applyPresence](bool on) { if (on) applyPresence(); });
     m_settings->downloadsSummary = [this] {
@@ -1346,6 +1348,17 @@ QWidget *MainWindow::buildTopBar()
     m_profileButton->setFixedSize(36, 36);
     m_profileButton->setIconSize(QSize(28, 28));
     connect(m_profileButton, &QPushButton::clicked, this, &MainWindow::showProfile);
+    // Right-clicked: the profile's menu, with the private session.
+    m_profileButton->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_profileButton, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QMenu menu(this);
+        menu.addAction("Profile", this, &MainWindow::showProfile);
+        QAction *priv = menu.addAction("Private session", this, [this](bool on) { setPrivateSession(on); });
+        priv->setCheckable(true);
+        priv->setChecked(m_private);
+        priv->setToolTip("Nothing goes to your history, top songs or Discord until you turn it off or close the app");
+        menu.exec(m_profileButton->mapToGlobal(pos));
+    });
 
     m_search = new QLineEdit;
     m_search->setObjectName("topSearch");
@@ -4079,7 +4092,8 @@ void MainWindow::trackListening()
         id = idForTarget(path);
     // On the video page it is a video; a song in the mini video is a song.
     const bool video = !m_mpv.property("user-data/ghost/audio").toBool() || (songVideo() && !panelVideo());
-    m_stats.played(track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist, id, playingListPath(), video);
+    if (!m_private)
+        m_stats.played(track.isEmpty() ? m_mpv.property("media-title").toString() : track, artist, id, playingListPath(), video);
     if (m_pages->currentWidget() == m_profileScroll)
         m_profileSoon.start();
 }
@@ -7799,4 +7813,18 @@ void MainWindow::editDescription(int index)
         return;
     }
     rescan();
+}
+
+void MainWindow::setPrivateSession(bool on)
+{
+    if (m_private == on)
+        return;
+    m_private = on;
+    m_settings->setPrivate(on);
+    m_nowPlaying->setPrivate(on);
+    m_profileButton->setToolTip(on ? QStringLiteral("Profile (private session)") : QStringLiteral("Profile"));
+    if (m_applyPresence)
+        m_applyPresence();
+    toast(on ? QStringLiteral("Private session on: nothing is written down, Discord shows nothing")
+             : QStringLiteral("Private session off"));
 }

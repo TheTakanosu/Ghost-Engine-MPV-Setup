@@ -67,6 +67,9 @@ public:
     std::function<void()> onResumeChanged;
     std::function<void(bool)> onNormalizeChanged;
     std::function<void()> onClearHistory;
+    // Private session: on until it is turned off or the app closes.
+    std::function<void(bool on)> onPrivateChanged;
+    void setPrivate(bool on);
     // Rich Presence on Discord, for songs and for videos apart.
     std::function<void(bool songs, bool videos)> onPresenceChanged;
     std::function<void(const QString &format)> onVideoFormatChanged;
@@ -118,6 +121,7 @@ private:
     ToggleSwitch *m_volumeNumber;
     ToggleSwitch *m_presenceSongs;
     ToggleSwitch *m_history;
+    ToggleSwitch *m_private = nullptr;
     ToggleSwitch *m_resume;
     ToggleSwitch *m_autoplay;
     ToggleSwitch *m_normalize;

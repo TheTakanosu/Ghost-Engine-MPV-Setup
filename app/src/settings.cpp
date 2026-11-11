@@ -1123,6 +1123,14 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
             onClearHistory();
     });
     addRow(privacyRows, "Your history", QString(), clearHistory);
+    m_private = new ToggleSwitch;
+    addRow(privacyRows, "Private session",
+           "Until you turn it off or close Ghost Engine: nothing goes to your history or top songs, and Discord shows nothing.",
+           m_private);
+    connect(m_private, &QAbstractButton::toggled, this, [this](bool on) {
+        if (!m_loading && onPrivateChanged)
+            onPrivateChanged(on);
+    });
     connect(m_history, &QAbstractButton::toggled, this, [this](bool on) {
         if (!m_loading && onHistoryChanged)
             onHistoryChanged(on);
@@ -1414,4 +1422,14 @@ void SettingsPage::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
     m_memoryTimer->stop();
+}
+
+void SettingsPage::setPrivate(bool on)
+{
+    if (!m_private || m_private->isChecked() == on)
+        return;
+    const bool was = m_loading;
+    m_loading = true;
+    m_private->setChecked(on);
+    m_loading = was;
 }
