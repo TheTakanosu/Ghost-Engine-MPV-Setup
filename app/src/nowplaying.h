@@ -47,6 +47,7 @@ public:
     std::function<bool()> canLike;
     std::function<bool()> isLiked;
     std::function<void()> onLike;
+    std::function<void(const QPoint &global)> onLikeMenu;   // the + right-clicked
     void refreshLike();
 
 signals:

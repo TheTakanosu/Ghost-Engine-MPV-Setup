@@ -118,6 +118,12 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
             onLike();
         refreshLike();
     });
+    m_like->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_like, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        if (onLikeMenu)
+            onLikeMenu(m_like->mapToGlobal(pos));
+        refreshLike();
+    });
     auto *titleRow = new QHBoxLayout;
     titleRow->setSpacing(8);
     titleRow->addWidget(m_title);

@@ -8,6 +8,7 @@
 #include "thumbnails.h"
 #include "tiles.h"
 
+#include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -1180,6 +1181,28 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
             const ytmusic::Item it = m_home.value(item->data(tiles::kEntryRole).toInt());
             if (circle.adjusted(-4, -4, 4, 4).contains(at) && !it.channelId.isEmpty()) {
                 showChannel(it.channelId, it.artist);
+                return true;
+            }
+        }
+    }
+    // A song row's + (Liked songs): a click likes it, a right-click opens its
+    // own menu of lists, as in the library's lists (2026-11-11).
+    if (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::ContextMenu) {
+        auto *list = watched->parent() ? qobject_cast<QListWidget *>(watched->parent()) : nullptr;
+        const QVector<ytmusic::Item> *items = list == m_songsList ? &m_songs : list == m_listSongs ? &m_list.songs : nullptr;
+        if (items && list->viewport() == watched) {
+            const bool menu = event->type() == QEvent::ContextMenu;
+            const QPoint at = menu ? static_cast<QContextMenuEvent *>(event)->pos()
+                                   : static_cast<QMouseEvent *>(event)->position().toPoint();
+            QListWidgetItem *item = list->itemAt(at);
+            const ytmusic::Item song = item ? items->value(item->data(tiles::kEntryRole).toInt()) : ytmusic::Item();
+            if (item && song.kind == ytmusic::Kind::Song && !song.id.isEmpty() &&
+                (menu || static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) &&
+                tiles::SongDelegate::likeRect(list->visualItemRect(item)).adjusted(-4, -4, 4, 4).contains(QPointF(at))) {
+                if (menu && onLikeMenu)
+                    onLikeMenu(song, list->viewport()->mapToGlobal(at));
+                else if (!menu && onLike)
+                    onLike(song);
                 return true;
             }
         }

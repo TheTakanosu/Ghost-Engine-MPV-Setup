@@ -405,6 +405,10 @@ MainWindow::MainWindow()
     m_searchPage->onSave = [this](const QString &name, const QVector<ytmusic::Item> &items) { saveFound(name, items); };
     m_searchPage->onMenu = [this](const QVector<ytmusic::Item> &items, const QPoint &at) { foundMenu(items, at); };
     m_searchPage->onToast = [this](const QString &text) { toast(text); };
+    m_searchPage->onLike = [this](const ytmusic::Item &it) { toggleLiked(it.target(), it.lineTitle()); };
+    m_searchPage->onLikeMenu = [this](const ytmusic::Item &it, const QPoint &global) {
+        likeMenu(it.target(), it.lineTitle(), global);
+    };
     // A channel's page is none of the menu's items.
     m_searchPage->isFollowed = [this](const QString &id) { return follows(id); };
     m_searchPage->onFollow = [this](const QString &id, const QString &name, bool follow) { setFollowing(id, name, follow); };
@@ -851,6 +855,12 @@ MainWindow::MainWindow()
         return false;
     };
     m_nowPlaying->onLike = [this] { toggleLiked(); };
+    m_nowPlaying->onLikeMenu = [this](const QPoint &global) {
+        const auto [artist, track] = playingSong();
+        likeMenu(playingTarget(), track.isEmpty() ? m_mpv.property("media-title").toString().trimmed()
+                                                  : (artist.isEmpty() ? track : artist + QStringLiteral(" - ") + track),
+                 global);
+    };
     m_nowPlaying->numberFor = [this] {
         // The number the song has where it is shown: its row in the open
         // list when that is the one playing, else its place in the file.
@@ -2328,6 +2338,16 @@ QWidget *MainWindow::buildPlaylistPage()
         QListWidgetItem *item = m_songs->itemAt(pos);
         if (!item)
             return;
+        if (!m_videoGrid &&
+            tiles::SongDelegate::likeRect(m_songs->visualItemRect(item)).adjusted(-4, -4, 4, 4).contains(QPointF(pos))) {
+            const QString artist = item->data(tiles::kArtistRole).toString();
+            const QString track = item->text();
+            likeMenu(item->data(Qt::UserRole).toString(), artist.isEmpty() ? track : artist + QStringLiteral(" - ") + track,
+                     m_songs->viewport()->mapToGlobal(pos));
+            markLikedRows();
+            m_songs->viewport()->update();
+            return;
+        }
         if (!item->isSelected()) {
             m_songs->clearSelection();
             item->setSelected(true);
@@ -6934,6 +6954,14 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
     QVector<PlaylistEntry> entries;
     for (const ytmusic::Item &it : items)
         entries << PlaylistEntry{it.lineTitle(), it.target(), {}};
+    fillAddTo(to, entries);
+    menu.exec(global);
+}
+
+
+// "New playlist...", then every list of the library these can be added to.
+void MainWindow::fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip)
+{
     const auto addTo = [this, entries](const QString &path) {
         const Playlist target = Playlist::peek(path);
         QSet<QString> has;
@@ -6974,11 +7002,41 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
     for (const Playlist &p : m_library.playlists()) {
         const QString dir = QDir::cleanPath(QFileInfo(p.path).absolutePath());
         const bool ours = dir.compare(home, Qt::CaseInsensitive) == 0 || dir.startsWith(home + '/', Qt::CaseInsensitive);
-        if (!ours)
+        if (!ours || p.path == skip)
             continue;   // lists outside the library are the bot's to write
         const QString path = p.path;
         to->addAction(p.folder.isEmpty() ? p.name : p.folder + QStringLiteral("  ›  ") + p.name, this, [addTo, path] { addTo(path); });
     }
+}
+
+bool MainWindow::likedHas(const QString &target)
+{
+    QString id = youtube::videoId(target);
+    if (id.isEmpty())
+        id = idForTarget(target);
+    const QString path = likedPath(false);
+    if (path.isEmpty() || id.isEmpty())
+        return false;
+    for (const PlaylistEntry &e : Playlist::peek(path).readEntries())
+        if (youtube::videoId(e.target) == id)
+            return true;
+    return false;
+}
+
+// The + of Liked songs, right-clicked: the lists to add the song to at once,
+// as Spotify's, and out of Liked songs when it is there (2026-11-11).
+void MainWindow::likeMenu(const QString &target, const QString &title, const QPoint &global)
+{
+    if (target.isEmpty())
+        return;
+    QMenu menu(this);
+    if (likedHas(target)) {
+        menu.addAction("Remove from Liked songs", this, [this, target, title] { toggleLiked(target, title); });
+        menu.addSeparator();
+    }
+    QMenu *to = &menu;
+    to->addSection(QStringLiteral("Add to playlist"));
+    fillAddTo(to, {PlaylistEntry{title, target, {}}}, likedPath(false));
     menu.exec(global);
 }
 

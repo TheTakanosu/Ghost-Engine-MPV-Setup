@@ -30,6 +30,7 @@ class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QMenu;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
@@ -246,6 +247,9 @@ private:
     void playFound(const QVector<ytmusic::Item> &items, const QString &name, int start, bool shuffle, bool audio);
     void saveFound(const QString &name, const QVector<ytmusic::Item> &items);
     void foundMenu(const QVector<ytmusic::Item> &items, const QPoint &global);
+    void fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip = QString());
+    bool likedHas(const QString &target);
+    void likeMenu(const QString &target, const QString &title, const QPoint &global);
     static QString foundFolder();
 
     Library m_library;

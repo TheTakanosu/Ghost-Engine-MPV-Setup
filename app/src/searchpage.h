@@ -57,6 +57,9 @@ public:
     // The right-click menu for these songs (Play, Add to playlist...).
     std::function<void(const QVector<ytmusic::Item> &, const QPoint &global)> onMenu;
     std::function<void(const QString &)> onToast;
+    // A row's + (Liked songs): clicked, and right-clicked for its own menu.
+    std::function<void(const ytmusic::Item &)> onLike;
+    std::function<void(const ytmusic::Item &, const QPoint &global)> onLikeMenu;
 
     // YouTube mode's home, shown when it is opened with nothing typed: a grid
     // as YouTube's home has, made of what YouTube shows beside the videos
