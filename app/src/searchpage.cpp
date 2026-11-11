@@ -242,8 +242,8 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     auto *listColumn = new QVBoxLayout(listPage);
     listColumn->setContentsMargins(0, 0, 0, 6);
     listColumn->setSpacing(8);
-    auto *back = linkButton(QStringLiteral("‹  Back to results"));
-    connect(back, &QPushButton::clicked, this, &SearchPage::backToResults);
+    auto *back = m_listBack = linkButton(QStringLiteral("‹  Back to results"));
+    connect(back, &QPushButton::clicked, this, &SearchPage::goBack);
     auto *backRow = new QHBoxLayout;
     backRow->setContentsMargins(28, 10, 28, 0);
     backRow->addWidget(back);
@@ -477,7 +477,10 @@ void SearchPage::fill(QListWidget *list, const QVector<ytmusic::Item> &items, in
         row->setData(tiles::kNumberRole, QString::number(i + 1));
         // A playlist has no length; a space keeps the row's dash away.
         row->setData(tiles::kDurationRole, ytmusic::opensPage(it.kind) ? QStringLiteral(" ")
-                                          : it.duration.isEmpty() ? QStringLiteral("LIVE") : it.duration);
+                                          : !it.duration.isEmpty() ? it.duration
+                                          // A song with no length given (an artist's top songs) shows
+                                          // none; only a video without one is live.
+                                          : it.kind == ytmusic::Kind::Video ? QStringLiteral("LIVE") : QStringLiteral(" "));
         row->setData(tiles::kAddedRole, it.kind == ytmusic::Kind::Song ? (it.album.isEmpty() ? it.extra : it.album) : ytmusic::opensPage(it.kind) ? it.extra : QString());
         row->setData(tiles::kEntryRole, i);
         row->setData(Qt::UserRole, coverKey(it));
@@ -1095,6 +1098,7 @@ void SearchPage::showLocalList(const QString &title, const QString &info, const 
     m_list.title = saveAs;   // the name it is saved under
     m_list.songs = songs;
     m_list.ok = true;
+    setOrigin(true);
     m_listKicker->setText("RADIO");
     m_listIsRadio = true;
     m_listCoverUrl.clear();
@@ -1162,6 +1166,7 @@ void SearchPage::backToResults()
 
 void SearchPage::openPlaylist(const QString &id, const QString &title)
 {
+    setOrigin(true);
     m_list = {};
     m_list.id = id;
     m_listKicker->setText("PLAYLIST ON YOUTUBE MUSIC");
@@ -1377,8 +1382,8 @@ void SearchPage::buildArtistView()
     auto *column = new QVBoxLayout(content);
     column->setContentsMargins(0, 0, 0, 28);
     column->setSpacing(18);
-    auto *back = linkButton(QStringLiteral("\u2039  Back to results"));
-    connect(back, &QPushButton::clicked, this, &SearchPage::backToResults);
+    auto *back = m_artistBack = linkButton(QStringLiteral("\u2039  Back to results"));
+    connect(back, &QPushButton::clicked, this, &SearchPage::goBack);
     auto *backRow = new QHBoxLayout;
     backRow->setContentsMargins(28, 10, 28, 0);
     backRow->addWidget(back);
@@ -1507,6 +1512,7 @@ void SearchPage::openArtistNamed(const QString &name)
 {
     if (name.trimmed().isEmpty())
         return;
+    setOrigin(false);   // asked from outside the search: a list, the player bar
     // Shown at once, filled when YouTube Music answers.
     ++m_serial;
     m_artist = {};
@@ -1532,6 +1538,8 @@ void SearchPage::openArtistNamed(const QString &name)
 
 void SearchPage::openArtist(const QString &id, const QString &name)
 {
+    if (m_views->currentWidget() != m_artistView)
+        noteOrigin();
     const int serial = ++m_serial;
     m_artist = {};
     m_artist.id = id;
@@ -1571,6 +1579,7 @@ void SearchPage::openArtist(const QString &id, const QString &name)
 
 void SearchPage::openAlbum(const QString &id, const QString &title, const QString &cover)
 {
+    noteOrigin();
     ++m_serial;
     m_list = {};
     m_list.id = id;
@@ -1603,4 +1612,29 @@ void SearchPage::openAlbum(const QString &id, const QString &title, const QStrin
         m_saveButton->setEnabled(true);
         m_listHeader->update();
     });
+}
+
+void SearchPage::noteOrigin()
+{
+    // From the results (this page showing them, or a search box just
+    // typed): back to them. From anywhere else (a list, the player bar, an
+    // artist's page): plain Back, the app's.
+    setOrigin(isVisible() && m_views->currentWidget() == m_resultsScroll && !m_query.isEmpty());
+}
+
+void SearchPage::setOrigin(bool fromResults)
+{
+    m_fromResults = fromResults;
+    const QString text = fromResults ? QStringLiteral("\u2039  Back to results") : QStringLiteral("\u2039  Back");
+    for (QPushButton *b : {m_listBack, m_artistBack})
+        if (b)
+            b->setText(text);
+}
+
+void SearchPage::goBack()
+{
+    if (m_fromResults || !onBack)
+        backToResults();
+    else
+        onBack();
 }

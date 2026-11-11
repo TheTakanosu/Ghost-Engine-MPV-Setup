@@ -819,9 +819,16 @@ MainWindow::MainWindow()
         toast("Sleep timer: paused");
     });
     m_nowPlaying->onArtist = [this] {
+        // No mpv yet (the app just opened, the bar waiting where it left
+        // off): the artist kept with that song.
+        if (!m_mpv.connected()) {
+            goToArtist(QSettings().value("resume/artist").toString());
+            return;
+        }
         const QString artist = playingSong().first;
         goToArtist(artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist);
     };
+    m_searchPage->onBack = [this] { goHistory(false); };
     m_nowPlaying->onLikeMenu = [this](const QPoint &global) {
         const auto [artist, track] = playingSong();
         likeMenu(playingTarget(), track.isEmpty() ? m_mpv.property("media-title").toString().trimmed()

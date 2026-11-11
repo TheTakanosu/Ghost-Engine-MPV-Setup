@@ -93,6 +93,9 @@ public:
     void openArtistNamed(const QString &name);
     // An album, laid out as a playlist is: played in order, saved to the library.
     void openAlbum(const QString &id, const QString &title, const QString &cover = QString());
+    // An artist's or album's Back when it was not opened from the results:
+    // the app's own Back.
+    std::function<void()> onBack;
 
     // What the page shows now, as a key and a way to show it again: the
     // app's Back and Forward. onViewChanged after each new view.
@@ -213,6 +216,12 @@ private:
     QScrollArea *m_artistScroll = nullptr;
     ytmusic::ArtistPage m_artist;
     void buildArtistView();
+    QPushButton *m_listBack = nullptr;
+    QPushButton *m_artistBack = nullptr;
+    bool m_fromResults = true;
+    void noteOrigin();
+    void setOrigin(bool fromResults);
+    void goBack();
     void fitArtistTitle();
 
     // Search: artists and albums.

@@ -317,7 +317,7 @@ bool NowPlayingBar::eventFilter(QObject *watched, QEvent *event)
         return true;
     }
     if (watched == m_subtitle && event->type() == QEvent::MouseButtonRelease) {
-        if (onArtist && m_mpv->connected())
+        if (onArtist)
             onArtist();
         return true;
     }
