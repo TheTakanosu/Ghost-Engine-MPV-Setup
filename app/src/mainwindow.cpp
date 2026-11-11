@@ -6620,6 +6620,12 @@ void MainWindow::setVideoFullScreen(bool full)
     m_videoPage->setFullScreen(full);
     if (!full && m_fullFromPanel) {
         m_fullFromPanel = false;
+        // It was watched small (the corner player, or the now playing
+        // view): small again. The way through the video page had reset this,
+        // and the picture went away (2026-11-11).
+        m_miniAsked = true;
+        m_miniClosed = false;
+        m_pictureAway = false;
         QWidget *back = m_beforeVideo && m_beforeVideo != m_videoPage ? m_beforeVideo.data() : nullptr;
         if (back)
             m_pages->setCurrentWidget(back);
