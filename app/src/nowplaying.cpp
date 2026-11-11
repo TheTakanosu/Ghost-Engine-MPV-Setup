@@ -423,6 +423,11 @@ void NowPlayingBar::onProperty(const QString &name)
         const int number = numberFor ? numberFor() : 0;
         const int pos = number > 0 ? number : m_mpv->property("playlist-pos").toInt() + 1;
         QString sub = count > 0 ? QStringLiteral("%1 of %2").arg(pos).arg(count) : QString();
+        if (positionText) {
+            const QString given = positionText();
+            if (!given.isEmpty())
+                sub = given;
+        }
         if (!uploader.isEmpty())
             sub = uploader + (sub.isEmpty() ? QString() : QStringLiteral("  ·  ") + sub);
         m_subtitle->setText(sub);

@@ -258,6 +258,11 @@ private:
     void queueSongs(const QVector<PlaylistEntry> &songs, bool next);
     void syncQueue();
     bool playingQueued() const;
+    // A song the queue or Autoplay put in: in no list's file, and mpv gives
+    // it no playlist-path; the list it came between is the one last known.
+    bool playingAdded() const;
+    mutable QString m_lastListPath;
+    QString positionText();   // "3 of 12", "From queue", "Autoplay"
     QSet<qint64> m_queueIds;            // mpv playlist entry ids put in by the queue
     QSet<qint64> m_knownIds;            // every id of mpv's list at the last look
     QStringList m_queuePending;         // targets loaded, ids not seen yet

@@ -27,6 +27,8 @@ public:
     // The playing song's number as the app shows it (row in the open list,
     // or its place in the file); 0 when it cannot tell.
     std::function<int()> numberFor;
+    // The whole "N of M" (or "From queue"); empty: worked out from mpv's list.
+    std::function<QString()> positionText;
     void refreshPosition();
     void setVolumeNumber(bool shown);
     // A keyboard shortcut pressing one of the bar's buttons, so a key does

@@ -862,6 +862,7 @@ MainWindow::MainWindow()
                                                   : (artist.isEmpty() ? track : artist + QStringLiteral(" - ") + track),
                  global);
     };
+    m_nowPlaying->positionText = [this] { return positionText(); };
     m_nowPlaying->numberFor = [this] {
         // The number the song has where it is shown: its row in the open
         // list when that is the one playing, else its place in the file.
@@ -5907,14 +5908,17 @@ QString MainWindow::playingListPath() const
 {
     const QString mpvSays = m_mpv.property("playlist-path").toString();
     if (mpvSays.isEmpty())
-        return {};
+        return m_mpv.connected() && playingAdded() ? m_lastListPath : QString();
     const QFileInfo info(mpvSays);
-    if (info.exists())
-        return info.absoluteFilePath();
-    for (const Playlist &p : m_library.playlists())
-        if (QFileInfo(p.path).fileName().compare(info.fileName(), Qt::CaseInsensitive) == 0)
-            return QFileInfo(p.path).absoluteFilePath();
-    return info.absoluteFilePath();
+    QString path = info.absoluteFilePath();
+    if (!info.exists())
+        for (const Playlist &p : m_library.playlists())
+            if (QFileInfo(p.path).fileName().compare(info.fileName(), Qt::CaseInsensitive) == 0) {
+                path = QFileInfo(p.path).absoluteFilePath();
+                break;
+            }
+    m_lastListPath = path;
+    return path;
 }
 
 QString MainWindow::findMpv() const
@@ -7261,6 +7265,8 @@ void MainWindow::syncQueue()
     }
     m_knownIds = ids;
     m_queueIds.intersect(ids);   // a new list replaced them
+    // What is queued changed what the row marks and the "N of M" say.
+    QTimer::singleShot(0, this, [this] { markPlaying(); });
     if (m_queueIds.isEmpty()) {
         if (m_queuePending.isEmpty())
             m_queueTitles.clear();
@@ -7274,6 +7280,43 @@ void MainWindow::syncQueue()
             m_mpv.command({"playlist-remove", i});
         }
     }
+}
+
+bool MainWindow::playingAdded() const
+{
+    return playingQueued() || m_autoplayTitles.contains(m_mpv.property("path").toString());
+}
+
+QString MainWindow::positionText()
+{
+    // The list's own order: queued songs and Autoplay's are not counted in
+    // it, and say where they come from instead, as Spotify does (a queue of
+    // two in a list of three read "1 of 5", 2026-11-11).
+    if (!m_mpv.connected())
+        return {};
+    if (playingQueued())
+        return QStringLiteral("From queue");
+    if (m_autoplayTitles.contains(m_mpv.property("path").toString()))
+        return QStringLiteral("Autoplay");
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    int added = 0;
+    for (const QVariant &v : entries) {
+        const QVariantMap e = v.toMap();
+        if (m_queueIds.contains(e.value("id").toLongLong()) || m_autoplayTitles.contains(e.value("filename").toString()))
+            ++added;
+    }
+    const int count = int(entries.size()) - added;
+    if (count <= 0)
+        return {};
+    int number = m_nowPlaying->numberFor ? m_nowPlaying->numberFor() : 0;
+    if (number <= 0) {
+        const int pos = m_mpv.property("playlist-pos").toInt();
+        number = pos + 1;
+        for (int i = 0; i < qMin(pos, int(entries.size())); ++i)
+            if (m_queueIds.contains(entries[i].toMap().value("id").toLongLong()))
+                --number;
+    }
+    return QStringLiteral("%1 of %2").arg(number).arg(count);
 }
 
 bool MainWindow::playingQueued() const
