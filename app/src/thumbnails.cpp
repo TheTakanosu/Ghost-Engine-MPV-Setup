@@ -1,5 +1,7 @@
 #include "thumbnails.h"
 
+#include <algorithm>
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -47,6 +49,96 @@ QImage cropBars(const QImage &image)
     return image.copy(left, top, right - left + 1, bottom - top + 1);
 }
 
+// YouTube Music's song pictures put a square cover in a 16:9 (or 4:3)
+// frame with flat bands of one colour at the sides (or above and below):
+// white, grey, a dark tint of the cover. Those bands are cut too, so the
+// cover fills its square (Batın, 2026-11-11). Careful, so a cover's own
+// border stays: a band is a run of lines whose samples are, 94 in 100, within
+// a little of one colour (JPEG noise); both sides must have one, of the same
+// colour, each at least 4% of the side; a band all round, thin on every
+// side, is a frame and stays; every band cut is the same colour (a cover's
+// own black border inside grey bands stays); and what is left must be
+// close to square, or nothing is cut.
+constexpr int kBandTolerance = 14;   // per channel, of 255 (about 5%)
+
+QRgb lineColour(const QImage &image, int index, bool column)
+{
+    const int length = column ? image.height() : image.width();
+    QVector<int> r, g, b;
+    for (int i = 0; i < length; i += qMax(1, length / 48)) {
+        const QRgb px = column ? image.pixel(index, i) : image.pixel(i, index);
+        r << qRed(px);
+        g << qGreen(px);
+        b << qBlue(px);
+    }
+    std::sort(r.begin(), r.end());
+    std::sort(g.begin(), g.end());
+    std::sort(b.begin(), b.end());
+    return qRgb(r[r.size() / 2], g[g.size() / 2], b[b.size() / 2]);
+}
+
+bool near(QRgb a, QRgb b, int tolerance = kBandTolerance)
+{
+    return qAbs(qRed(a) - qRed(b)) <= tolerance && qAbs(qGreen(a) - qGreen(b)) <= tolerance &&
+           qAbs(qBlue(a) - qBlue(b)) <= tolerance;
+}
+
+bool flatLine(const QImage &image, int index, bool column, QRgb colour)
+{
+    const int length = column ? image.height() : image.width();
+    int same = 0, samples = 0;
+    for (int i = 0; i < length; i += qMax(1, length / 48)) {
+        same += near(column ? image.pixel(index, i) : image.pixel(i, index), colour) ? 1 : 0;
+        ++samples;
+    }
+    return same * 100 >= samples * 94;
+}
+
+// How many lines from `start` inward are one flat colour; that colour.
+int bandFrom(const QImage &image, int start, int step, int limit, bool column, QRgb *colour)
+{
+    *colour = lineColour(image, start, column);
+    int n = 0;
+    for (int i = start; n < limit && flatLine(image, i, column, *colour); i += step)
+        ++n;
+    return n;
+}
+
+QImage cropFlatBands(const QImage &image)
+{
+    QRect box = image.rect();
+    bool have = false;
+    QRgb chain = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        const QImage part = image.copy(box);
+        const int w = part.width(), h = part.height();
+        QRgb lc, rc, tc, bc;
+        const int left = bandFrom(part, 0, 1, w / 3, true, &lc);
+        const int right = bandFrom(part, w - 1, -1, w / 3, true, &rc);
+        const int top = bandFrom(part, 0, 1, h / 3, false, &tc);
+        const int bottom = bandFrom(part, h - 1, -1, h / 3, false, &bc);
+        const bool sides = left >= w * 4 / 100 && right >= w * 4 / 100 && near(lc, rc, 2 * kBandTolerance);
+        const bool ends = top >= h * 4 / 100 && bottom >= h * 4 / 100 && near(tc, bc, 2 * kBandTolerance);
+        if (sides && ends && qMin(left, right) * 10 < w && qMin(top, bottom) * 10 < h && near(lc, tc, 2 * kBandTolerance))
+            return image;   // a thin frame all round: the cover's own
+        if (!sides && !ends)
+            break;
+        const QRgb colour = sides ? lc : tc;
+        if (have && !near(colour, chain, 2 * kBandTolerance))
+            break;   // another colour inside: the cover's own border
+        if (have && sides && ends && !near(lc, tc, 2 * kBandTolerance))
+            break;
+        chain = colour;
+        have = true;
+        box = QRect(box.left() + (sides ? left : 0), box.top() + (ends ? top : 0),
+                    w - (sides ? left + right : 0), h - (ends ? top + bottom : 0));
+    }
+    if (!have || box.width() < 16 || box.height() < 16)
+        return image;
+    const double aspect = double(box.width()) / box.height();
+    return aspect >= 0.85 && aspect <= 1.18 ? image.copy(box) : image;
+}
+
 QString key(const QString &videoId, ThumbnailCache::Size size)
 {
     // A picture by its URL (search results' playlists): a file named by its hash.
@@ -82,7 +174,7 @@ QPixmap ThumbnailCache::get(const QString &videoId, Size size)
         fetch(videoId, size);
         return {};
     }
-    image = cropBars(image);
+    image = cropFlatBands(cropBars(image.convertToFormat(QImage::Format_RGB32)));
     // Kept no larger than it is ever drawn (a picture by URL came 1000 px
     // wide): scaling it down once here instead of at every painted frame.
     const int cap = size == Size::Hero ? 640 : 400;
