@@ -7,6 +7,7 @@
 
 #include "covercrop.h"
 #include "settings.h"
+#include "spotifyimport.h"
 #include "songinfo.h"
 #include "traymenu.h"
 #include "updates.h"
@@ -1773,6 +1774,7 @@ void MainWindow::showLibraryMenu(const QPoint &at)
     QMenu menu(this);
     menu.addAction("New playlist...", this, [this] { newPlaylist(); });
     menu.addAction("New folder...", this, [this] { newFolder(); });
+    menu.addAction("Import from Spotify...", this, &MainWindow::importSpotify);
     menu.addSeparator();
     menu.addAction("Add a folder with playlists...", this, &MainWindow::addFolder);
     menu.addAction("Refresh", this, &MainWindow::rescan);
@@ -7919,4 +7921,29 @@ void MainWindow::applyEqualizer(int band)
     // the equalizer made.
     m_mpv.command({"af", "remove", "@ghosteq"});
     m_mpv.command({"af", "pre", QStringLiteral("@ghosteq:") + equalizer::filter(gains)});
+}
+
+void MainWindow::importSpotify()
+{
+    SpotifyImportDialog dialog(this);
+    dialog.onImported = [this](const QString &name, const QVector<spotify::Track> &tracks) {
+        // As the bot writes a Spotify list: each song a YouTube search,
+        // found when it plays (songmatch picks the right upload).
+        const QString path = m_library.createPlaylist(name);
+        if (path.isEmpty()) {
+            QMessageBox::warning(this, "Import from Spotify", "The playlist couldn't be made.");
+            return;
+        }
+        QVector<PlaylistEntry> entries;
+        for (const spotify::Track &t : tracks)
+            entries << PlaylistEntry{t.artist.isEmpty() ? t.title : t.artist + QStringLiteral(" - ") + t.title,
+                                     QStringLiteral("ytdl://ytsearch1:%1 %2").arg(t.title, t.artist).trimmed(), {}};
+        if (!Playlist::append(path, entries)) {
+            QMessageBox::warning(this, "Import from Spotify", "The playlist file couldn't be written.");
+            return;
+        }
+        toast(QStringLiteral("Imported %1 songs: %2").arg(tracks.size()).arg(name));
+        reopenAfter(path);
+    };
+    dialog.exec();
 }

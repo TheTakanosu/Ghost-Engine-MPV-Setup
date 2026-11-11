@@ -99,6 +99,8 @@ private:
     // The equalizer's filter (@ghosteq), before Normalize's; band >= 0 moves
     // one band live (af-command), -1 builds it again.
     void applyEqualizer(int band);
+    // Library + > Import from Spotify (no key, as the bot does).
+    void importSpotify();
     bool m_private = false;
     std::function<void()> m_applyPresence;
     void setPrivateSession(bool on);

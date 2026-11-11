@@ -33,6 +33,7 @@ qt_add_executable(GhostEngine WIN32
     src/searchpage.h src/searchpage.cpp
     src/listheader.h src/listheader.cpp
     src/equalizer.h src/equalizer.cpp
+    src/spotifyimport.h src/spotifyimport.cpp
     src/channelheader.h src/channelheader.cpp
     src/searchpopup.cpp
     src/elidedlabel.h
