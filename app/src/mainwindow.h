@@ -86,6 +86,24 @@ private:
     void showRadioList(const QString &path, int at = -1);   // at: the row playing; -1 asks mpv
     // The artist's page on the search page; of several ("A & B"), the first.
     void goToArtist(const QString &artists);
+
+    // Recommended songs under a song list (Spotify's): from the radio of
+    // its last songs, those not in it yet; + adds one, Refresh shows others.
+    QWidget *m_recBox = nullptr;
+    QListWidget *m_recList = nullptr;
+    QPushButton *m_recToggle = nullptr;
+    QPushButton *m_recRefresh = nullptr;
+    QLabel *m_recStatus = nullptr;
+    QVector<ytmusic::Item> m_recPool;   // what the radios gave, not in the list
+    QVector<ytmusic::Item> m_recShown;
+    QSet<QString> m_recSeen;            // shown once: Refresh brings others
+    QString m_recFor;                   // the list they are for
+    int m_recSeed = 0;                  // how many songs from the end the next radio starts at
+    int m_recSerial = 0;
+    QWidget *buildRecommended();
+    void loadRecommended(bool fresh, bool advance = false);   // advance: then show the next ones
+    void showRecommended(bool refresh);   // refresh: the next ones, not the same
+    void addRecommended(int row);
     void openLeftPanel(int left, bool grow, const std::function<void(int)> &done);
     int m_ytChannelPad = -1;
     ytmusic::Client m_ytClient;   // channel feeds for Following

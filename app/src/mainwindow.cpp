@@ -2408,6 +2408,7 @@ QWidget *MainWindow::buildPlaylistPage()
     list->addWidget(columns);
     list->addWidget(m_emptyHint);
     list->addWidget(m_songs, 1);
+    list->addWidget(buildRecommended());
 
     auto *page = new QWidget;
     auto *box = new QVBoxLayout(page);
@@ -2866,6 +2867,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             playOpen(m_songs->row(item));
             return true;
         }
+    }
+    if (m_recList && watched == m_recList->viewport() && event->type() == QEvent::MouseButtonRelease &&
+        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+        const QPoint at = static_cast<QMouseEvent *>(event)->position().toPoint();
+        if (QListWidgetItem *item = m_recList->itemAt(at))
+            if (tiles::SongDelegate::likeRect(m_recList->visualItemRect(item)).adjusted(-4, -4, 4, 4).contains(QPointF(at))) {
+                addRecommended(m_recList->row(item));
+                return true;
+            }
     }
     if (watched->objectName() == "clockHeader" && event->type() == QEvent::Paint) {
         auto *w = static_cast<QPushButton *>(watched);
@@ -5119,6 +5129,17 @@ void MainWindow::openPlaylist(int index, bool keepView)
         QSettings().value("headerColor/" + QFileInfo(p.path).fileName()).value<QColor>());
 
     setVideoGrid(!p.audio);
+    // Recommendations for another list are asked again; the same list
+    // (reopened after a change) keeps the ones shown, less any added.
+    if (!p.audio) {
+        m_recBox->hide();
+        m_recFor.clear();
+    } else if (p.path != m_recFor) {
+        m_recFor = p.path;
+        QTimer::singleShot(0, this, [this] { loadRecommended(true); });
+    } else {
+        QTimer::singleShot(0, this, [this] { showRecommended(false); });
+    }
     m_songSearch->blockSignals(true);
     m_songSearch->setText(searched);
     m_songSearch->blockSignals(false);
@@ -7547,4 +7568,183 @@ void MainWindow::updateHistoryButtons()
         m_backButton->setEnabled(!m_backPlaces.isEmpty());
     if (m_forwardButton)
         m_forwardButton->setEnabled(!m_forwardPlaces.isEmpty());
+}
+
+// -- Recommended songs -----------------------------------------------------------
+
+QWidget *MainWindow::buildRecommended()
+{
+    m_recBox = new QWidget;
+    auto *column = new QVBoxLayout(m_recBox);
+    column->setContentsMargins(0, 6, 0, 0);
+    column->setSpacing(4);
+    auto *head = new QHBoxLayout;
+    m_recToggle = new QPushButton;
+    m_recToggle->setObjectName("columnButton");
+    m_recToggle->setCursor(Qt::PointingHandCursor);
+    m_recToggle->setToolTip("Show or hide songs recommended for this list");
+    theme::style(m_recToggle, "font-size: 12pt; font-weight: 700; color: @text;");
+    m_recRefresh = new QPushButton("Refresh");
+    m_recRefresh->setObjectName("link");
+    m_recRefresh->setCursor(Qt::PointingHandCursor);
+    m_recRefresh->setToolTip("Other songs");
+    m_recStatus = new QLabel;
+    m_recStatus->setObjectName("heroInfo");
+    head->addWidget(m_recToggle);
+    head->addSpacing(10);
+    head->addWidget(m_recStatus);
+    head->addStretch();
+    head->addWidget(m_recRefresh);
+    head->addSpacing(20);
+    column->addLayout(head);
+    m_recList = new QListWidget;
+    m_recList->setObjectName("songs");
+    m_recList->setMouseTracking(true);
+    m_recList->setUniformItemSizes(true);
+    m_recList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_recList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_recList->setItemDelegate(new tiles::SongDelegate([this](const QModelIndex &index) {
+        return m_covers.get(index.data(Qt::UserRole).toString(), ThumbnailCache::Size::Card);
+    }, m_recList));
+    m_recList->viewport()->installEventFilter(this);
+    column->addWidget(m_recList);
+
+    const auto setOpen = [this](bool open) {
+        QSettings().setValue("recommended/open", open);
+        m_recToggle->setText(QStringLiteral("Recommended  %1").arg(open ? QStringLiteral("\u25BE") : QStringLiteral("\u25B8")));
+        m_recList->setVisible(open);
+        m_recRefresh->setVisible(open);
+    };
+    setOpen(QSettings().value("recommended/open", true).toBool());
+    connect(m_recToggle, &QPushButton::clicked, this, [this, setOpen] { setOpen(!m_recList->isVisible()); });
+    connect(m_recRefresh, &QPushButton::clicked, this, [this] {
+        if (m_recPool.size() < 5)
+            loadRecommended(false, true);
+        else
+            showRecommended(true);
+    });
+    connect(m_recList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        const ytmusic::Item song = m_recShown.value(m_recList->row(item));
+        if (!song.id.isEmpty())
+            m_searchPage->playRadio(song);
+    });
+    m_recList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_recList, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QListWidgetItem *item = m_recList->itemAt(pos);
+        if (!item)
+            return;
+        const int row = m_recList->row(item);
+        QMenu menu(this);
+        menu.addAction("Add to this playlist", this, [this, row] { addRecommended(row); });
+        menu.addAction("Play with its radio", this, [this, row] { m_searchPage->playRadio(m_recShown.value(row)); });
+        menu.addAction("Go to artist", this, [this, row] { goToArtist(m_recShown.value(row).artist); });
+        menu.exec(m_recList->viewport()->mapToGlobal(pos));
+    });
+    m_recBox->hide();
+    return m_recBox;
+}
+
+void MainWindow::loadRecommended(bool fresh, bool advance)
+{
+    if (m_open < 0 || m_library.playlists()[m_open].path != m_recFor)
+        return;
+    if (fresh) {
+        m_recPool.clear();
+        m_recShown.clear();
+        m_recSeen.clear();
+        m_recSeed = 0;
+        m_recList->clear();
+    }
+    const QVector<PlaylistEntry> entries = m_library.playlists()[m_open].readEntries();
+    // The radio of a song near the end: the last first, then one further
+    // back each time the shown ones run out.
+    QString seed;
+    for (int back = m_recSeed; back < entries.size() && seed.isEmpty(); ++back) {
+        seed = youtube::videoId(entries[entries.size() - 1 - back].target);
+        m_recSeed = back + 3;
+    }
+    m_recBox->show();
+    if (seed.isEmpty()) {
+        m_recStatus->setText(entries.isEmpty() ? QStringLiteral("Add a song first: they are found from its radio.")
+                                               : QStringLiteral("Nothing more to find."));
+        m_recList->clear();
+        m_recList->setFixedHeight(0);
+        return;
+    }
+    m_recStatus->setText("Finding songs...");
+    const int serial = ++m_recSerial;
+    const QString forList = m_recFor;
+    m_ytClient.radio(seed, [this, serial, forList, advance](QVector<ytmusic::Item> items) {
+        if (serial != m_recSerial || forList != m_recFor)
+            return;
+        for (const ytmusic::Item &it : items)
+            if (!it.id.isEmpty() && !m_recSeen.contains(it.id)) {
+                m_recSeen.insert(it.id);
+                m_recPool << it;
+            }
+        showRecommended(advance);
+    });
+}
+
+void MainWindow::showRecommended(bool refresh)
+{
+    if (m_open < 0 || m_library.playlists()[m_open].path != m_recFor)
+        return;
+    // Never one already in the list (added since, or there from the start).
+    QSet<QString> inList;
+    for (const PlaylistEntry &e : m_library.playlists()[m_open].readEntries())
+        inList.insert(youtube::videoId(e.target));
+    const auto keep = [&inList](const ytmusic::Item &it) { return !inList.contains(it.id); };
+    QVector<ytmusic::Item> next;
+    QVector<ytmusic::Item> stillShown;
+    for (const ytmusic::Item &it : m_recShown)
+        if (keep(it))
+            stillShown << it;
+    // Refresh (the shown ones all still there, and more in the pool): the next five.
+    if (!refresh && stillShown.size() >= 5) {
+        next = stillShown;
+    } else {
+        if (!refresh)
+            next = stillShown;
+        while (next.size() < 5 && !m_recPool.isEmpty()) {
+            const ytmusic::Item it = m_recPool.takeFirst();
+            if (keep(it))
+                next << it;
+        }
+    }
+    m_recShown = next;
+    m_recList->clear();
+    for (int i = 0; i < m_recShown.size(); ++i) {
+        const ytmusic::Item &it = m_recShown[i];
+        auto *row = new QListWidgetItem(it.title);
+        row->setData(Qt::UserRole, it.id);
+        row->setData(tiles::kArtistRole, it.artist);
+        row->setData(tiles::kNumberRole, QString::number(i + 1));
+        row->setData(tiles::kDurationRole, it.duration.isEmpty() ? QStringLiteral(" ") : it.duration);
+        row->setToolTip("Double-click to play, + to add to this playlist");
+        m_recList->addItem(row);
+    }
+    const int rowHeight = int(56 * theme::zoom());
+    m_recList->setFixedHeight(rowHeight * m_recList->count() + 4);
+    m_recStatus->setText(m_recShown.isEmpty() ? QStringLiteral("Nothing found this time.")
+                                              : QStringLiteral("Based on the songs at the end of this list"));
+    m_recBox->show();
+    // Too few left for the next Refresh: ask further back now.
+    if (m_recPool.size() < 5 && !m_recShown.isEmpty() && refresh)
+        loadRecommended(false);
+}
+
+void MainWindow::addRecommended(int row)
+{
+    if (m_open < 0 || row < 0 || row >= m_recShown.size())
+        return;
+    const ytmusic::Item song = m_recShown[row];
+    const QString path = m_library.playlists()[m_open].path;
+    if (!Playlist::append(path, {PlaylistEntry{song.lineTitle(), song.target(), {}}})) {
+        toast("The playlist couldn't be written.");
+        return;
+    }
+    toast(QStringLiteral("Added to %1").arg(m_library.playlists()[m_open].name));
+    // The list shows it at its end; this one's place takes the next.
+    rescan();
 }
