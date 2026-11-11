@@ -3886,20 +3886,40 @@ void MainWindow::saveResume()
     const QString path = m_mpv.property("path").toString();
     if (list.isEmpty() || path.isEmpty() || !QFileInfo::exists(list))
         return;
-    const auto [artist, track] = playingSong();
+    auto [artist, track] = playingSong();
+    if (track.isEmpty())
+        track = m_mpv.property("media-title").toString();
     QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
     if (id.isEmpty())
         id = idForTarget(path);
-    // A queued song is not in the list's file: what to come back to stays
-    // the list's own song before it.
-    if (playingQueued())
-        return;
+    // The place in the list's own file: queued songs before it do not count.
+    // A queued song or one Autoplay added is in no file: what is kept is
+    // the list's own song that comes next, so Play goes on with the list
+    // rather than not saving at all (the bar showed a list from an hour
+    // before, 2026-11-11).
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    const int at = m_mpv.property("playlist-pos").toInt();
+    int filePos = at;
+    for (int i = 0; i < qMin(at, int(entries.size())); ++i)
+        if (m_queueIds.contains(entries[i].toMap().value("id").toLongLong()))
+            --filePos;
+    const QVector<PlaylistEntry> own = Playlist::peek(list).readEntries();
+    double second = m_mpv.property("time-pos").toDouble();
+    if ((playingQueued() || filePos >= own.size()) && !own.isEmpty()) {
+        second = 0;
+        filePos = qBound(0, filePos, int(own.size()) - 1);
+        const PlaylistEntry &e = own[filePos];
+        const auto [t, a] = splitTitle(e.title);
+        track = t.isEmpty() ? e.title : t;
+        artist = a;
+        id = idForTarget(e.target);
+    }
     QSettings settings;
     settings.setValue("resume/list", list);
-    settings.setValue("resume/pos", m_mpv.property("playlist-pos").toInt());
-    settings.setValue("resume/at", m_mpv.property("time-pos").toDouble());
+    settings.setValue("resume/pos", filePos);
+    settings.setValue("resume/at", second);
     settings.setValue("resume/duration", m_mpv.property("duration").toDouble());
-    settings.setValue("resume/title", track.isEmpty() ? m_mpv.property("media-title").toString() : track);
+    settings.setValue("resume/title", track);
     settings.setValue("resume/artist", artist);
     settings.setValue("resume/id", id);
     // A video goes on from its second; a song starts again from the top
