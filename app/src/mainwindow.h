@@ -524,6 +524,11 @@ private:
     QElapsedTimer m_launching;
     std::optional<QueuedPlay> m_queuedPlay;
     QList<qint64> m_launchedPids;
+    qint64 m_launchPid = 0;   // the mpv the last Play started, until it answers
+    // A short trail of what Play did (%TEMP%\ghost-play.log, kept small),
+    // for a Play that did nothing: called, queued, started, ended early.
+    static void playLog(const QString &line);
+    static bool processAlive(qint64 pid);
     void closeExtraPlayers(bool all);
     QString m_pendingPath;
     QVector<int> m_pendingOrder;

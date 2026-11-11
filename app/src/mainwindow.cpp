@@ -1229,6 +1229,13 @@ MainWindow::MainWindow()
             }
             return;
         }
+        playLog(QStringLiteral("mpv answered (pid %1)").arg(m_launchPid));
+        m_launchPid = 0;
+        // A new mpv numbers its entries from 1 again: what the queue knew
+        // of the last one's would match the wrong songs.
+        m_queueIds.clear();
+        m_knownIds.clear();
+        m_queuePending.clear();
         m_mpvEmbedded = m_launching.isValid() && m_launchEmbedded;
         m_keepAspect = -1;
         sendWindowChoice();
@@ -1626,6 +1633,7 @@ QWidget *MainWindow::buildLibrary()
             return;
         const auto &all = m_library.playlists();
         const int i = item->data(tiles::kIndexRole).toInt();
+        playLog(QStringLiteral("double-click on library row %1").arg(i));
         if (i >= 0 && i < all.size())
             play(all[i].path);
     });
@@ -2334,6 +2342,7 @@ QWidget *MainWindow::buildPlaylistPage()
     connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::foldHeader);
     connect(m_songs->verticalScrollBar(), &QScrollBar::sliderReleased, this, &MainWindow::foldHeader);
     connect(m_songs, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        playLog(QStringLiteral("double-click on row %1 of list %2").arg(m_songs->row(item)).arg(m_open));
         playOpen(m_songs->row(item));
     });
     // Songs are dragged to a new place in the list (in its own order only)
@@ -5547,8 +5556,10 @@ void MainWindow::playOpen(int row, bool shuffle)
 {
     // The row as shown; mpv plays the file, so it is told the entry, and the
     // order the rows are shown in when that is not the file's.
-    if (m_open < 0)
+    if (m_open < 0) {
+        playLog(QStringLiteral("playOpen row %1: no list open").arg(row));
         return;
+    }
     const QVector<int> order = shownOrder();
     const int entry = order.value(row, 0);
     const bool sorted = m_sortKey != SortKey::Custom;
@@ -5911,9 +5922,20 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         QTimer::singleShot(15000, this, [this, serial] { if (m_pendingSerial == serial) m_pendingOrder.clear(); });
     // An mpv already open takes the list over IPC, so a second window does
     // not start on top of the first.
+    playLog(QStringLiteral("play %1 at %2, connected %3, launching %4 ms, pid %5")
+                .arg(QFileInfo(path).fileName()).arg(startAt).arg(m_mpv.connected())
+                .arg(m_launching.isValid() ? m_launching.elapsed() : -1).arg(m_launchPid));
+    // A Play while the mpv just started is still opening waits for it; but
+    // not for one that ended before it answered: that one never will, and
+    // every Play for the next 15 seconds did nothing.
     if (!m_mpv.connected() && m_launching.isValid() && m_launching.elapsed() < 15000) {
-        m_queuedPlay = QueuedPlay{path, shuffle, startAt, order};   // the latest click wins
-        return;
+        if (m_launchPid > 0 && processAlive(m_launchPid)) {
+            m_queuedPlay = QueuedPlay{path, shuffle, startAt, order};   // the latest click wins
+            playLog(QStringLiteral("  queued until mpv answers"));
+            return;
+        }
+        playLog(QStringLiteral("  the mpv started last is gone; starting another"));
+        m_launching.invalidate();
     }
     const bool audio = listIsAudio(path);
     const int embed = embedFor(audio);
@@ -5968,13 +5990,40 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
     // its scripts and the presence agent behave the same.
     qint64 pid = 0;
     if (QProcess::startDetached(mpv, args, QFileInfo(mpv).absolutePath(), &pid)) {
+        playLog(QStringLiteral("  started mpv %1%2").arg(pid).arg(m_launchEmbedded ? " (in the app)" : ""));
         m_launchedPids << pid;
+        m_launchPid = pid;
         if (m_launchEmbedded)
             tieToApp(pid);
         m_launching.start();
         m_mpv.hurry();
         if (!audio && m_launchEmbedded)
             showVideoPage();
+        // Ended before it answered (it happens on a first start now and
+        // then): a Play waiting for it is played by a new one, once.
+        auto *watch = new QTimer(this);
+        watch->setInterval(500);
+        connect(watch, &QTimer::timeout, this, [this, watch, pid, tries = 0]() mutable {
+            if (m_mpv.connected() || m_launchPid != pid || ++tries > 30) {
+                watch->deleteLater();
+                return;
+            }
+            if (processAlive(pid))
+                return;
+            watch->deleteLater();
+            playLog(QStringLiteral("  mpv %1 ended before it answered").arg(pid));
+            m_launching.invalidate();
+            m_launchPid = 0;
+            if (m_queuedPlay) {
+                const QueuedPlay q = *m_queuedPlay;
+                m_queuedPlay.reset();
+                play(q.path, q.shuffle, q.startAt, q.order);
+            }
+        });
+        watch->start();
+    } else {
+        playLog(QStringLiteral("  mpv could not be started: %1").arg(mpv));
+        toast("mpv couldn't be started. Try again, or reinstall Ghost Engine.");
     }
 }
 
@@ -6767,8 +6816,10 @@ void MainWindow::closeExtraPlayers(bool all)
         const bool isMpv = QueryFullProcessImageNameW(h, 0, name, &size) &&
                            QString::fromWCharArray(name, int(size)).endsWith(QStringLiteral("mpv.exe"), Qt::CaseInsensitive);
         if (alive && isMpv) {
-            if (all || pid != ours)
+            if (all || pid != ours) {
+                playLog(QStringLiteral("closing mpv %1 (talking to %2)").arg(pid).arg(ours));
                 TerminateProcess(h, 0);
+            }
             else
                 keep << pid;
         }
@@ -7272,6 +7323,26 @@ void MainWindow::applyNormalize()
     m_mpv.command({"af", "remove", "@ghostnorm"});
     if (QSettings().value("playback/normalize", false).toBool())
         m_mpv.command({"af", "add", "@ghostnorm:lavfi=[dynaudnorm=f=500:g=31:p=0.9:m=4]"});
+}
+
+void MainWindow::playLog(const QString &line)
+{
+    QFile log(QDir::temp().filePath(QStringLiteral("ghost-play.log")));
+    if (log.size() > 256 * 1024)
+        log.remove();
+    if (log.open(QIODevice::Append | QIODevice::Text))
+        log.write((QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz ")) + line + '\n').toUtf8());
+}
+
+bool MainWindow::processAlive(qint64 pid)
+{
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pid));
+    if (!h)
+        return false;
+    DWORD code = 0;
+    const bool alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+    CloseHandle(h);
+    return alive;
 }
 
 // -- back and forward ---------------------------------------------------------
