@@ -20,7 +20,11 @@
 // around them does not break it, and a failed call just reports nothing.
 namespace ytmusic {
 
-enum class Kind { Song, Video, Playlist, Artist };
+enum class Kind { Song, Video, Playlist, Artist, Album };
+
+// A row that opens a page of its own (a playlist, an album, an artist)
+// instead of playing.
+inline bool opensPage(Kind kind) { return kind == Kind::Playlist || kind == Kind::Album || kind == Kind::Artist; }
 
 struct Item {
     Kind kind = Kind::Song;
@@ -63,6 +67,21 @@ struct ChannelAbout {
     QString country;
 };
 
+// An artist's page on YouTube Music: its picture, its most played songs and
+// what it put out.
+struct ArtistPage {
+    QString id;          // the "UC..." browse id
+    QString name;
+    QString audience;    // "6.9M monthly audience"
+    QString about;       // the biography, when it has one
+    QString photo;       // the wide picture over the page
+    QVector<Item> songs;     // the most played, five or so
+    QString songsList;   // a playlist of all its songs, empty when none
+    QVector<Item> albums;    // Kind::Album, id "MPREb_..."
+    QVector<Item> singles;
+    bool ok = false;
+};
+
 struct PlaylistPage {
     QString id;
     QString title;
@@ -96,6 +115,12 @@ public:
     void radio(const QString &videoId, std::function<void(QVector<Item>)> done);
     // A playlist's songs, every page of them (up to a few thousand).
     void playlist(const QString &id, std::function<void(PlaylistPage)> done);
+    // An album's songs ("MPREb_..."), each with the album's artist.
+    void album(const QString &id, std::function<void(PlaylistPage)> done);
+    // An artist's page by its "UC..." id; findArtist the id for a name (the
+    // first artist YouTube Music finds for it), empty when none.
+    void artist(const QString &id, std::function<void(ArtistPage)> done);
+    void findArtist(const QString &name, std::function<void(QString id)> done);
 
     // YouTube's own search (www.youtube.com, every video, not only music),
     // videos only, a page of ~20. `next` continues where the last page ended;

@@ -72,7 +72,7 @@ QPushButton *linkButton(const QString &text)
 // picture YouTube Music gave for a playlist.
 QString coverKey(const ytmusic::Item &item)
 {
-    return item.kind == ytmusic::Kind::Playlist ? item.thumbnail : item.id;
+    return ytmusic::opensPage(item.kind) ? item.thumbnail : item.id;
 }
 
 } // namespace
@@ -152,6 +152,22 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
         fill(m_videosList, m_videos, all ? m_videos.size() : kVideosShown);
         m_videosMore->setText(all ? "Show less" : "Show all");
     });
+
+    m_artistsList = makeList(false);
+    m_artistsSection = section("Artists", m_artistsList);
+    column->insertWidget(column->indexOf(m_songsSection) + 1, m_artistsSection);
+    m_albumsList = makeList(false);
+    m_albumsSection = section("Albums", m_albumsList);
+    column->addWidget(m_albumsSection);
+    for (QListWidget *list : {m_artistsList, m_albumsList})
+        connect(list, &QListWidget::itemClicked, this, [this, list](QListWidgetItem *item) {
+            const QVector<ytmusic::Item> &items = list == m_artistsList ? m_artists : m_albums;
+            const ytmusic::Item it = items.value(item->data(tiles::kEntryRole).toInt());
+            if (it.kind == ytmusic::Kind::Artist)
+                openArtist(it.id, it.title);
+            else
+                openAlbum(it.id, it.title, it.thumbnail);
+        });
 
     m_playlistsList = makeList(false);
     m_playlistsSection = section("Playlists", m_playlistsList);
@@ -312,6 +328,8 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     });
     m_views->addWidget(listPage);
 
+    buildArtistView();
+
     // -- YouTube home -----------------------------------------------------------
     auto *homePage = new QWidget;
     auto *homeColumn = new QVBoxLayout(homePage);
@@ -418,7 +436,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
 
 QList<QWidget *> SearchPage::scrollAreas() const
 {
-    return {m_resultsScroll, m_listSongs, m_homeGrid};
+    return {m_resultsScroll, m_listSongs, m_homeGrid, m_artistScroll};
 }
 
 QListWidget *SearchPage::makeList(bool scrolls)
@@ -458,12 +476,12 @@ void SearchPage::fill(QListWidget *list, const QVector<ytmusic::Item> &items, in
         row->setData(tiles::kArtistRole, byline);
         row->setData(tiles::kNumberRole, QString::number(i + 1));
         // A playlist has no length; a space keeps the row's dash away.
-        row->setData(tiles::kDurationRole, it.kind == ytmusic::Kind::Playlist ? QStringLiteral(" ")
+        row->setData(tiles::kDurationRole, ytmusic::opensPage(it.kind) ? QStringLiteral(" ")
                                           : it.duration.isEmpty() ? QStringLiteral("LIVE") : it.duration);
-        row->setData(tiles::kAddedRole, it.kind == ytmusic::Kind::Song ? (it.album.isEmpty() ? it.extra : it.album) : it.kind == ytmusic::Kind::Playlist ? it.extra : QString());
+        row->setData(tiles::kAddedRole, it.kind == ytmusic::Kind::Song ? (it.album.isEmpty() ? it.extra : it.album) : ytmusic::opensPage(it.kind) ? it.extra : QString());
         row->setData(tiles::kEntryRole, i);
         row->setData(Qt::UserRole, coverKey(it));
-        row->setToolTip(it.kind == ytmusic::Kind::Playlist ? QStringLiteral("Click to open") : QStringLiteral("Double-click to play"));
+        row->setToolTip(ytmusic::opensPage(it.kind) ? QStringLiteral("Click to open") : QStringLiteral("Double-click to play"));
         list->addItem(row);
     }
     if (list != m_listSongs)
@@ -496,7 +514,8 @@ void SearchPage::updateEmpty()
 {
     if (m_pending > 0)
         return;
-    const bool nothing = m_songs.isEmpty() && m_videos.isEmpty() && m_playlists.isEmpty() && m_ytVideos.isEmpty();
+    const bool nothing = m_songs.isEmpty() && m_videos.isEmpty() && m_playlists.isEmpty() && m_ytVideos.isEmpty() &&
+                         m_artists.isEmpty() && m_albums.isEmpty();
     // Nothing came because nothing answered: say so, with a way to ask again,
     // rather than "nothing found" (the computer had just started, 2026-11-09).
     if (nothing && m_client.unreachable()) {
@@ -532,11 +551,15 @@ void SearchPage::setQuery(const QString &text)
     m_songs.clear();
     m_videos.clear();
     m_playlists.clear();
+    m_artists.clear();
+    m_albums.clear();
     m_ytVideos.clear();
     m_ytNext.clear();
     m_pending = 0;
-    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList})
+    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList, m_artistsList, m_albumsList})
         list->clear();
+    m_artistsSection->hide();
+    m_albumsSection->hide();
     m_songsSection->hide();
     m_videosSection->hide();
     m_playlistsSection->hide();
@@ -619,7 +642,7 @@ void SearchPage::setQuery(const QString &text)
     m_librarySection->setVisible(!matches.isEmpty());
 
     setStatus("Searching YouTube Music...");
-    m_pending = 3;
+    m_pending = 5;
     m_client.search(query, ytmusic::Kind::Song, [this, serial](QVector<ytmusic::Item> items) {
         if (serial != m_serial)
             return;
@@ -649,6 +672,25 @@ void SearchPage::setQuery(const QString &text)
         m_playlists = items.mid(0, kPlaylistsShown);
         fill(m_playlistsList, m_playlists, kPlaylistsShown);
         m_playlistsSection->setVisible(!m_playlists.isEmpty());
+        updateEmpty();
+    });
+    // After the songs, whose search starts a new serial.
+    m_client.search(query, ytmusic::Kind::Artist, [this, serial](QVector<ytmusic::Item> items) {
+        if (serial != m_serial)
+            return;
+        --m_pending;
+        m_artists = items.mid(0, 3);
+        fill(m_artistsList, m_artists, m_artists.size());
+        m_artistsSection->setVisible(!m_artists.isEmpty());
+        updateEmpty();
+    });
+    m_client.search(query, ytmusic::Kind::Album, [this, serial](QVector<ytmusic::Item> items) {
+        if (serial != m_serial)
+            return;
+        --m_pending;
+        m_albums = items.mid(0, 4);
+        fill(m_albumsList, m_albums, m_albums.size());
+        m_albumsSection->setVisible(!m_albums.isEmpty());
         updateEmpty();
     });
 }
@@ -1055,6 +1097,7 @@ void SearchPage::showLocalList(const QString &title, const QString &info, const 
     m_list.ok = true;
     m_listKicker->setText("RADIO");
     m_listIsRadio = true;
+    m_listCoverUrl.clear();
     setListTitle(title);
     m_listInfo->setText(info);
     fill(m_listSongs, songs, songs.size());
@@ -1123,6 +1166,7 @@ void SearchPage::openPlaylist(const QString &id, const QString &title)
     m_list.id = id;
     m_listKicker->setText("PLAYLIST ON YOUTUBE MUSIC");
     m_listIsRadio = false;
+    m_listCoverUrl.clear();
     setListTitle(title.isEmpty() ? QStringLiteral("Loading...") : title);
     m_listInfo->setText("Loading the songs...");
     m_listSongs->clear();
@@ -1172,7 +1216,8 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
     // own menu of lists, as in the library's lists (2026-11-11).
     if (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::ContextMenu) {
         auto *list = watched->parent() ? qobject_cast<QListWidget *>(watched->parent()) : nullptr;
-        const QVector<ytmusic::Item> *items = list == m_songsList ? &m_songs : list == m_listSongs ? &m_list.songs : nullptr;
+        const QVector<ytmusic::Item> *items = list == m_songsList ? &m_songs : list == m_listSongs ? &m_list.songs
+                                              : list == m_artistSongs ? &m_artist.songs : nullptr;
         if (items && list->viewport() == watched) {
             const bool menu = event->type() == QEvent::ContextMenu;
             const QPoint at = menu ? static_cast<QContextMenuEvent *>(event)->pos()
@@ -1196,7 +1241,8 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
     if (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::MouseButtonDblClick) {
         auto *list = watched->parent() ? qobject_cast<QListWidget *>(watched->parent()) : nullptr;
         auto *mouse = static_cast<QMouseEvent *>(event);
-        if (list && list != m_homeGrid && list != m_playlistsList && list->viewport() == watched &&
+        if (list && list != m_homeGrid && list != m_playlistsList && list != m_artistsList && list != m_albumsList &&
+            list != m_artistAlbums && list != m_artistSingles && list->viewport() == watched &&
             mouse->button() == Qt::LeftButton && !(mouse->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
             QListWidgetItem *item = list->itemAt(mouse->position().toPoint());
             if (item && mouse->position().x() - list->visualItemRect(item).left() < 44) {
@@ -1208,7 +1254,11 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
         }
     }
     if (event->type() == QEvent::Wheel && watched->parent() && watched->parent()->property("pageScrolls").toBool()) {
-        QCoreApplication::sendEvent(m_resultsScroll->viewport(), event);
+        // To the page the list sits in: the results, or an artist's page.
+        QWidget *page = qobject_cast<QWidget *>(watched->parent()->parent());
+        while (page && !qobject_cast<QScrollArea *>(page))
+            page = page->parentWidget();
+        QCoreApplication::sendEvent(page ? static_cast<QScrollArea *>(page)->viewport() : m_resultsScroll->viewport(), event);
         return true;
     }
     auto *list = qobject_cast<QListWidget *>(watched);
@@ -1224,9 +1274,12 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
 
 void SearchPage::refreshCovers(const QString &)
 {
-    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList, m_listSongs, m_homeGrid})
+    for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList, m_listSongs, m_homeGrid,
+                              m_artistsList, m_albumsList, m_artistSongs, m_artistAlbums, m_artistSingles})
         if (list->isVisible())
             list->viewport()->update();
+    if (m_artistHeader && m_artistHeader->isVisible())
+        m_artistHeader->update();
     if (m_listHeader->isVisible())
         m_listHeader->update();
 }
@@ -1266,6 +1319,11 @@ QVector<QPixmap> SearchPage::listCovers()
         }
         covers << m_radioCover;
         return covers;
+    }
+    if (!m_listCoverUrl.isEmpty()) {
+        const QPixmap cover = m_covers.get(m_listCoverUrl, ThumbnailCache::Size::Card);
+        if (!cover.isNull())
+            return {cover};
     }
     for (const ytmusic::Item &song : m_list.songs) {
         const QPixmap cover = m_covers.get(song.id, ThumbnailCache::Size::Card);
@@ -1308,4 +1366,241 @@ void SearchPage::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     foldListHeader();
+    fitArtistTitle();
+}
+
+// -- An artist, an album ---------------------------------------------------------
+
+void SearchPage::buildArtistView()
+{
+    auto *content = new QWidget;
+    auto *column = new QVBoxLayout(content);
+    column->setContentsMargins(0, 0, 0, 28);
+    column->setSpacing(18);
+    auto *back = linkButton(QStringLiteral("\u2039  Back to results"));
+    connect(back, &QPushButton::clicked, this, &SearchPage::backToResults);
+    auto *backRow = new QHBoxLayout;
+    backRow->setContentsMargins(28, 10, 28, 0);
+    backRow->addWidget(back);
+    backRow->addStretch();
+    column->addLayout(backRow);
+
+    // The same header as a playlist's, its picture the artist's photo.
+    m_artistHeader = new PlaylistHeader([this] {
+        const QPixmap photo = m_artist.photo.isEmpty() ? QPixmap() : m_covers.get(m_artist.photo, ThumbnailCache::Size::Card);
+        return photo.isNull() ? QVector<QPixmap>() : QVector<QPixmap>{photo};
+    });
+    m_artistHeader->setFixedHeight(listheader::tall());
+    m_artistKicker = new QLabel("ARTIST");
+    m_artistKicker->setObjectName("kicker");
+    m_artistName = new QLabel;
+    m_artistName->setObjectName("bigTitle");
+    m_artistName->setMinimumWidth(10);
+    m_artistName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_artistInfo = new QLabel;
+    m_artistInfo->setObjectName("heroInfo");
+    auto *text = new QVBoxLayout;
+    text->setSpacing(4);
+    text->addStretch();
+    text->addWidget(m_artistKicker);
+    text->addWidget(m_artistName);
+    text->addWidget(m_artistInfo);
+    m_artistHeadRow = new QHBoxLayout(m_artistHeader);
+    m_artistHeadRow->addLayout(text, 1);
+    column->addWidget(m_artistHeader);
+
+    auto *play = new icons::IconButton(icons::Icon::Play, 52, "Play its most played songs");
+    play->setRound(theme::accent(), theme::accentText(), theme::c().onAccent);
+    theme::whenChanged(play, [play] { play->setRound(theme::accent(), theme::accentText(), theme::c().onAccent); });
+    auto *shuffle = new icons::IconButton(icons::Icon::Shuffle, 38, "Play shuffled");
+    auto *radio = new QPushButton("Radio");
+    radio->setObjectName("primary");
+    radio->setCursor(Qt::PointingHandCursor);
+    radio->setToolTip("Songs like this artist's, from YouTube Music, after its most played");
+    auto *actions = new QHBoxLayout;
+    actions->setContentsMargins(28, 0, 28, 0);
+    actions->setSpacing(18);
+    actions->addWidget(play);
+    actions->addWidget(shuffle);
+    actions->addSpacing(6);
+    actions->addWidget(radio);
+    actions->addStretch();
+    column->addLayout(actions);
+    connect(play, &QAbstractButton::clicked, this, [this] {
+        if (onPlay && !m_artist.songs.isEmpty())
+            onPlay(m_artist.songs, m_artist.name, 0, false, true);
+    });
+    connect(shuffle, &QAbstractButton::clicked, this, [this] {
+        if (onPlay && !m_artist.songs.isEmpty())
+            onPlay(m_artist.songs, m_artist.name, 0, true, true);
+    });
+    connect(radio, &QPushButton::clicked, this, [this] {
+        if (!m_artist.songs.isEmpty())
+            playRadio(m_artist.songs.first());
+    });
+
+    auto *sections = new QVBoxLayout;
+    sections->setContentsMargins(28, 0, 28, 0);
+    sections->setSpacing(26);
+    m_artistSongs = makeList(false);
+    m_artistSongsSection = section("Popular", m_artistSongs);
+    sections->addWidget(m_artistSongsSection);
+    connect(m_artistSongs, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        if (onPlay)
+            onPlay(m_artist.songs, m_artist.name, item->data(tiles::kEntryRole).toInt(), false, true);
+    });
+    m_artistSongs->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_artistSongs, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QListWidgetItem *item = m_artistSongs->itemAt(pos);
+        if (!item)
+            return;
+        if (!item->isSelected()) {
+            m_artistSongs->clearSelection();
+            item->setSelected(true);
+        }
+        if (onMenu)
+            onMenu(picked(m_artistSongs, m_artist.songs), m_artistSongs->viewport()->mapToGlobal(pos));
+    });
+    m_artistAlbums = makeList(false);
+    m_artistAlbumsSection = section("Albums", m_artistAlbums);
+    sections->addWidget(m_artistAlbumsSection);
+    m_artistSingles = makeList(false);
+    m_artistSinglesSection = section("Singles & EPs", m_artistSingles);
+    sections->addWidget(m_artistSinglesSection);
+    for (QListWidget *list : {m_artistAlbums, m_artistSingles})
+        connect(list, &QListWidget::itemClicked, this, [this, list](QListWidgetItem *item) {
+            const ytmusic::Item it = (list == m_artistAlbums ? m_artist.albums : m_artist.singles)
+                                         .value(item->data(tiles::kEntryRole).toInt());
+            openAlbum(it.id, it.title, it.thumbnail);
+        });
+    m_artistAbout = new QLabel;
+    m_artistAbout->setObjectName("heroInfo");
+    m_artistAbout->setWordWrap(true);
+    m_artistAbout->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_artistAboutSection = section("About", m_artistAbout);
+    sections->addWidget(m_artistAboutSection);
+    column->addLayout(sections);
+    column->addStretch(1);
+
+    m_artistScroll = new QScrollArea;
+    m_artistScroll->setWidgetResizable(true);
+    m_artistScroll->setFrameShape(QFrame::NoFrame);
+    m_artistScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_artistScroll->setWidget(content);
+    m_artistView = m_artistScroll;
+    m_views->addWidget(m_artistScroll);
+}
+
+void SearchPage::fitArtistTitle()
+{
+    if (!m_artistHeader)
+        return;
+    listheader::arrange(m_artistHeader, m_artistHeadRow, m_artistKicker, m_artistInfo);
+    const int available = m_artistHeader->width() - m_artistHeader->coverRect().right() - 60;
+    QString shown;
+    const qreal size = listheader::titlePoints(m_artistName->font(), m_artist.name, available, 0, &shown);
+    m_artistName->setStyleSheet(QStringLiteral("QLabel { font-size: %1pt; }").arg(size));
+    m_artistName->setText(shown);
+}
+
+void SearchPage::openArtistNamed(const QString &name)
+{
+    if (name.trimmed().isEmpty())
+        return;
+    // Shown at once, filled when YouTube Music answers.
+    ++m_serial;
+    m_artist = {};
+    m_artist.name = name.trimmed();
+    m_artistInfo->setText("Looking for the artist...");
+    for (QListWidget *list : {m_artistSongs, m_artistAlbums, m_artistSingles})
+        list->clear();
+    for (QWidget *w : {m_artistSongsSection, m_artistAlbumsSection, m_artistSinglesSection, m_artistAboutSection})
+        w->hide();
+    m_views->setCurrentWidget(m_artistView);
+    fitArtistTitle();
+    const int serial = m_serial;
+    m_client.findArtist(name.trimmed(), [this, serial, name](const QString &id) {
+        if (serial != m_serial)
+            return;
+        if (id.isEmpty()) {
+            m_artistInfo->setText(QStringLiteral("YouTube Music has no artist page for %1.").arg(name));
+            return;
+        }
+        openArtist(id, name);
+    });
+}
+
+void SearchPage::openArtist(const QString &id, const QString &name)
+{
+    const int serial = ++m_serial;
+    m_artist = {};
+    m_artist.id = id;
+    m_artist.name = name;
+    m_artistInfo->setText("Loading...");
+    for (QListWidget *list : {m_artistSongs, m_artistAlbums, m_artistSingles})
+        list->clear();
+    for (QWidget *w : {m_artistSongsSection, m_artistAlbumsSection, m_artistSinglesSection, m_artistAboutSection})
+        w->hide();
+    m_artistScroll->verticalScrollBar()->setValue(0);
+    m_views->setCurrentWidget(m_artistView);
+    fitArtistTitle();
+    m_artistHeader->setName(name);
+    noteView(QStringLiteral("artist:") + id, [this, id, name] { openArtist(id, name); });
+    m_client.artist(id, [this, serial](ytmusic::ArtistPage page) {
+        if (serial != m_serial)
+            return;
+        if (!page.ok) {
+            m_artistInfo->setText("This artist's page couldn't be read.");
+            return;
+        }
+        m_artist = page;
+        m_artistHeader->setName(page.name);
+        m_artistInfo->setText(page.audience);
+        fill(m_artistSongs, page.songs, page.songs.size());
+        fill(m_artistAlbums, page.albums, page.albums.size());
+        fill(m_artistSingles, page.singles, page.singles.size());
+        m_artistSongsSection->setVisible(!page.songs.isEmpty());
+        m_artistAlbumsSection->setVisible(!page.albums.isEmpty());
+        m_artistSinglesSection->setVisible(!page.singles.isEmpty());
+        m_artistAbout->setText(page.about);
+        m_artistAboutSection->setVisible(!page.about.isEmpty());
+        fitArtistTitle();
+        m_artistHeader->update();
+    });
+}
+
+void SearchPage::openAlbum(const QString &id, const QString &title, const QString &cover)
+{
+    ++m_serial;
+    m_list = {};
+    m_list.id = id;
+    m_listKicker->setText("ALBUM");
+    m_listIsRadio = false;
+    m_listCoverUrl = cover;
+    setListTitle(title.isEmpty() ? QStringLiteral("Loading...") : title);
+    m_listInfo->setText("Loading the songs...");
+    m_listSongs->clear();
+    m_saveButton->setText("Save to library");
+    m_saveButton->setEnabled(false);
+    m_views->setCurrentIndex(1);
+    noteView(QStringLiteral("album:") + id, [this, id, title, cover] { openAlbum(id, title, cover); });
+    const int serial = m_serial;
+    m_client.album(id, [this, serial, title](ytmusic::PlaylistPage page) {
+        if (serial != m_serial || page.id != m_list.id)
+            return;
+        if (page.title.isEmpty())
+            page.title = title;
+        m_list = page;
+        if (m_listCoverUrl.isEmpty())
+            m_listCoverUrl = page.thumbnail;
+        setListTitle(page.title);
+        if (!page.ok) {
+            m_listInfo->setText("This album couldn't be read.");
+            return;
+        }
+        m_listInfo->setText(page.subtitle);
+        fill(m_listSongs, page.songs, page.songs.size());
+        m_saveButton->setEnabled(true);
+        m_listHeader->update();
+    });
 }

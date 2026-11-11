@@ -86,6 +86,7 @@ public:
     std::function<void()> onMiniVideo;
     std::function<void()> onOpenLyrics;
     std::function<void()> onAbout;
+    std::function<void()> onArtist;   // the artist's name or card clicked
     std::function<void()> onPlayNext;
     std::function<void()> onClose;
     QWidget *scrollArea() const;

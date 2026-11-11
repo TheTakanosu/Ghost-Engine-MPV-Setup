@@ -32,6 +32,7 @@ QString filterFor(Kind kind)
     case Kind::Video:    return QStringLiteral("EgWKAQIQAWoKEAoQCRADEAQQBQ==");
     case Kind::Playlist: return QStringLiteral("EgeKAQQoAEABagoQChAJEAMQBBAF");   // community playlists
     case Kind::Artist:   return QStringLiteral("EgWKAQIgAWoKEAoQCRADEAQQBQ==");
+    case Kind::Album:    return QStringLiteral("EgWKAQIYAWoKEAoQCRADEAQQBQ==");
     }
     return {};
 }
@@ -146,7 +147,7 @@ Item fromListItem(const QJsonObject &row, Kind kind)
     item.id = row.value("playlistItemData").toObject().value("videoId").toString();
     if (item.id.isEmpty())
         item.id = first(row.value("overlay"), "watchEndpoint").value("videoId").toString();
-    if (kind == Kind::Playlist || kind == Kind::Artist) {
+    if (opensPage(kind)) {
         QString browse = row.value("navigationEndpoint").toObject().value("browseEndpoint").toObject().value("browseId").toString();
         if (browse.startsWith(QLatin1String("VL")))
             browse = browse.mid(2);
@@ -177,6 +178,7 @@ Item fromListItem(const QJsonObject &row, Kind kind)
         break;
     case Kind::Playlist:
     case Kind::Artist:
+    case Kind::Album:
         item.artist = line.value(0);
         item.extra = line.size() > 1 ? line.last() : QString();
         break;
@@ -658,6 +660,128 @@ void Client::morePages(PlaylistPage page, const QString &token, int pages, std::
             done(page);
         else
             morePages(page, next, pages + 1, done);
+    });
+}
+
+} // namespace ytmusic
+
+namespace ytmusic {
+
+namespace {
+// A tile of an artist's shelf (an album, a single): its id, name and year.
+Item fromTwoRow(const QJsonObject &tile)
+{
+    Item item;
+    item.kind = Kind::Album;
+    item.title = runs(tile.value("title"));
+    item.id = first(tile.value("navigationEndpoint"), "browseEndpoint").value("browseId").toString();
+    if (item.id.isEmpty())
+        item.id = first(tile.value("title"), "browseEndpoint").value("browseId").toString();
+    item.thumbnail = picture(tile.value("thumbnailRenderer"));
+    const QStringList line = parts(runs(tile.value("subtitle")));
+    item.extra = line.isEmpty() ? QString() : line.last();   // the year
+    return item;
+}
+} // namespace
+
+void Client::album(const QString &id, std::function<void(PlaylistPage)> done)
+{
+    post("browse", {{"browseId", id}}, [id, done](const QJsonObject &answer) {
+        PlaylistPage page;
+        page.id = id;
+        const QJsonObject header = first(answer, "musicResponsiveHeaderRenderer");
+        page.title = runs(header.value("title"));
+        const QString artist = runs(header.value("straplineTextOne"));
+        QStringList about;
+        for (const QString &part : {artist, runs(header.value("subtitle")), runs(header.value("secondSubtitle"))})
+            if (!part.trimmed().isEmpty())
+                about << part.trimmed();
+        page.subtitle = about.join(QStringLiteral("  •  "));
+        page.thumbnail = picture(header.value("thumbnail"));
+        for (const QJsonObject &row : all(answer, "musicResponsiveListItemRenderer")) {
+            Item item = fromListItem(row, Kind::Song);
+            // An album's rows leave the artist out: it is the album's.
+            if (item.artist.isEmpty() || item.artist.contains(QLatin1String("plays")))
+                item.artist = artist;
+            if (item.album.isEmpty() || item.album.contains(QLatin1String("plays")))
+                item.album = page.title;
+            if (!item.id.isEmpty() && !item.title.isEmpty())
+                page.songs << item;
+        }
+        page.ok = !page.songs.isEmpty();
+        done(page);
+    });
+}
+
+void Client::artist(const QString &id, std::function<void(ArtistPage)> done)
+{
+    post("browse", {{"browseId", id}}, [id, done](const QJsonObject &answer) {
+        ArtistPage page;
+        page.id = id;
+        QJsonObject header = first(answer, "musicImmersiveHeaderRenderer");
+        if (header.isEmpty())
+            header = first(answer, "musicVisualHeaderRenderer");
+        page.name = runs(header.value("title"));
+        page.audience = runs(header.value("monthlyListenerCount"));
+        page.about = runs(header.value("description"));
+        // The widest picture: it is shown large.
+        int widest = 0;
+        for (const QJsonValue &t : first(header.value("thumbnail"), "musicThumbnailRenderer")
+                                       .value("thumbnail").toObject().value("thumbnails").toArray()) {
+            const int w = t.toObject().value("width").toInt();
+            if (w >= widest && w <= 1200) {
+                widest = w;
+                page.photo = t.toObject().value("url").toString();
+            }
+        }
+        // The first song shelf: its most played songs.
+        const QJsonObject shelf = first(answer, "musicShelfRenderer");
+        for (const QJsonObject &row : all(shelf, "musicResponsiveListItemRenderer")) {
+            Item item = fromListItem(row, Kind::Song);
+            if (item.artist.isEmpty())
+                item.artist = page.name;
+            if (!item.id.isEmpty() && !item.title.isEmpty())
+                page.songs << item;
+        }
+        QString list = first(shelf.value("bottomEndpoint"), "browseEndpoint").value("browseId").toString();
+        if (list.isEmpty())
+            list = first(shelf.value("title"), "browseEndpoint").value("browseId").toString();
+        page.songsList = list.startsWith(QLatin1String("VL")) ? list.mid(2) : list;
+        for (const QJsonObject &carousel : all(answer, "musicCarouselShelfRenderer")) {
+            const QString title = runs(first(carousel.value("header"), "musicCarouselShelfBasicHeaderRenderer").value("title"));
+            QVector<Item> *into = title == QLatin1String("Albums") ? &page.albums
+                                : title.startsWith(QLatin1String("Singles")) ? &page.singles : nullptr;
+            if (!into)
+                continue;
+            for (const QJsonObject &tile : all(carousel.value("contents"), "musicTwoRowItemRenderer")) {
+                Item item = fromTwoRow(tile);
+                item.artist = page.name;
+                if (item.id.startsWith(QLatin1String("MPRE")) && !item.title.isEmpty())
+                    *into << item;
+            }
+        }
+        page.ok = !page.name.isEmpty();
+        done(page);
+    });
+}
+
+void Client::findArtist(const QString &name, std::function<void(QString)> done)
+{
+    post("search", {{"query", name}, {"params", filterFor(Kind::Artist)}}, [name, done](const QJsonObject &answer) {
+        // The one whose name is the name asked, else the first.
+        QString firstId;
+        for (const QJsonObject &row : all(answer, "musicResponsiveListItemRenderer")) {
+            const Item item = fromListItem(row, Kind::Artist);
+            if (!item.id.startsWith(QLatin1String("UC")))
+                continue;
+            if (item.title.compare(name, Qt::CaseInsensitive) == 0) {
+                done(item.id);
+                return;
+            }
+            if (firstId.isEmpty())
+                firstId = item.id;
+        }
+        done(firstId);
     });
 }
 

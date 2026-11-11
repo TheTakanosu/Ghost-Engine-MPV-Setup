@@ -110,6 +110,9 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     m_title->setObjectName("npTitle");
     m_subtitle = new QLabel;
     m_subtitle->setObjectName("npSubtitle");
+    m_subtitle->setCursor(Qt::PointingHandCursor);
+    m_subtitle->setToolTip("Go to the artist");
+    m_subtitle->installEventFilter(this);
     m_like = new QPushButton;
     m_like->setCursor(Qt::PointingHandCursor);
     m_like->hide();
@@ -300,6 +303,11 @@ bool NowPlayingBar::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_cover && event->type() == QEvent::MouseButtonRelease) {
         emit openPlaying();
+        return true;
+    }
+    if (watched == m_subtitle && event->type() == QEvent::MouseButtonRelease) {
+        if (onArtist && m_mpv->connected())
+            onArtist();
         return true;
     }
     if (event->type() != QEvent::Wheel)

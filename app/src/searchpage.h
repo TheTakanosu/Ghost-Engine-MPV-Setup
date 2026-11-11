@@ -87,6 +87,13 @@ public:
     // A song's radio, then onPlay; the song alone when there is none.
     void playRadio(const ytmusic::Item &song);
 
+    // An artist's page (Spotify's): its picture, its most played songs, its
+    // albums and singles, and its radio. By id, or by a name looked up.
+    void openArtist(const QString &id, const QString &name);
+    void openArtistNamed(const QString &name);
+    // An album, laid out as a playlist is: played in order, saved to the library.
+    void openAlbum(const QString &id, const QString &title, const QString &cover = QString());
+
     // What the page shows now, as a key and a way to show it again: the
     // app's Back and Forward. onViewChanged after each new view.
     QString viewKey() const { return m_viewKey; }
@@ -185,7 +192,35 @@ private:
     QLabel *m_listInfo = nullptr;
     QListWidget *m_listSongs = nullptr;
     QPushButton *m_saveButton = nullptr;
+    QString m_listCoverUrl;           // an album's own picture
     ytmusic::PlaylistPage m_list;
+
+    // The artist view.
+    QWidget *m_artistView = nullptr;
+    class PlaylistHeader *m_artistHeader = nullptr;
+    class QHBoxLayout *m_artistHeadRow = nullptr;
+    QLabel *m_artistKicker = nullptr;
+    QLabel *m_artistName = nullptr;
+    QLabel *m_artistInfo = nullptr;
+    QLabel *m_artistAbout = nullptr;
+    QListWidget *m_artistSongs = nullptr;
+    QListWidget *m_artistAlbums = nullptr;
+    QListWidget *m_artistSingles = nullptr;
+    QWidget *m_artistSongsSection = nullptr;
+    QWidget *m_artistAlbumsSection = nullptr;
+    QWidget *m_artistSinglesSection = nullptr;
+    QWidget *m_artistAboutSection = nullptr;
+    QScrollArea *m_artistScroll = nullptr;
+    ytmusic::ArtistPage m_artist;
+    void buildArtistView();
+    void fitArtistTitle();
+
+    // Search: artists and albums.
+    QWidget *m_artistsSection = nullptr;
+    QListWidget *m_artistsList = nullptr;
+    QWidget *m_albumsSection = nullptr;
+    QListWidget *m_albumsList = nullptr;
+    QVector<ytmusic::Item> m_artists, m_albums;
     bool m_listFromLink = false;
 
     void noteView(const QString &key, std::function<void()> go);

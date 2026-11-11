@@ -324,6 +324,9 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_title->installEventFilter(this);
     m_artist = new QLabel;
     theme::style(m_artist, "color: @dim; font-weight: 600;");
+    m_artist->setCursor(Qt::PointingHandCursor);
+    m_artist->setToolTip("Go to the artist");
+    m_artist->installEventFilter(this);
     auto *about = new QPushButton(QString(QChar(0xE946)));   // an "i" in a circle
     about->setObjectName("glyph");
     about->setToolTip("About this song");
@@ -359,6 +362,9 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
 
     m_artistCard = new QFrame;
     m_artistCard->setObjectName("npCard");
+    m_artistCard->setCursor(Qt::PointingHandCursor);
+    m_artistCard->setToolTip("Go to the artist's page");
+    m_artistCard->installEventFilter(this);
     m_artistPhoto = new ArtistPhoto;
     m_artistName = new QLabel;
     theme::style(m_artistName, "font-size: 11.5pt; font-weight: 700; color: @textBright;");
@@ -487,6 +493,9 @@ bool NowPlayingPanel::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_title && event->type() == QEvent::MouseButtonRelease && onAbout)
         onAbout();
+    if ((watched == m_artist || watched == m_artistCard) && event->type() == QEvent::MouseButtonRelease && onArtist &&
+        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
+        onArtist();
     return QWidget::eventFilter(watched, event);
 }
 

@@ -84,6 +84,8 @@ private:
     void toggleLiked(const QString &target, const QString &title);
     void markLikedRows();
     void showRadioList(const QString &path, int at = -1);   // at: the row playing; -1 asks mpv
+    // The artist's page on the search page; of several ("A & B"), the first.
+    void goToArtist(const QString &artists);
     void openLeftPanel(int left, bool grow, const std::function<void(int)> &done);
     int m_ytChannelPad = -1;
     ytmusic::Client m_ytClient;   // channel feeds for Following

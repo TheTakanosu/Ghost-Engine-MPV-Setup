@@ -571,6 +571,10 @@ MainWindow::MainWindow()
         if (m_pages->currentWidget() != m_lyricsView)
             toggleLyrics();
     };
+    m_panel->onArtist = [this] {
+        const QString artist = playingSong().first;
+        goToArtist(artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist);
+    };
     m_panel->onAbout = [this] {
         const QString source = m_mpv.property("user-data/ghost/source").toString();
         const auto [artist, track] = playingSong();
@@ -795,6 +799,10 @@ MainWindow::MainWindow()
         return false;
     };
     m_nowPlaying->onLike = [this] { toggleLiked(); };
+    m_nowPlaying->onArtist = [this] {
+        const QString artist = playingSong().first;
+        goToArtist(artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist);
+    };
     m_nowPlaying->onLikeMenu = [this](const QPoint &global) {
         const auto [artist, track] = playingSong();
         likeMenu(playingTarget(), track.isEmpty() ? m_mpv.property("media-title").toString().trimmed()
@@ -2329,6 +2337,8 @@ QWidget *MainWindow::buildPlaylistPage()
             const QString title = item->text();
             const QString artist = item->data(tiles::kArtistRole).toString();
             menu.addAction("About this song", this, [this, target, title, artist] { showSongInfo(target, title, artist); });
+            if (!artist.isEmpty())
+                menu.addAction("Go to artist", this, [this, artist] { goToArtist(artist); });
             // As Spotify's: the song's radio, and a link to send (2026-11-11).
             const QString id = idForTarget(target);
             const bool audio = listIsAudio(m_library.playlists().value(m_open).path);
@@ -3341,6 +3351,21 @@ void MainWindow::showRadioList(const QString &path, int at)
     m_pages->setCurrentWidget(m_searchPage);
     m_searchPage->showLocalList(title, QStringLiteral("Radio  •  %1 songs, playing %2").arg(songs.size()).arg(at + 1),
                                 songs, at, QStringLiteral("Ghost Engine Radio #%1").arg(n));
+}
+
+void MainWindow::goToArtist(const QString &artists)
+{
+    // "A & B", "A, B & C", "A x B", "A feat. B": the first one's page.
+    static const QRegularExpression between(QStringLiteral(R"(\s*(?:,|&| x | X |\bfeat\.?|\bft\.?|\bwith\b)\s*)"));
+    const QString name = artists.split(between, Qt::SkipEmptyParts).value(0).trimmed();
+    if (name.isEmpty())
+        return;
+    if (m_pages->currentWidget() != m_searchPage) {
+        QWidget *now = m_pages->currentWidget();
+        m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;
+    }
+    m_pages->setCurrentWidget(m_searchPage);
+    m_searchPage->openArtistNamed(name);
 }
 
 void MainWindow::chooseCover(int index)
@@ -7056,6 +7081,8 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
                    [this, items, videos] { playFound(items, items.size() > 1 ? QStringLiteral("Search: %1").arg(m_searchPage->query()) : items.first().title, 0, false, !videos); });
     if (items.size() == 1 && !videos)
         menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
+    if (items.size() == 1 && !videos && !items.first().artist.isEmpty())
+        menu.addAction("Go to artist", this, [this, artist = items.first().artist] { goToArtist(artist); });
     if (!videos) {
         QVector<PlaylistEntry> picked;
         for (const ytmusic::Item &it : items)

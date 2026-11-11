@@ -49,6 +49,8 @@ public:
     std::function<bool()> canLike;
     std::function<bool()> isLiked;
     std::function<void()> onLike;
+    // The artist line clicked: the artist's page.
+    std::function<void()> onArtist;
     std::function<void(const QPoint &global)> onLikeMenu;   // the + right-clicked
     void refreshLike();
 
