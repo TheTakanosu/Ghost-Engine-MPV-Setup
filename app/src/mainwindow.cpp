@@ -1200,6 +1200,12 @@ MainWindow::MainWindow()
     });
     connect(&m_mpv, &MpvClient::fileFailed, this, &MainWindow::songFailed);
     connect(&m_mpv, &MpvClient::fileLoaded, this, [this] {
+        // Started with no sound device (a monitor's speakers asleep, a
+        // headset off), mpv plays into nothing rather than ending every song
+        // at once (--audio-fallback-to-null), and keeps that for the songs
+        // after. Each new song asks for the real device again (2026-11-11).
+        if (m_mpv.property("current-ao").toString() == QLatin1String("null"))
+            m_mpv.command({"ao-reload"});
         m_failedSongs.clear();
         if (m_failNoticeShown && m_toast)
             m_toast->hide();
@@ -5888,7 +5894,10 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
                              "mpv.exe wasn't found. Install Ghost Engine with install.bat first.");
         return;
     }
-    QStringList args{QStringLiteral("--input-ipc-server=%1").arg(MpvClient::kPipe)};
+    QStringList args{QStringLiteral("--input-ipc-server=%1").arg(MpvClient::kPipe),
+                     // No sound device: play on in silence, in real time; it
+                     // ended every song at once and the list raced (2026-11-11).
+                     QStringLiteral("--audio-fallback-to-null=yes")};
     if (!QSettings().value("player/window", false).toBool())
         args << QStringLiteral("--script-opts-append=ghost-window=no");
     if (shuffle)
