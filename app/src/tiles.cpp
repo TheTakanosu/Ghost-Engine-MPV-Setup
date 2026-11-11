@@ -120,6 +120,55 @@ void paintCollage(QPainter &painter, const QRectF &rect, const QVector<QPixmap> 
     painter.restore();
 }
 
+QColor coverColor(const QPixmap &cover)
+{
+    if (cover.isNull())
+        return {};
+    const QImage small = cover.toImage().scaled(24, 24, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                             .convertToFormat(QImage::Format_RGB32);
+    // Twelve hue sectors, each pixel weighted by how vivid it is.
+    double weight[12] = {}, r[12] = {}, g[12] = {}, b[12] = {};
+    for (int y = 0; y < small.height(); ++y)
+        for (int x = 0; x < small.width(); ++x) {
+            const QColor c = small.pixelColor(x, y);
+            if (c.hsvSaturation() < 50 || c.value() < 45 || c.hsvHue() < 0)
+                continue;
+            const int sector = c.hsvHue() * 12 / 360;
+            const double w = c.hsvSaturation() * c.value() / 65025.0;
+            weight[sector] += w;
+            r[sector] += c.red() * w;
+            g[sector] += c.green() * w;
+            b[sector] += c.blue() * w;
+        }
+    int best = 0;
+    for (int i = 1; i < 12; ++i)
+        if (weight[i] > weight[best])
+            best = i;
+    // A few vivid pixels on a grey picture do not colour it.
+    if (weight[best] < 576 * 0.04)
+        return small.scaled(1, 1, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).pixelColor(0, 0);
+    return QColor(int(r[best] / weight[best]), int(g[best] / weight[best]), int(b[best] / weight[best]));
+}
+
+QPixmap radioCover(int side, const QColor &base)
+{
+    const QColor from = base.isValid() ? base : theme::accent();
+    const int hue = from.hsvHue() < 0 ? 0 : from.hsvHue();
+    const int sat = from.hsvHue() < 0 ? 0 : qBound(90, from.hsvSaturation(), 210);
+    QPixmap out(side, side);
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing);
+    QLinearGradient wash(0, 0, side, side);
+    wash.setColorAt(0, QColor::fromHsv(hue, sat, 205));
+    wash.setColorAt(1, QColor::fromHsv((hue + 20) % 360, qMin(255, sat + 30), 85));
+    p.fillRect(out.rect(), wash);
+    const qreal g = side * 0.62;
+    const QRectF ghost((side - g) / 2 + side * 0.01, (side - g) / 2 + side * 0.02, g, g);
+    icons::paintGhost(p, ghost, Qt::white, QColor::fromHsv(hue, sat, 45, 150));
+    return out;
+}
+
 TileDelegate::TileDelegate(int size, CoversFor coversFor, QObject *parent)
     : QStyledItemDelegate(parent), m_size(size), m_coversFor(std::move(coversFor)) {}
 

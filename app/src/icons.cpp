@@ -32,6 +32,42 @@ QPainterPath triangle(const QRectF &r)
 
 } // namespace
 
+void paintGhost(QPainter &painter, const QRectF &rect, const QColor &body, const QColor &shadow)
+{
+    // The same shape as assets/make_icon.py, on its 256 grid.
+    static const QPointF kBody[] = {{56, 226}, {56, 96}, {104, 40}, {160, 40}, {212, 92}, {212, 196},
+                                    {198, 232}, {176, 206}, {154, 236}, {132, 208}, {110, 236}, {88, 208}};
+    static const QPointF kEyes[2][4] = {{{90, 106}, {120, 96}, {120, 138}, {90, 148}},
+                                        {{140, 96}, {170, 106}, {170, 148}, {140, 138}}};
+    const auto shape = [&rect](qreal shift) {
+        const qreal k = rect.width() / 256.0;
+        const auto at = [&](const QPointF &p) {
+            return QPointF(rect.left() + (p.x() + shift) * k, rect.top() + (p.y() + shift) * k);
+        };
+        QPainterPath path;
+        path.setFillRule(Qt::OddEvenFill);
+        QPolygonF outline;
+        for (const QPointF &p : kBody)
+            outline << at(p);
+        path.addPolygon(outline);
+        path.closeSubpath();
+        for (const auto &eye : kEyes) {
+            QPolygonF hole;
+            for (const QPointF &p : eye)
+                hole << at(p);
+            path.addPolygon(hole);
+            path.closeSubpath();
+        }
+        return path;
+    };
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.fillPath(shape(-8), shadow);
+    painter.fillPath(shape(0), body);
+    painter.restore();
+}
+
 void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color)
 {
     painter.save();

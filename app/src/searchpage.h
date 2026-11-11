@@ -166,6 +166,7 @@ private:
 
     // The playlist view.
     QLabel *m_listKicker = nullptr;
+    QWidget *m_listCover = nullptr;   // a radio's ghost cover
     QLabel *m_listTitle = nullptr;
     QLabel *m_listInfo = nullptr;
     QListWidget *m_listSongs = nullptr;

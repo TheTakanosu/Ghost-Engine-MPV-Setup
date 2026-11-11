@@ -14,6 +14,11 @@ enum class Icon { Play, Pause, Previous, Next, Shuffle, Folder, Playing, Clock, 
 
 void paint(QPainter &painter, Icon icon, const QRectF &rect, const QColor &color);
 
+// The Ghost Engine ghost (the app's icon, assets/make_icon.py): its body in
+// `body` over an offset shadow in `shadow`, the eyes cut through, filling
+// the square `rect`.
+void paintGhost(QPainter &painter, const QRectF &rect, const QColor &body, const QColor &shadow);
+
 // The seconds Back10/Forward10 jump and show inside their arrow
 // (Settings > Playback > Seek step; 10 until set).
 int skipSeconds();

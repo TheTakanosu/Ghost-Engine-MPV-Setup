@@ -6856,6 +6856,15 @@ void MainWindow::saveFound(const QString &name, const QVector<ytmusic::Item> &it
         QMessageBox::warning(this, "Save to library", "The playlist file couldn't be written.");
         return;
     }
+    // A radio kept from a search wears the radio page's ghost cover, as its
+    // own picture; Change cover... still replaces it (Batın, 2026-11-11).
+    if (name.startsWith(QStringLiteral("Ghost Engine Radio #")) && !items.isEmpty()) {
+        const QColor colour = tiles::coverColor(m_covers.get(items.first().id, ThumbnailCache::Size::Card));
+        const QString target = customCoverPath(path);
+        QDir().mkpath(QFileInfo(target).absolutePath());
+        tiles::radioCover(640, colour.isValid() ? colour : theme::accent()).save(target, "JPG", 92);
+        m_customCovers.remove(target);
+    }
     toast(QStringLiteral("Saved to your library: %1").arg(name));
     m_searchPage->markSaved();
     reopenAfter(path);

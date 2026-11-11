@@ -14,6 +14,8 @@
 #include <QMouseEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -70,6 +72,42 @@ QString coverKey(const ytmusic::Item &item)
 {
     return item.kind == ytmusic::Kind::Playlist ? item.thumbnail : item.id;
 }
+
+// The radio's square cover beside its title: the ghost, washed in the
+// first song's cover colour (the accent until that cover is here).
+class RadioCoverView : public QWidget {
+public:
+    explicit RadioCoverView(std::function<QPixmap()> firstCover) : m_firstCover(std::move(firstCover)) {}
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QColor colour = tiles::coverColor(m_firstCover());
+        const int side = qRound(qMin(width(), height()) * devicePixelRatioF());
+        if (m_drawn.isNull() || m_drawnColour != colour || m_drawn.width() != side) {
+            m_drawn = tiles::radioCover(side, colour.isValid() ? colour : theme::accent());
+            m_drawn.setDevicePixelRatio(devicePixelRatioF());
+            m_drawnColour = colour;
+        }
+        const qreal s = qMin(width(), height());
+        // A soft shadow under it, as a playlist page's cover has.
+        const QRectF cover(4, 0, s - 8, s - 8);
+        for (int i = 1; i <= 4; ++i) {
+            QPainterPath shadow;
+            const qreal round = tiles::playlistRadius(cover, 10) + i;
+            shadow.addRoundedRect(cover.adjusted(-i, -i + 4, i, i + 4), round, round);
+            p.fillPath(shadow, QColor(0, 0, 0, 16));
+        }
+        tiles::paintCollage(p, cover, {m_drawn}, QString(), 10);
+    }
+
+private:
+    std::function<QPixmap()> m_firstCover;
+    QPixmap m_drawn;
+    QColor m_drawnColour;
+};
 
 } // namespace
 
@@ -233,9 +271,24 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_listTitle->setWordWrap(true);
     m_listInfo = new QLabel;
     m_listInfo->setObjectName("heroInfo");
-    listColumn->addWidget(kicker);
-    listColumn->addWidget(m_listTitle);
-    listColumn->addWidget(m_listInfo);
+    m_listCover = new RadioCoverView([this] {
+        const QString id = m_list.songs.isEmpty() ? QString() : m_list.songs.first().id;
+        return id.isEmpty() ? QPixmap() : m_covers.get(id, ThumbnailCache::Size::Card);
+    });
+    m_listCover->setFixedSize(qRound(148 * theme::zoom()), qRound(148 * theme::zoom()));
+    m_listCover->hide();   // a radio's only; a YouTube playlist has none of its own
+    auto *heading = new QHBoxLayout;
+    heading->setSpacing(22);
+    heading->addWidget(m_listCover, 0, Qt::AlignVCenter);
+    auto *headingText = new QVBoxLayout;
+    headingText->setSpacing(10);
+    headingText->addStretch();
+    headingText->addWidget(kicker);
+    headingText->addWidget(m_listTitle);
+    headingText->addWidget(m_listInfo);
+    headingText->addStretch();
+    heading->addLayout(headingText, 1);
+    listColumn->addLayout(heading);
 
     auto *play = new icons::IconButton(icons::Icon::Play, 52, "Play");
     play->setRound(theme::accent(), theme::accentText(), theme::c().onAccent);
@@ -1010,6 +1063,8 @@ void SearchPage::showLocalList(const QString &title, const QString &info, const 
     m_list.songs = songs;
     m_list.ok = true;
     m_listKicker->setText("RADIO");
+    m_listCover->show();
+    m_listCover->update();
     m_listTitle->setText(title);
     m_listInfo->setText(info);
     fill(m_listSongs, songs, songs.size());
@@ -1077,6 +1132,7 @@ void SearchPage::openPlaylist(const QString &id, const QString &title)
     m_list = {};
     m_list.id = id;
     m_listKicker->setText("PLAYLIST ON YOUTUBE MUSIC");
+    m_listCover->hide();
     m_listTitle->setText(title.isEmpty() ? QStringLiteral("Loading...") : title);
     m_listInfo->setText("Loading the songs...");
     m_listSongs->clear();
@@ -1142,6 +1198,8 @@ void SearchPage::refreshCovers(const QString &)
     for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList, m_listSongs, m_homeGrid})
         if (list->isVisible())
             list->viewport()->update();
+    if (m_listCover->isVisible())
+        m_listCover->update();
 }
 
 void SearchPage::noteView(const QString &key, std::function<void()> go)

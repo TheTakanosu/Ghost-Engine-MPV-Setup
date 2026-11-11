@@ -29,6 +29,14 @@ qreal playlistRadius(const QRectF &rect, qreal normal);
 void paintCollage(QPainter &painter, const QRectF &rect, const QVector<QPixmap> &covers,
                   const QString &name, qreal radius);
 
+// A cover's dominant colour: the hue most of its lively pixels share,
+// averaged; the plain average for a grey picture, invalid for none.
+QColor coverColor(const QPixmap &cover);
+
+// A radio's cover: the Ghost Engine ghost, white, on a square washed in
+// `base` (the first song's cover colour, or the accent). Unrounded.
+QPixmap radioCover(int side, const QColor &base);
+
 // A playlist as a square tile with its name and count under it.
 class TileDelegate : public QStyledItemDelegate {
 public:
