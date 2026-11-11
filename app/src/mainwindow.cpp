@@ -5746,6 +5746,17 @@ QVector<QPixmap> MainWindow::coversFor(int index)
         cached = m_customCovers.insert(custom, QFileInfo::exists(custom) ? QPixmap(custom) : QPixmap());
     if (!cached->isNull())
         return {*cached};
+    // Liked songs has a cover of its own, not its first song's, until one is
+    // chosen for it (Batın, 2026-11-11).
+    const QString liked = QSettings().value("liked/path").toString();
+    if (!liked.isEmpty() && QFileInfo(liked) == QFileInfo(all[index].path)) {
+        const QColor accent = theme::accent();
+        if (m_likedCover.isNull() || m_likedAccent != accent) {
+            m_likedCover = tiles::likedCover(640, accent);
+            m_likedAccent = accent;
+        }
+        return {m_likedCover};
+    }
     for (const QString &id : coverIds(all[index], 4))
         covers << m_covers.get(id, ThumbnailCache::Size::Card);
     return covers;

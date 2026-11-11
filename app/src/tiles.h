@@ -37,6 +37,10 @@ QColor coverColor(const QPixmap &cover);
 // `base` (the first song's cover colour, or the accent). Unrounded.
 QPixmap radioCover(int side, const QColor &base);
 
+// Liked songs' own cover, as Spotify's: a white heart on a wash of the
+// accent. Unrounded.
+QPixmap likedCover(int side, const QColor &accent);
+
 // A playlist as a square tile with its name and count under it.
 class TileDelegate : public QStyledItemDelegate {
 public:

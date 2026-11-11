@@ -270,6 +270,8 @@ private:
     QPushButton *m_collapse = nullptr;
     QPushButton *m_viewToggle = nullptr;
     QPushButton *m_addButton = nullptr;
+    QPixmap m_likedCover;   // Liked songs' own, drawn in m_likedAccent
+    QColor m_likedAccent;
     QHash<QString, QPixmap> m_customCovers;   // by customCoverPath(); a null one: none
     QSet<QString> m_openFolders;   // library folders showing their playlists
     // Each list's song titles ("artist - track"), read once per file date,

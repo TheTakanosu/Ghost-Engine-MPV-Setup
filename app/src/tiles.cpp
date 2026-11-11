@@ -169,6 +169,34 @@ QPixmap radioCover(int side, const QColor &base)
     return out;
 }
 
+QPixmap likedCover(int side, const QColor &accent)
+{
+    QPixmap out(side, side);
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing);
+    const int hue = accent.hsvHue() < 0 ? 270 : accent.hsvHue();
+    const int sat = accent.hsvHue() < 0 ? 0 : qMax(120, accent.hsvSaturation());
+    QLinearGradient wash(0, 0, side, side);
+    wash.setColorAt(0, QColor::fromHsv((hue + 330) % 360, qMax(0, sat - 40), 240));
+    wash.setColorAt(0.5, QColor::fromHsv(hue, sat, 200));
+    wash.setColorAt(1, QColor::fromHsv((hue + 25) % 360, qMin(255, sat + 30), 95));
+    p.fillRect(out.rect(), wash);
+    // A heart from two arcs and a point, a third of the side across.
+    const qreal w = side * 0.40, h = w * 0.88;
+    const qreal x = (side - w) / 2, y = (side - h) / 2 + side * 0.02;
+    QPainterPath heart;
+    heart.moveTo(x + w / 2, y + h);
+    heart.cubicTo(x + w * 0.12, y + h * 0.70, x - w * 0.02, y + h * 0.38, x + w * 0.03, y + h * 0.22);
+    heart.cubicTo(x + w * 0.10, y + h * 0.00, x + w * 0.42, y - h * 0.04, x + w / 2, y + h * 0.20);
+    heart.cubicTo(x + w * 0.58, y - h * 0.04, x + w * 0.90, y + h * 0.00, x + w * 0.97, y + h * 0.22);
+    heart.cubicTo(x + w * 1.02, y + h * 0.38, x + w * 0.88, y + h * 0.70, x + w / 2, y + h);
+    heart.closeSubpath();
+    p.fillPath(heart.translated(0, side * 0.012), QColor(0, 0, 0, 45));
+    p.fillPath(heart, Qt::white);
+    return out;
+}
+
 TileDelegate::TileDelegate(int size, CoversFor coversFor, QObject *parent)
     : QStyledItemDelegate(parent), m_size(size), m_coversFor(std::move(coversFor)) {}
 
