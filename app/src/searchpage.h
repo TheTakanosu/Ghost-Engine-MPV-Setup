@@ -51,6 +51,8 @@ public:
     void showLocalList(const QString &title, const QString &info, const QVector<ytmusic::Item> &songs, int playing,
                        const QString &saveAs);
     void markSaved();
+    // The search the page went back to, for the box at the top to show.
+    std::function<void(const QString &query)> onQueryShown;
     std::function<void(const QString &path)> onOpenLibrary;
     // The right-click menu for these songs (Play, Add to playlist...).
     std::function<void(const QVector<ytmusic::Item> &, const QPoint &global)> onMenu;
@@ -94,6 +96,9 @@ private:
     void fill(QListWidget *list, const QVector<ytmusic::Item> &items, int shown);
     void fitHeight(QListWidget *list);
     void showResults();
+    // The playlist page's "Back to results": the results of the search last
+    // made, searched again when they are no longer in hand.
+    void backToResults();
     void openPlaylist(const QString &id, const QString &title);
     void refreshCovers(const QString &id);
     void setStatus(const QString &text);
@@ -110,6 +115,7 @@ private:
     ThumbnailCache &m_covers;
     ytmusic::Client m_client;
     QString m_query;
+    QString m_lastQuery;   // the last search typed, kept between runs
     int m_serial = 0;
 
     QStackedWidget *m_views = nullptr;
@@ -159,6 +165,7 @@ private:
     int m_homeSerial = 0;
 
     // The playlist view.
+    QLabel *m_listKicker = nullptr;
     QLabel *m_listTitle = nullptr;
     QLabel *m_listInfo = nullptr;
     QListWidget *m_listSongs = nullptr;

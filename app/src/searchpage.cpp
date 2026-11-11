@@ -106,6 +106,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_musicMode->hide();
     m_youtubeMode->hide();
     m_youtube = QSettings().value("search/youtube", false).toBool();
+    m_lastQuery = QSettings().value("search/last").toString();
     m_musicMode->setChecked(!m_youtube);
     m_youtubeMode->setChecked(m_youtube);
     connect(m_musicMode, &QPushButton::clicked, this, [this] { setYouTubeMode(false); });
@@ -220,12 +221,12 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     listColumn->setContentsMargins(28, 16, 28, 12);
     listColumn->setSpacing(10);
     auto *back = linkButton(QStringLiteral("‹  Back to results"));
-    connect(back, &QPushButton::clicked, this, &SearchPage::showResults);
+    connect(back, &QPushButton::clicked, this, &SearchPage::backToResults);
     auto *backRow = new QHBoxLayout;
     backRow->addWidget(back);
     backRow->addStretch();
     listColumn->addLayout(backRow);
-    auto *kicker = new QLabel("PLAYLIST ON YOUTUBE MUSIC");
+    auto *kicker = m_listKicker = new QLabel("PLAYLIST ON YOUTUBE MUSIC");
     kicker->setObjectName("kicker");
     m_listTitle = new QLabel;
     m_listTitle->setObjectName("pageTitle");
@@ -487,6 +488,10 @@ void SearchPage::setQuery(const QString &text)
     if (query == m_query && !query.isEmpty())
         return;
     m_query = query;
+    if (!query.isEmpty() && query != m_lastQuery) {
+        m_lastQuery = query;
+        QSettings().setValue("search/last", query);
+    }
     const int serial = ++m_serial;
     showResults();
     m_songs.clear();
@@ -1004,6 +1009,7 @@ void SearchPage::showLocalList(const QString &title, const QString &info, const 
     m_list.title = saveAs;   // the name it is saved under
     m_list.songs = songs;
     m_list.ok = true;
+    m_listKicker->setText("RADIO");
     m_listTitle->setText(title);
     m_listInfo->setText(info);
     fill(m_listSongs, songs, songs.size());
@@ -1030,10 +1036,47 @@ void SearchPage::showResults()
     m_views->setCurrentIndex(0);
 }
 
+void SearchPage::backToResults()
+{
+    // The radio page opened from the player bar may come long after the
+    // search: the box emptied, YouTube mode since, or a new run. Its results
+    // are shown when they are still here, else the last search is made again
+    // (an empty page came back, Batın, 2026-11-11).
+    const bool inHand = !m_youtube && !m_query.isEmpty() &&
+                        (m_pending > 0 || !m_songs.isEmpty() || !m_videos.isEmpty() || !m_playlists.isEmpty() ||
+                         m_status->isVisibleTo(this));
+    if (inHand) {
+        showResults();
+        noteView(QStringLiteral("results:") + m_query, [this, query = m_query] {
+            if (m_query == query)
+                showResults();
+            else
+                setQuery(query);
+        });
+        if (onQueryShown)
+            onQueryShown(m_query);
+        return;
+    }
+    const QString query = m_query.isEmpty() || m_youtube ? m_lastQuery : m_query;
+    if (m_youtube) {
+        m_youtube = false;
+        m_musicMode->setChecked(true);
+        m_youtubeMode->setChecked(false);
+        QSettings().setValue("search/youtube", false);
+    }
+    m_query.clear();
+    setQuery(query);
+    if (query.isEmpty())
+        setStatus("Nothing searched yet. Type a song, an artist or a link in the box at the top.");
+    if (onQueryShown)
+        onQueryShown(query);
+}
+
 void SearchPage::openPlaylist(const QString &id, const QString &title)
 {
     m_list = {};
     m_list.id = id;
+    m_listKicker->setText("PLAYLIST ON YOUTUBE MUSIC");
     m_listTitle->setText(title.isEmpty() ? QStringLiteral("Loading...") : title);
     m_listInfo->setText("Loading the songs...");
     m_listSongs->clear();

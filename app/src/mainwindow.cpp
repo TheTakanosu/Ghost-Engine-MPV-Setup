@@ -446,6 +446,12 @@ MainWindow::MainWindow()
             if (all[i].path.compare(path, Qt::CaseInsensitive) == 0)
                 openPlaylist(i);
     };
+    m_searchPage->onQueryShown = [this](const QString &query) {
+        // The box says what the results are for, without searching again.
+        const QSignalBlocker quiet(m_search);
+        m_searchTimer.stop();
+        m_search->setText(query);
+    };
     m_pages->addWidget(m_searchPage);
     {
         auto *page = new ShortcutsPage;
