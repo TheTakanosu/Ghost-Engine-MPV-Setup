@@ -89,6 +89,9 @@ private:
 
     // Recommended songs under a song list (Spotify's): from the radio of
     // its last songs, those not in it yet; + adds one, Refresh shows others.
+    QLabel *m_playlistDesc = nullptr;   // the list's description, or "Add a description"
+    void editDescription(int index);
+    void showDescription();
     QWidget *m_recBox = nullptr;
     QListWidget *m_recList = nullptr;
     QPushButton *m_recToggle = nullptr;

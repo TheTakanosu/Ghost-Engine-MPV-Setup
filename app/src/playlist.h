@@ -31,12 +31,17 @@ public:
     // "#GHOST_RADIO" in the header: a song's radio kept from search, which
     // wears the ghost cover until the user picks one.
     bool radio = false;
+    // "#GHOST_DESC:<text>" in the header: a short description under the
+    // name, one line ("\n" for a break). It goes with the file when shared.
+    QString description;
 
     QVector<PlaylistEntry> readEntries() const;
 
     // The name lives inside the file as "#PLAYLIST:<name>" (the extended M3U
     // tag for it), so it can hold any character; the file name is only a key.
     static bool writeName(const QString &path, const QString &name);
+    // Writes the description in the header; empty removes it.
+    static bool writeDescription(const QString &path, const QString &text);
 
     // Rewrites the entries in `order` (indices into readEntries()), each with
     // the lines above it; an index left out removes that entry. The header,

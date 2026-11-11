@@ -1685,6 +1685,8 @@ void MainWindow::showPlaylistMenu(int index, const QPoint &at)
     if (QFileInfo::exists(customCoverPath(path)))
         menu.addAction("Remove custom image", this, [this, index] { removeCover(index); });
     menu.addAction(m_offline.isMarked(path) ? "Remove download" : "Download", this, [this, index] { toggleDownload(index); });
+    menu.addAction(all[index].description.isEmpty() ? "Add a description..." : "Edit description...", this,
+                   [this, index] { editDescription(index); });
     menu.addAction("Share", this, [this, index] { shareList(index); });
     menu.addAction("Export a copy...", this, [this, index] { exportPlaylist(index); });
     menu.addAction("Show in folder", this, [path] {
@@ -2154,6 +2156,14 @@ QWidget *MainWindow::buildPlaylistPage()
     text->addStretch();
     text->addWidget(m_playlistKind);
     text->addWidget(m_playlistName);
+    m_playlistDesc = new QLabel;
+    m_playlistDesc->setObjectName("heroInfo");
+    m_playlistDesc->setCursor(Qt::PointingHandCursor);
+    m_playlistDesc->setToolTip("Click to edit the description");
+    m_playlistDesc->setMinimumWidth(10);
+    m_playlistDesc->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_playlistDesc->installEventFilter(this);
+    text->addWidget(m_playlistDesc);
     text->addWidget(m_playlistInfo);
     m_sharedBy = new QWidget;
     m_sharedAvatar = new QLabel;
@@ -2440,6 +2450,7 @@ void MainWindow::layoutHeader()
         return;   // a resize while the window is still being built
     auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
     listheader::arrange(header, m_headRow, m_playlistKind, m_playlistInfo);
+    showDescription();
     if (m_open >= 0)
         m_sharedBy->setVisible(header->height() > 150 * theme::zoom() && !m_library.playlists()[m_open].shared.isEmpty());
     fitTitle();
@@ -2867,6 +2878,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             playOpen(m_songs->row(item));
             return true;
         }
+    }
+    if (watched == m_playlistDesc && event->type() == QEvent::MouseButtonRelease && m_open >= 0 &&
+        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+        editDescription(m_open);
+        return true;
     }
     if (m_recList && watched == m_recList->viewport() && event->type() == QEvent::MouseButtonRelease &&
         static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
@@ -5124,6 +5140,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     m_playlistInfo->setText(subtitleFor(p) + QStringLiteral("  ·  added ") +
                             QLocale().toString(p.modified.date(), QLocale::ShortFormat));
     showSharedBy(p.shared);
+    showDescription();
     static_cast<PlaylistHeader *>(m_playlistCover)->setName(p.name);
     static_cast<PlaylistHeader *>(m_playlistCover)->setTint(
         QSettings().value("headerColor/" + QFileInfo(p.path).fileName()).value<QColor>());
@@ -7746,5 +7763,40 @@ void MainWindow::addRecommended(int row)
     }
     toast(QStringLiteral("Added to %1").arg(m_library.playlists()[m_open].name));
     // The list shows it at its end; this one's place takes the next.
+    rescan();
+}
+
+// -- A list's description ----------------------------------------------------------
+
+void MainWindow::showDescription()
+{
+    if (!m_playlistDesc || m_open < 0)
+        return;
+    const QString text = m_library.playlists()[m_open].description;
+    // On the open header only, and not in the slim bar it folds into.
+    const bool room = m_playlistCover->height() > 200 * theme::zoom();
+    const QString shown = text.isEmpty() ? QStringLiteral("Add a description") : QString(text).replace('\n', QStringLiteral("  "));
+    m_playlistDesc->setText(QFontMetrics(m_playlistDesc->font()).elidedText(shown, Qt::ElideRight, qMax(60, m_playlistCover->width() - static_cast<PlaylistHeader *>(m_playlistCover)->coverRect().right() - 60)));
+    m_playlistDesc->setToolTip(text.isEmpty() ? QStringLiteral("Click to add a description")
+                                              : text + QStringLiteral("\n\nClick to edit"));
+    theme::style(m_playlistDesc, text.isEmpty() ? "color: @muted; font-style: italic;" : "color: @textSoft;");
+    m_playlistDesc->setVisible(room);
+}
+
+void MainWindow::editDescription(int index)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const QString path = all[index].path;
+    bool ok = false;
+    const QString text = QInputDialog::getMultiLineText(this, "Description", QStringLiteral("A few words about %1:").arg(all[index].name),
+                                                        all[index].description, &ok);
+    if (!ok)
+        return;
+    if (!Playlist::writeDescription(path, text.left(300))) {
+        toast("The playlist file couldn't be written.");
+        return;
+    }
     rescan();
 }

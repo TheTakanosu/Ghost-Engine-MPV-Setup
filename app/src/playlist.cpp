@@ -43,6 +43,10 @@ Playlist Playlist::peek(const QString &path)
             p.shared = line.mid(14).trimmed();
             continue;
         }
+        if (line.startsWith(QStringLiteral("#GHOST_DESC:"))) {
+            p.description = line.mid(12).trimmed().replace(QStringLiteral("\\n"), QStringLiteral("\n"));
+            continue;
+        }
         if (line == QStringLiteral("#GHOST_RADIO")) {
             p.radio = true;
             continue;
@@ -120,6 +124,36 @@ bool Playlist::writeName(const QString &path, const QString &name)
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
     file.write(lines.join(crlf ? "\r\n" : "\n").toUtf8());
+    return true;
+}
+
+bool Playlist::writeDescription(const QString &path, const QString &text)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray raw = file.readAll();
+    file.close();
+    const QDateTime modified = QFileInfo(path).lastModified();
+    const bool crlf = raw.contains("\r\n");
+    QStringList lines = QString::fromUtf8(raw).split(QRegularExpression(QStringLiteral("\r?\n")));
+    for (int i = lines.size() - 1; i >= 0; --i)
+        if (lines[i].trimmed().startsWith(QStringLiteral("#GHOST_DESC:")))
+            lines.removeAt(i);
+    const QString clean = text.trimmed().replace(QStringLiteral("\r\n"), QStringLiteral("\n")).replace('\n', QStringLiteral("\\n"));
+    if (!clean.isEmpty()) {
+        // Under the name, with the other list-wide tags.
+        int at = 0;
+        while (at < lines.size() && (lines[at] == "#EXTM3U" || lines[at] == "#GHOST_AUDIO" ||
+                                     lines[at].startsWith("#PLAYLIST:") || lines[at] == "#GHOST_RADIO"))
+            ++at;
+        lines.insert(at, QStringLiteral("#GHOST_DESC:") + clean);
+    }
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    file.write(lines.join(crlf ? "\r\n" : "\n").toUtf8());
+    // "Date added" of the list stays what it was.
+    file.setFileTime(modified, QFileDevice::FileModificationTime);
     return true;
 }
 
