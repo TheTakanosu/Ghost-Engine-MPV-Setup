@@ -40,7 +40,7 @@ public:
     // Into a library folder ("" for none); returns the new path, or empty.
     QString moveToSubfolder(const QString &path, const QString &folder);
     // A new empty song list in the library (or one of its folders); its path.
-    QString createPlaylist(const QString &name, const QString &folder = QString());
+    QString createPlaylist(const QString &name, const QString &folder = QString(), bool radio = false);
     // What Windows refuses in a folder name taken out; empty if nothing is left.
     static QString cleanFolderName(const QString &typed);
 

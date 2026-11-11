@@ -43,6 +43,10 @@ Playlist Playlist::peek(const QString &path)
             p.shared = line.mid(14).trimmed();
             continue;
         }
+        if (line == QStringLiteral("#GHOST_RADIO")) {
+            p.radio = true;
+            continue;
+        }
         if (line.startsWith(QStringLiteral("#PLAYLIST:"))) {
             const QString named = line.mid(10).trimmed();
             if (!named.isEmpty())
@@ -119,12 +123,13 @@ bool Playlist::writeName(const QString &path, const QString &name)
     return true;
 }
 
-bool Playlist::create(const QString &path, const QString &name)
+bool Playlist::create(const QString &path, const QString &name, bool radio)
 {
     QFile file(path);
     if (file.exists() || !file.open(QIODevice::WriteOnly))
         return false;
-    file.write(QStringLiteral("#EXTM3U\r\n#GHOST_AUDIO\r\n#PLAYLIST:%1\r\n").arg(name).toUtf8());
+    file.write(QStringLiteral("#EXTM3U\r\n#GHOST_AUDIO\r\n#PLAYLIST:%1\r\n%2")
+                   .arg(name, radio ? QStringLiteral("#GHOST_RADIO\r\n") : QString()).toUtf8());
     return true;
 }
 
@@ -167,7 +172,8 @@ bool Playlist::writeOrder(const QString &path, const QVector<int> &order)
     QStringList head;
     int at = 0;
     while (at < lines.size() && (lines[at].trimmed().isEmpty() || lines[at] == "#EXTM3U" ||
-                                 lines[at] == "#GHOST_AUDIO" || lines[at].startsWith("#PLAYLIST:")))
+                                 lines[at] == "#GHOST_AUDIO" || lines[at].startsWith("#PLAYLIST:") ||
+                                 lines[at] == "#GHOST_RADIO" || lines[at].startsWith("#GHOST_DESC:")))
         head << lines[at++];
     QVector<QStringList> blocks;
     QStringList pending;

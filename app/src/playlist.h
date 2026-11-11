@@ -28,6 +28,9 @@ public:
     QDateTime modified;
     QString folder;       // the library folder it sits in (Music\Ghost Engine\<folder>), or empty
     QString shared;       // "#GHOST_SHARED:<json>": who shared it with this library, as JSON
+    // "#GHOST_RADIO" in the header: a song's radio kept from search, which
+    // wears the ghost cover until the user picks one.
+    bool radio = false;
 
     QVector<PlaylistEntry> readEntries() const;
 
@@ -43,6 +46,6 @@ public:
     // A new, empty song list, and songs added to the end of one. Each added
     // song carries the moment it was added, so "Date added" means that song
     // and not the whole file; players skip the line as a comment.
-    static bool create(const QString &path, const QString &name);
+    static bool create(const QString &path, const QString &name, bool radio = false);
     static bool append(const QString &path, const QVector<PlaylistEntry> &entries);
 };

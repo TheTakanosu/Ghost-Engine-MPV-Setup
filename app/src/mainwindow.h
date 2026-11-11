@@ -302,6 +302,11 @@ private:
     QString m_likedFile;      // liked/path, cleaned, for coversFor
     bool m_likedKnown = false;
     QHash<QString, QPixmap> m_customCovers;   // by customCoverPath(); a null one: none
+    struct RadioCover {
+        QColor colour;
+        QPixmap picture;
+    };
+    QHash<QString, RadioCover> m_radioCovers;   // saved radios' ghosts, by path
     QSet<QString> m_openFolders;   // library folders showing their playlists
     // Each list's song titles ("artist - track"), read once per file date,
     // so the library search finds songs without opening hundreds of files

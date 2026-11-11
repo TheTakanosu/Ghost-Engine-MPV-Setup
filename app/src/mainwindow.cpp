@@ -5852,6 +5852,21 @@ QVector<QPixmap> MainWindow::coversFor(int index)
         }
         return {m_likedCover};
     }
+    // A saved radio: the ghost on its first song's colour, as on the radio
+    // page. Lists saved before the mark are known by their name.
+    static const QRegularExpression radioName(QStringLiteral(R"(^Ghost Engine Radio #\d+$)"));
+    if (all[index].radio || radioName.match(all[index].name).hasMatch()) {
+        const QStringList first = coverIds(all[index], 1);
+        const QColor found = first.isEmpty() ? QColor()
+                                             : tiles::coverColor(m_covers.get(first.first(), ThumbnailCache::Size::Card));
+        const QColor base = found.isValid() ? found : theme::accent();
+        RadioCover &drawn = m_radioCovers[all[index].path];
+        if (drawn.picture.isNull() || drawn.colour != base) {
+            drawn.picture = tiles::radioCover(640, base);
+            drawn.colour = base;
+        }
+        return {drawn.picture};
+    }
     for (const QString &id : coverIds(all[index], 4))
         covers << m_covers.get(id, ThumbnailCache::Size::Card);
     return covers;
@@ -7010,7 +7025,11 @@ void MainWindow::playFound(const QVector<ytmusic::Item> &items, const QString &n
 
 void MainWindow::saveFound(const QString &name, const QVector<ytmusic::Item> &items)
 {
-    const QString path = m_library.createPlaylist(name, QString());
+    // A radio kept from a search is marked so: it wears the radio page's
+    // ghost cover (drawn, not a picture file) until Change cover... gives it
+    // one, and keeps it renamed (Batın, 2026-11-11).
+    const bool radio = name.startsWith(QStringLiteral("Ghost Engine Radio #"));
+    const QString path = m_library.createPlaylist(name, QString(), radio);
     if (path.isEmpty()) {
         QMessageBox::warning(this, "Save to library", "The playlist couldn't be made.");
         return;
@@ -7021,15 +7040,6 @@ void MainWindow::saveFound(const QString &name, const QVector<ytmusic::Item> &it
     if (!Playlist::append(path, entries)) {
         QMessageBox::warning(this, "Save to library", "The playlist file couldn't be written.");
         return;
-    }
-    // A radio kept from a search wears the radio page's ghost cover, as its
-    // own picture; Change cover... still replaces it (Batın, 2026-11-11).
-    if (name.startsWith(QStringLiteral("Ghost Engine Radio #")) && !items.isEmpty()) {
-        const QColor colour = tiles::coverColor(m_covers.get(items.first().id, ThumbnailCache::Size::Card));
-        const QString target = customCoverPath(path);
-        QDir().mkpath(QFileInfo(target).absolutePath());
-        tiles::radioCover(640, colour.isValid() ? colour : theme::accent()).save(target, "JPG", 92);
-        m_customCovers.remove(target);
     }
     toast(QStringLiteral("Saved to your library: %1").arg(name));
     m_searchPage->markSaved();
