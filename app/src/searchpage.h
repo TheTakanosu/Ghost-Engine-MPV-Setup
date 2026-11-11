@@ -2,6 +2,8 @@
 
 #include "ytmusic.h"
 
+#include <QColor>
+#include <QPixmap>
 #include <QSet>
 #include <QWidget>
 
@@ -93,6 +95,7 @@ public:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     QListWidget *makeList(bool scrolls);
@@ -169,7 +172,15 @@ private:
 
     // The playlist view.
     QLabel *m_listKicker = nullptr;
-    QWidget *m_listCover = nullptr;   // a radio's ghost cover
+    class PlaylistHeader *m_listHeader = nullptr;   // as the library's list pages have
+    class QHBoxLayout *m_listHeadRow = nullptr;
+    QString m_listName;
+    bool m_listIsRadio = false;       // the ghost cover, not the songs'
+    QPixmap m_radioCover;
+    QColor m_radioColour;
+    QVector<QPixmap> listCovers();
+    void setListTitle(const QString &title);
+    void foldListHeader();
     QLabel *m_listTitle = nullptr;
     QLabel *m_listInfo = nullptr;
     QListWidget *m_listSongs = nullptr;

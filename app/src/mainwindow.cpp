@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "island.h"
+#include "listheader.h"
 #include "searchpopup.h"
 
 #include "covercrop.h"
@@ -98,13 +99,11 @@ constexpr int kMinutesPerSong = 3;  // for the "hours of music" estimate
 constexpr const char *kBotInvite =
     "https://discord.com/oauth2/authorize?client_id=1530546215303909518&permissions=117760&scope=bot";
 constexpr int kTopBar = 50;         // height of the draggable strip: 8 px under the search box
-constexpr int kHeaderTall = 264;    // playlist header, scrolled to the top
-constexpr int kHeaderShort = 92;    // ... and once the songs are scrolled
 constexpr int kCompactWidth = 84;   // the library panel, covers only
 // These at the zoom: at 100% they held the zoomed title and cover, and at
 // 160% the header's text ran up over its top and the covers out of the panel.
-int headerTall() { return qRound(kHeaderTall * theme::zoom()); }
-int headerShort() { return qRound(kHeaderShort * theme::zoom()); }
+int headerTall() { return listheader::tall(); }
+int headerShort() { return listheader::folded(); }
 int compactWidth() { return qRound(kCompactWidth * theme::zoom()); }
 constexpr int kCompactBelow = 150;  // narrower than this, the panel goes compact
 
@@ -284,69 +283,6 @@ protected:
                 onDrop(moving, targetKey, position);
         });
     }
-};
-
-// The top of a playlist page: its collage, and behind it a wash of the
-// covers' own colour fading into the page, the way Spotify tints a playlist.
-class PlaylistHeader : public QWidget {
-public:
-    using Source = std::function<QVector<QPixmap>()>;
-    explicit PlaylistHeader(Source source) : m_source(std::move(source)) {}
-    void setName(const QString &name) { m_name = name; update(); }
-    // A colour the user chose for this list; invalid follows the cover.
-    void setTint(const QColor &tint) { m_tint = tint; update(); }
-    // The cover fills the header's height less its margins, so shrinking the
-    // header on scroll shrinks the cover with it.
-    QRect coverRect() const
-    {
-        const int margin = height() > 160 * theme::zoom() ? 28 : 14;
-        const int side = height() - 2 * margin;
-        return {margin + 4, margin, side, side};
-    }
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-        const QVector<QPixmap> covers = m_source();
-        QColor tint = theme::placeholderFor(m_name);
-        if (m_tint.isValid()) {
-            tint = m_tint;
-        } else if (!covers.isEmpty() && !covers.first().isNull()) {
-            // The first cover's average colour, kept dark enough for white
-            // text on top.
-            const QColor avg = covers.first().toImage()
-                .scaled(1, 1, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).pixelColor(0, 0);
-            tint = QColor::fromHsv(avg.hsvHue(), qMin(avg.hsvSaturation(), 150), qBound(70, avg.value(), 120));
-        }
-        // On a light theme the title is dark, so the wash is a pale tint of
-        // the same colour instead.
-        if (theme::c().light)
-            tint = QColor::fromHsv(tint.hsvHue(), qMin(tint.hsvSaturation(), 70), 232);
-        QColor clear = theme::window();
-        clear.setAlpha(0);
-        QLinearGradient wash(0, 0, 0, height());
-        wash.setColorAt(0, tint);
-        wash.setColorAt(1, clear);
-        QPainterPath top;
-        top.addRoundedRect(QRectF(rect()).adjusted(0, 0, 0, 20), 12, 12);
-        p.fillPath(top, wash);
-        // A soft shadow under the cover lifts it off the wash.
-        const QRect c = coverRect();
-        for (int i = 1; i <= 6; ++i) {
-            QPainterPath shadow;
-            const qreal round = tiles::playlistRadius(QRectF(c), 10) + i;
-            shadow.addRoundedRect(QRectF(c).adjusted(-i, -i + 4, i, i + 4), round, round);
-            p.fillPath(shadow, QColor(0, 0, 0, 14));
-        }
-        tiles::paintCollage(p, c, covers, m_name, 10);
-    }
-
-private:
-    Source m_source;
-    QString m_name;
-    QColor m_tint;
 };
 
 MainWindow::MainWindow()
@@ -2475,10 +2411,7 @@ QWidget *MainWindow::buildPlaylistPage()
 
 int MainWindow::headerTallNow() const
 {
-    // Zoomed in a short window the header took most of the page and the
-    // songs had no room under it: at most half the page's height.
-    const int page = m_pages ? m_pages->height() : 0;
-    return qMin(headerTall(), qMax(headerShort() + 60, page / 2));
+    return listheader::tallFor(m_pages ? m_pages->height() : 0);
 }
 
 void MainWindow::foldHeader()
@@ -2486,8 +2419,7 @@ void MainWindow::foldHeader()
     QScrollBar *bar = m_songs->verticalScrollBar();
     if (bar->isSliderDown())
         return;
-    const qreal t = qBound(0.0, bar->value() / 170.0, 1.0);
-    m_playlistCover->setFixedHeight(int(headerTallNow() - t * (headerTallNow() - headerShort())));
+    m_playlistCover->setFixedHeight(listheader::heightFor(listheader::foldFor(bar->value()), headerTallNow()));
     layoutHeader();
 }
 
@@ -2496,14 +2428,9 @@ void MainWindow::layoutHeader()
     if (!m_playlistCover || !m_headRow)
         return;   // a resize while the window is still being built
     auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
-    const QRect cover = header->coverRect();
-    const qreal z = theme::zoom();
-    const bool tall = header->height() > 160 * z;
-    m_headRow->setContentsMargins(cover.right() + (tall ? 26 : 16), cover.top(), 28, cover.top());
-    m_playlistKind->setVisible(tall);
-    m_playlistInfo->setVisible(header->height() > 120 * z);
+    listheader::arrange(header, m_headRow, m_playlistKind, m_playlistInfo);
     if (m_open >= 0)
-        m_sharedBy->setVisible(header->height() > 150 * z && !m_library.playlists()[m_open].shared.isEmpty());
+        m_sharedBy->setVisible(header->height() > 150 * theme::zoom() && !m_library.playlists()[m_open].shared.isEmpty());
     fitTitle();
     header->update();
 }
@@ -2517,20 +2444,13 @@ void MainWindow::fitTitle()
     const QString name = m_library.playlists()[m_open].name;
     const auto *header = static_cast<PlaylistHeader *>(m_playlistCover);
     const int available = header->width() - header->coverRect().right() - 60;
-    const qreal t = qBound(0.0, qreal(headerTallNow() - header->height()) / (headerTallNow() - headerShort()), 1.0);
-    qreal size = 40 - t * 20;
-    QFont font = m_playlistName->font();
-    font.setWeight(QFont::ExtraBold);
-    for (; size > 18; size -= 1) {
-        font.setPointSizeF(size);
-        if (QFontMetrics(font).horizontalAdvance(name) <= available)
-            break;
-    }
-    font.setPointSizeF(size);
+    QString shown;
+    const qreal size = listheader::titlePoints(m_playlistName->font(), name, available,
+                                               listheader::foldOf(header, headerTallNow()), &shown);
     m_titlePt = size;
     const bool renaming = m_nameEdit && m_nameEdit->isVisible();
     m_playlistName->setStyleSheet(titleSheet(size, renaming));
-    m_playlistName->setText(QFontMetrics(font).elidedText(name, Qt::ElideRight, qMax(40, available)));
+    m_playlistName->setText(shown);
     if (renaming) {
         // Narrowed or widened with the panels, as the songs below are.
         m_nameEdit->setStyleSheet(QStringLiteral("font-size: %1pt;").arg(size));

@@ -3,6 +3,7 @@
 #include "channelheader.h"
 
 #include "icons.h"
+#include "listheader.h"
 #include "profile.h"
 #include "theme.h"
 #include "thumbnails.h"
@@ -73,42 +74,6 @@ QString coverKey(const ytmusic::Item &item)
 {
     return item.kind == ytmusic::Kind::Playlist ? item.thumbnail : item.id;
 }
-
-// The radio's square cover beside its title: the ghost, washed in the
-// first song's cover colour (the accent until that cover is here).
-class RadioCoverView : public QWidget {
-public:
-    explicit RadioCoverView(std::function<QPixmap()> firstCover) : m_firstCover(std::move(firstCover)) {}
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-        const QColor colour = tiles::coverColor(m_firstCover());
-        const int side = qRound(qMin(width(), height()) * devicePixelRatioF());
-        if (m_drawn.isNull() || m_drawnColour != colour || m_drawn.width() != side) {
-            m_drawn = tiles::radioCover(side, colour.isValid() ? colour : theme::accent());
-            m_drawn.setDevicePixelRatio(devicePixelRatioF());
-            m_drawnColour = colour;
-        }
-        const qreal s = qMin(width(), height());
-        // A soft shadow under it, as a playlist page's cover has.
-        const QRectF cover(4, 0, s - 8, s - 8);
-        for (int i = 1; i <= 4; ++i) {
-            QPainterPath shadow;
-            const qreal round = tiles::playlistRadius(cover, 10) + i;
-            shadow.addRoundedRect(cover.adjusted(-i, -i + 4, i, i + 4), round, round);
-            p.fillPath(shadow, QColor(0, 0, 0, 16));
-        }
-        tiles::paintCollage(p, cover, {m_drawn}, QString(), 10);
-    }
-
-private:
-    std::function<QPixmap()> m_firstCover;
-    QPixmap m_drawn;
-    QColor m_drawnColour;
-};
 
 } // namespace
 
@@ -255,41 +220,38 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     }
 
     // -- A playlist -------------------------------------------------------------
+    // Laid out as the library's list pages are: the same header, folding into
+    // a slim bar as the songs scroll, the same columns over the songs.
     auto *listPage = new QWidget;
     auto *listColumn = new QVBoxLayout(listPage);
-    listColumn->setContentsMargins(28, 16, 28, 12);
-    listColumn->setSpacing(10);
+    listColumn->setContentsMargins(0, 0, 0, 6);
+    listColumn->setSpacing(8);
     auto *back = linkButton(QStringLiteral("‹  Back to results"));
     connect(back, &QPushButton::clicked, this, &SearchPage::backToResults);
     auto *backRow = new QHBoxLayout;
+    backRow->setContentsMargins(28, 10, 28, 0);
     backRow->addWidget(back);
     backRow->addStretch();
     listColumn->addLayout(backRow);
+    m_listHeader = new PlaylistHeader([this] { return listCovers(); });
+    m_listHeader->setFixedHeight(listheader::tall());
     auto *kicker = m_listKicker = new QLabel("PLAYLIST ON YOUTUBE MUSIC");
     kicker->setObjectName("kicker");
     m_listTitle = new QLabel;
-    m_listTitle->setObjectName("pageTitle");
-    m_listTitle->setWordWrap(true);
+    m_listTitle->setObjectName("bigTitle");
+    m_listTitle->setMinimumWidth(10);
+    m_listTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_listInfo = new QLabel;
     m_listInfo->setObjectName("heroInfo");
-    m_listCover = new RadioCoverView([this] {
-        const QString id = m_list.songs.isEmpty() ? QString() : m_list.songs.first().id;
-        return id.isEmpty() ? QPixmap() : m_covers.get(id, ThumbnailCache::Size::Card);
-    });
-    m_listCover->setFixedSize(qRound(148 * theme::zoom()), qRound(148 * theme::zoom()));
-    m_listCover->hide();   // a radio's only; a YouTube playlist has none of its own
-    auto *heading = new QHBoxLayout;
-    heading->setSpacing(22);
-    heading->addWidget(m_listCover, 0, Qt::AlignVCenter);
     auto *headingText = new QVBoxLayout;
-    headingText->setSpacing(10);
+    headingText->setSpacing(4);
     headingText->addStretch();
     headingText->addWidget(kicker);
     headingText->addWidget(m_listTitle);
     headingText->addWidget(m_listInfo);
-    headingText->addStretch();
-    heading->addLayout(headingText, 1);
-    listColumn->addLayout(heading);
+    m_listHeadRow = new QHBoxLayout(m_listHeader);
+    m_listHeadRow->addLayout(headingText, 1);
+    listColumn->addWidget(m_listHeader);
 
     auto *play = new icons::IconButton(icons::Icon::Play, 52, "Play");
     play->setRound(theme::accent(), theme::accentText(), theme::c().onAccent);
@@ -300,6 +262,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_saveButton->setCursor(Qt::PointingHandCursor);
     m_saveButton->setToolTip("Adds this playlist to your library as a .m3u, to play any time");
     auto *actions = new QHBoxLayout;
+    actions->setContentsMargins(28, 4, 28, 4);
     actions->setSpacing(18);
     actions->addWidget(play);
     actions->addWidget(shuffle);
@@ -321,7 +284,16 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     });
 
     m_listSongs = makeList(true);
-    listColumn->addWidget(m_listSongs, 1);
+    auto *songsBox = new QVBoxLayout;
+    songsBox->setContentsMargins(20, 0, 16, 0);
+    songsBox->setSpacing(4);
+    songsBox->addWidget(listheader::plainColumns());
+    songsBox->addWidget(m_listSongs, 1);
+    listColumn->addLayout(songsBox, 1);
+    // Not while the bar's handle is held (as on the library's pages): the
+    // list's height follows the header's, and the handle jumped rows.
+    connect(m_listSongs->verticalScrollBar(), &QScrollBar::valueChanged, this, &SearchPage::foldListHeader);
+    connect(m_listSongs->verticalScrollBar(), &QScrollBar::sliderReleased, this, &SearchPage::foldListHeader);
     connect(m_listSongs, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
         if (onPlay)
             onPlay(m_list.songs, m_list.title, item->data(tiles::kEntryRole).toInt(), false, true);
@@ -1070,9 +1042,8 @@ void SearchPage::showLocalList(const QString &title, const QString &info, const 
     m_list.songs = songs;
     m_list.ok = true;
     m_listKicker->setText("RADIO");
-    m_listCover->show();
-    m_listCover->update();
-    m_listTitle->setText(title);
+    m_listIsRadio = true;
+    setListTitle(title);
     m_listInfo->setText(info);
     fill(m_listSongs, songs, songs.size());
     m_saveButton->setText("Save to library");
@@ -1139,8 +1110,8 @@ void SearchPage::openPlaylist(const QString &id, const QString &title)
     m_list = {};
     m_list.id = id;
     m_listKicker->setText("PLAYLIST ON YOUTUBE MUSIC");
-    m_listCover->hide();
-    m_listTitle->setText(title.isEmpty() ? QStringLiteral("Loading...") : title);
+    m_listIsRadio = false;
+    setListTitle(title.isEmpty() ? QStringLiteral("Loading...") : title);
     m_listInfo->setText("Loading the songs...");
     m_listSongs->clear();
     m_saveButton->setText("Save to library");
@@ -1154,7 +1125,7 @@ void SearchPage::openPlaylist(const QString &id, const QString &title)
         if (page.title.isEmpty())
             page.title = title.isEmpty() ? QStringLiteral("YouTube playlist") : title;
         m_list = page;
-        m_listTitle->setText(page.title);
+        setListTitle(page.title);
         if (!page.ok) {
             m_listInfo->setText("This playlist couldn't be read. It may be private, or a mix made for one viewer.");
             return;
@@ -1244,8 +1215,8 @@ void SearchPage::refreshCovers(const QString &)
     for (QListWidget *list : {m_songsList, m_videosList, m_playlistsList, m_youtubeList, m_listSongs, m_homeGrid})
         if (list->isVisible())
             list->viewport()->update();
-    if (m_listCover->isVisible())
-        m_listCover->update();
+    if (m_listHeader->isVisible())
+        m_listHeader->update();
 }
 
 void SearchPage::noteView(const QString &key, std::function<void()> go)
@@ -1266,4 +1237,63 @@ void SearchPage::refreshFollow()
 {
     if (m_channelHeader && !m_homeChannelId.isEmpty())
         m_channelHeader->setFollowed(isFollowed && isFollowed(m_homeChannelId));
+}
+
+QVector<QPixmap> SearchPage::listCovers()
+{
+    // A radio: the ghost, washed in its first song's cover colour (the
+    // accent until that cover is here). A playlist: its first covers.
+    QVector<QPixmap> covers;
+    if (m_listIsRadio) {
+        const QString id = m_list.songs.isEmpty() ? QString() : m_list.songs.first().id;
+        const QColor colour = tiles::coverColor(id.isEmpty() ? QPixmap() : m_covers.get(id, ThumbnailCache::Size::Card));
+        const QColor base = colour.isValid() ? colour : theme::accent();
+        if (m_radioCover.isNull() || m_radioColour != base) {
+            m_radioCover = tiles::radioCover(512, base);
+            m_radioColour = base;
+        }
+        covers << m_radioCover;
+        return covers;
+    }
+    for (const ytmusic::Item &song : m_list.songs) {
+        const QPixmap cover = m_covers.get(song.id, ThumbnailCache::Size::Card);
+        if (!cover.isNull())
+            covers << cover;
+        if (covers.size() == 4)
+            break;
+    }
+    return covers;
+}
+
+void SearchPage::setListTitle(const QString &title)
+{
+    m_listName = title;
+    m_listHeader->setName(title);
+    m_listSongs->verticalScrollBar()->setValue(0);
+    foldListHeader();
+}
+
+void SearchPage::foldListHeader()
+{
+    if (!m_listHeader || !m_listSongs)
+        return;
+    QScrollBar *bar = m_listSongs->verticalScrollBar();
+    if (bar->isSliderDown())
+        return;
+    const int tallNow = listheader::tallFor(height());
+    m_listHeader->setFixedHeight(listheader::heightFor(listheader::foldFor(bar->value()), tallNow));
+    listheader::arrange(m_listHeader, m_listHeadRow, m_listKicker, m_listInfo);
+    const int available = m_listHeader->width() - m_listHeader->coverRect().right() - 60;
+    QString shown;
+    const qreal size = listheader::titlePoints(m_listTitle->font(), m_listName, available,
+                                               listheader::foldOf(m_listHeader, tallNow), &shown);
+    m_listTitle->setStyleSheet(QStringLiteral("QLabel { font-size: %1pt; }").arg(size));
+    m_listTitle->setText(shown);
+    m_listHeader->update();
+}
+
+void SearchPage::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    foldListHeader();
 }
