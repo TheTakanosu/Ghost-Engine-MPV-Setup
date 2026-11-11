@@ -3138,7 +3138,19 @@ void MainWindow::openPlayingList()
         showVideoPage();
         return;
     }
-    const QString playing = playingListPath();
+    QString playing = playingListPath();
+    int at = -1;
+    if (playing.isEmpty() && !m_mpv.connected()) {
+        // Just started: the bar shows the song kept from the last run, and
+        // mpv is not there to say its list until play (2026-11-11).
+        QSettings settings;
+        playing = settings.value("resume/list").toString();
+        if (!playing.isEmpty() && QFileInfo::exists(playing))
+            playing = QFileInfo(playing).absoluteFilePath();
+        else
+            playing.clear();
+        at = settings.value("resume/pos", -1).toInt();
+    }
     const auto &all = m_library.playlists();
     for (int i = 0; i < all.size(); ++i) {
         if (QFileInfo(all[i].path).absoluteFilePath().compare(playing, Qt::CaseInsensitive) != 0)
@@ -3155,7 +3167,7 @@ void MainWindow::openPlayingList()
     // (Batın, 2026-11-09).
     if (!playing.isEmpty() &&
         QDir::cleanPath(QFileInfo(playing).absolutePath()).compare(foundFolder(), Qt::CaseInsensitive) == 0)
-        showRadioList(playing);
+        showRadioList(playing, at);
 }
 
 QString MainWindow::playingTarget() const
@@ -3242,7 +3254,7 @@ void MainWindow::toggleLiked(const QString &given, const QString &title)
     m_nowPlaying->refreshLike();
 }
 
-void MainWindow::showRadioList(const QString &path)
+void MainWindow::showRadioList(const QString &path, int at)
 {
     const Playlist list = Playlist::peek(path);
     const QVector<PlaylistEntry> entries = list.readEntries();
@@ -3269,7 +3281,8 @@ void MainWindow::showRadioList(const QString &path)
             n = qMax(n, m.captured(1).toInt() + 1);
     }
     const QString title = list.name.isEmpty() ? QStringLiteral("Radio") : list.name;
-    const int at = m_mpv.property("playlist-pos").toInt();
+    if (at < 0)
+        at = m_mpv.property("playlist-pos").toInt();
     if (m_pages->currentWidget() != m_searchPage) {
         QWidget *now = m_pages->currentWidget();
         m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;

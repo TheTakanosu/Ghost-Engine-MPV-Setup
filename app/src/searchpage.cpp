@@ -453,9 +453,10 @@ QListWidget *SearchPage::makeList(bool scrolls)
         list->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         // The wheel goes to the page: a list left a few pixels of its own
         // to scroll took the wheel first, and the page stopped, then jumped.
-        list->viewport()->installEventFilter(this);
         list->setProperty("pageScrolls", true);
     }
+    // The wheel (above) and the play mark in the number column (eventFilter).
+    list->viewport()->installEventFilter(this);
     list->setItemDelegate(new tiles::SongDelegate([this](const QModelIndex &index) {
         return m_covers.get(index.data(Qt::UserRole).toString(), ThumbnailCache::Size::Card);
     }, list));
@@ -1040,8 +1041,13 @@ void SearchPage::moreYouTube()
 
 void SearchPage::playRadio(const ytmusic::Item &song)
 {
-    if (song.id.isEmpty() || !onPlay)
+    if (!onPlay)
         return;
+    if (song.id.isEmpty()) {
+        if (onToast)
+            onToast(QStringLiteral("Couldn't play %1: YouTube Music gave no id for it.").arg(song.title));
+        return;
+    }
     if (onToast)
         onToast(QStringLiteral("Starting %1 radio...").arg(song.title));
     m_client.radio(song.id, [this, song](QVector<ytmusic::Item> items) {
@@ -1174,6 +1180,23 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
             const ytmusic::Item it = m_home.value(item->data(tiles::kEntryRole).toInt());
             if (circle.adjusted(-4, -4, 4, 4).contains(at) && !it.channelId.isEmpty()) {
                 showChannel(it.channelId, it.artist);
+                return true;
+            }
+        }
+    }
+    // The play mark drawn in a row's number column under the mouse plays
+    // that row with one click, as a double-click does; it was only a picture
+    // here, unlike in the library's lists (2026-11-11).
+    if (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::MouseButtonDblClick) {
+        auto *list = watched->parent() ? qobject_cast<QListWidget *>(watched->parent()) : nullptr;
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        if (list && list != m_homeGrid && list != m_playlistsList && list->viewport() == watched &&
+            mouse->button() == Qt::LeftButton && !(mouse->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
+            QListWidgetItem *item = list->itemAt(mouse->position().toPoint());
+            if (item && mouse->position().x() - list->visualItemRect(item).left() < 44) {
+                // A double-click there plays once: on the first release.
+                if (event->type() == QEvent::MouseButtonRelease)
+                    emit list->itemDoubleClicked(item);
                 return true;
             }
         }
