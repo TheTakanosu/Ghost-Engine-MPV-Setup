@@ -2739,6 +2739,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             }
         }
     }
+    // The picture and the controls over it are windows that take no focus
+    // (WindowDoesNotAcceptFocus), so a click on the video coming from
+    // another app left that app in front: the keys pressed next (I, F,
+    // Space) went to it, not here (2026-11-11). The app comes forward.
+    if (event->type() == QEvent::MouseButtonPress && watched->isWidgetType()) {
+        QWidget *top = static_cast<QWidget *>(watched)->window();
+        if ((top == m_videoPage->corners() || top == m_videoPage->controls()) && !isActiveWindow()) {
+            const HWND hwnd = reinterpret_cast<HWND>(winId());
+            SetForegroundWindow(hwnd);
+            activateWindow();
+        }
+    }
     // The mouse's side buttons, when one is given something to do.
     if (event->type() == QEvent::MouseButtonPress && !shortcuts::capturing()) {
         const QString action = shortcuts::actionFor(shortcuts::keyOfMouse(static_cast<QMouseEvent *>(event)->button()));
@@ -5957,6 +5969,11 @@ void MainWindow::showVideoPage()
     m_miniClosed = false;
     m_pictureAway = false;
     m_miniAsked = false;
+    // A key here is a shortcut (I, F, Space), not a letter for the search
+    // box the video was found with, which kept the focus.
+    if (QWidget *focus = QApplication::focusWidget();
+        focus && (qobject_cast<QLineEdit *>(focus) || qobject_cast<QTextEdit *>(focus)) && focus->window() == this)
+        focus->clearFocus();
     if (m_pages->currentWidget() != m_videoPage) {
         m_beforeVideo = m_pages->currentWidget();
         m_videoPage->ignorePictureClicks();
