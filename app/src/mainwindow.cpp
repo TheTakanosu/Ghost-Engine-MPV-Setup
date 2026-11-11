@@ -1237,6 +1237,8 @@ MainWindow::MainWindow()
         m_queueIds.clear();
         m_knownIds.clear();
         m_queuePending.clear();
+        m_autoplayTitles.clear();
+        m_autoplayFor.clear();
         m_mpvEmbedded = m_launching.isValid() && m_launchEmbedded;
         m_keepAspect = -1;
         sendWindowChoice();
@@ -7262,6 +7264,12 @@ void MainWindow::syncQueue()
         // A new entry with a target the queue just loaded is the queue's.
         if (!m_knownIds.contains(id) && m_queuePending.removeOne(entry.value("filename").toString()))
             m_queueIds.insert(id);
+    }
+    // A new list replaced the old one (no entry left from it): what
+    // Autoplay put in went with it, and must not label the new list's songs.
+    if (!m_knownIds.isEmpty() && !m_knownIds.intersects(ids)) {
+        m_autoplayTitles.clear();
+        m_autoplayFor.clear();
     }
     m_knownIds = ids;
     m_queueIds.intersect(ids);   // a new list replaced them
