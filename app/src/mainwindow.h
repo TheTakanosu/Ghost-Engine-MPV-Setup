@@ -265,6 +265,7 @@ private:
     // Autoplay: at a song list's last song, with repeat off, its radio is
     // put after it (Settings > Playback > Autoplay).
     void maybeAutoplay();
+    void applyNormalize();   // Settings > Playback > Normalize volume, into mpv's audio filters
     QString m_autoplayFor;                   // the song whose radio was asked for
     QHash<QString, QString> m_autoplayTitles;
     static QString foundFolder();

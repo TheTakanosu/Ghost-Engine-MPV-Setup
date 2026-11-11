@@ -65,6 +65,7 @@ public:
     std::function<void()> onRegionChanged;
     std::function<void(bool on)> onHistoryChanged;
     std::function<void()> onResumeChanged;
+    std::function<void(bool)> onNormalizeChanged;
     std::function<void()> onClearHistory;
     // Rich Presence on Discord, for songs and for videos apart.
     std::function<void(bool songs, bool videos)> onPresenceChanged;
@@ -119,6 +120,7 @@ private:
     ToggleSwitch *m_history;
     ToggleSwitch *m_resume;
     ToggleSwitch *m_autoplay;
+    ToggleSwitch *m_normalize;
     ToggleSwitch *m_startup;
     ToggleSwitch *m_searchMiddle;
     ToggleSwitch *m_presenceVideos;

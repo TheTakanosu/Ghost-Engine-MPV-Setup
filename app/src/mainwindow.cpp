@@ -739,6 +739,7 @@ MainWindow::MainWindow()
         m_ytClient.setRegion(ytmusic::searchRegion());
     };
     m_settings->onResumeChanged = [this] { showResume(); };
+    m_settings->onNormalizeChanged = [this](bool) { applyNormalize(); };
     m_settings->onHistoryChanged = [this](bool on) {
         m_stats.setKeepHistory(on);
         refreshProfile();
@@ -982,6 +983,7 @@ MainWindow::MainWindow()
     connect(m_pages, &QStackedWidget::currentChanged, this, &MainWindow::schedulePlace);
     connect(m_pages, &QStackedWidget::currentChanged, this, &MainWindow::updatePanelVisibility);
     connect(&m_mpv, &MpvClient::connectionChanged, this, [this] { m_panelSoon.start(); });
+    connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) { if (on) applyNormalize(); });
 
     QSettings settings;
     restoreGeometry(settings.value("window/geometry").toByteArray());
@@ -7254,6 +7256,22 @@ void MainWindow::maybeAutoplay()
         if (added > 0)
             toast(QStringLiteral("Autoplay: songs like this one come next"));
     });
+}
+
+void MainWindow::applyNormalize()
+{
+    if (!m_mpv.connected())
+        return;
+    // ffmpeg's dynaudnorm, set slow: 500 ms frames and a 31-frame window
+    // move the gain over about 15 seconds, so a song's own build-ups and
+    // quiet parts stay and nothing pumps; it aims peaks at 0.9 (headroom,
+    // no clipping) and lifts at most 4x (+12 dB), so a hushed intro or a
+    // noisy live take is not blown up. No compression (s=0). Measured on
+    // mpv 0.41: it adds no start-up delay. Off by default: to be judged by
+    // ear (2026-11-11).
+    m_mpv.command({"af", "remove", "@ghostnorm"});
+    if (QSettings().value("playback/normalize", false).toBool())
+        m_mpv.command({"af", "add", "@ghostnorm:lavfi=[dynaudnorm=f=500:g=31:p=0.9:m=4]"});
 }
 
 // -- back and forward ---------------------------------------------------------
