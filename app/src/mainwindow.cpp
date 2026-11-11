@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "equalizer.h"
 #include "island.h"
 #include "listheader.h"
 #include "searchpopup.h"
@@ -683,6 +684,7 @@ MainWindow::MainWindow()
     };
     m_settings->onResumeChanged = [this] { showResume(); };
     m_settings->onNormalizeChanged = [this](bool) { applyNormalize(); };
+    m_settings->onEqualizerChanged = [this](int band) { applyEqualizer(band); };
     m_settings->onHistoryChanged = [this](bool on) {
         m_stats.setKeepHistory(on);
         refreshProfile();
@@ -957,7 +959,12 @@ MainWindow::MainWindow()
     connect(m_pages, &QStackedWidget::currentChanged, this, &MainWindow::schedulePlace);
     connect(m_pages, &QStackedWidget::currentChanged, this, &MainWindow::updatePanelVisibility);
     connect(&m_mpv, &MpvClient::connectionChanged, this, [this] { m_panelSoon.start(); });
-    connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) { if (on) applyNormalize(); });
+    connect(&m_mpv, &MpvClient::connectionChanged, this, [this](bool on) {
+        if (on) {
+            applyNormalize();
+            applyEqualizer(-1);
+        }
+    });
 
     QSettings settings;
     restoreGeometry(settings.value("window/geometry").toByteArray());
@@ -7885,4 +7892,31 @@ void MainWindow::sleepMenu(const QPoint &global)
         });
     }
     menu.exec(global);
+}
+
+void MainWindow::applyEqualizer(int band)
+{
+    if (!m_mpv.connected())
+        return;
+    // Measured on mpv 0.41 with a tone playing (2026-11-12): adding,
+    // rebuilding and removing the filter moved the playback clock no more
+    // than doing nothing did (+-40 ms of polling), and af-command changes a
+    // band in place, so a slider is followed as it moves.
+    const QVector<int> gains = equalizer::gains();
+    if (!equalizer::enabled()) {
+        m_mpv.command({"af", "remove", "@ghosteq"});
+        return;
+    }
+    if (band >= 0 && band < equalizer::kBands) {
+        m_mpv.command({"af-command", "ghosteq", "g", QString::number(gains[band]), QStringLiteral("equalizer@b%1").arg(band)});
+        int most = 0;
+        for (int g : gains)
+            most = qMax(most, g);
+        m_mpv.command({"af-command", "ghosteq", "volume", QStringLiteral("%1dB").arg(-most), "volume@pre"});
+        return;
+    }
+    // First in the chain, so Normalize (added at its end) evens out what
+    // the equalizer made.
+    m_mpv.command({"af", "remove", "@ghosteq"});
+    m_mpv.command({"af", "pre", QStringLiteral("@ghosteq:") + equalizer::filter(gains)});
 }

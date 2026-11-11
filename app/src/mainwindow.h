@@ -96,6 +96,9 @@ private:
     bool m_sleepAtSongEnd = false;
     QString m_sleepSong;          // the song playing when "end of song" was picked
     void sleepMenu(const QPoint &global);
+    // The equalizer's filter (@ghosteq), before Normalize's; band >= 0 moves
+    // one band live (af-command), -1 builds it again.
+    void applyEqualizer(int band);
     bool m_private = false;
     std::function<void()> m_applyPresence;
     void setPrivateSession(bool on);

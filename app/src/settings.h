@@ -66,6 +66,9 @@ public:
     std::function<void(bool on)> onHistoryChanged;
     std::function<void()> onResumeChanged;
     std::function<void(bool)> onNormalizeChanged;
+    // The equalizer: one band's gain moved (its index), or -1 for the
+    // whole of it (turned on or off, a preset).
+    std::function<void(int band)> onEqualizerChanged;
     std::function<void()> onClearHistory;
     // Private session: on until it is turned off or the app closes.
     std::function<void(bool on)> onPrivateChanged;
@@ -125,6 +128,11 @@ private:
     ToggleSwitch *m_resume;
     ToggleSwitch *m_autoplay;
     ToggleSwitch *m_normalize;
+    ToggleSwitch *m_eqOn = nullptr;
+    QWidget *m_eqPanel = nullptr;
+    QComboBox *m_eqPreset = nullptr;
+    QVector<QSlider *> m_eqSliders;
+    void showEqualizer();
     ToggleSwitch *m_startup;
     ToggleSwitch *m_searchMiddle;
     ToggleSwitch *m_presenceVideos;

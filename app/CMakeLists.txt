@@ -32,6 +32,7 @@ qt_add_executable(GhostEngine WIN32
     src/ytmusic.h src/ytmusic.cpp
     src/searchpage.h src/searchpage.cpp
     src/listheader.h src/listheader.cpp
+    src/equalizer.h src/equalizer.cpp
     src/channelheader.h src/channelheader.cpp
     src/searchpopup.cpp
     src/elidedlabel.h

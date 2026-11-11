@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include "equalizer.h"
 #include "icons.h"
 #include "theme.h"
 #include "ytmusic.h"
@@ -725,6 +726,87 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
             onNormalizeChanged(on);
     });
 
+    // A ten-band equalizer, as Spotify's: on and off, presets, and a
+    // slider a band, applied while it plays.
+    m_eqOn = new ToggleSwitch;
+    addRow(playback, "Equalizer", "Bass, mids and treble, ten bands from 31 Hz to 16 kHz. Changes are heard at once.", m_eqOn);
+    m_eqPanel = new QWidget;
+    auto *eqColumn = new QVBoxLayout(m_eqPanel);
+    eqColumn->setContentsMargins(0, 0, 0, 0);
+    eqColumn->setSpacing(10);
+    auto *presetRow = new QHBoxLayout;
+    auto *presetLabel = new QLabel("Preset");
+    presetLabel->setObjectName("statLabel");
+    m_eqPreset = new QComboBox;
+    for (const equalizer::Preset &preset : equalizer::presets())
+        m_eqPreset->addItem(preset.name);
+    m_eqPreset->addItem("Custom");
+    presetRow->addWidget(presetLabel);
+    presetRow->addWidget(m_eqPreset);
+    presetRow->addStretch();
+    eqColumn->addLayout(presetRow);
+    auto *bands = new QHBoxLayout;
+    bands->setSpacing(6);
+    for (int i = 0; i < equalizer::kBands; ++i) {
+        auto *slider = new QSlider(Qt::Vertical);
+        slider->setRange(-equalizer::kMaxGain, equalizer::kMaxGain);
+        slider->setPageStep(3);
+        slider->setFixedHeight(qRound(130 * theme::zoom()));
+        slider->setToolTip(QStringLiteral("%1 Hz").arg(equalizer::frequencies()[i]));
+        auto *name = new QLabel(equalizer::bandName(i));
+        name->setObjectName("statLabel");
+        name->setAlignment(Qt::AlignCenter);
+        auto *value = new QLabel("0");
+        value->setObjectName("statLabel");
+        value->setAlignment(Qt::AlignCenter);
+        auto *band = new QVBoxLayout;
+        band->setSpacing(4);
+        band->addWidget(value, 0, Qt::AlignHCenter);
+        band->addWidget(slider, 0, Qt::AlignHCenter);
+        band->addWidget(name, 0, Qt::AlignHCenter);
+        bands->addLayout(band, 1);
+        m_eqSliders << slider;
+        connect(slider, &QSlider::valueChanged, this, [this, i, value](int g) {
+            value->setText(g > 0 ? QStringLiteral("+%1").arg(g) : QString::number(g));
+            if (m_loading)
+                return;
+            QVector<int> gains;
+            for (QSlider *s : m_eqSliders)
+                gains << s->value();
+            equalizer::setGains(gains);
+            const QString preset = equalizer::presetFor(gains);
+            m_eqPreset->blockSignals(true);
+            m_eqPreset->setCurrentText(preset.isEmpty() ? QStringLiteral("Custom") : preset);
+            m_eqPreset->blockSignals(false);
+            if (onEqualizerChanged)
+                onEqualizerChanged(i);
+        });
+    }
+    eqColumn->addLayout(bands);
+    auto *dbNote = new QLabel(QStringLiteral("±%1 dB").arg(equalizer::kMaxGain));
+    dbNote->setObjectName("statLabel");
+    eqColumn->addWidget(dbNote);
+    playback->addWidget(m_eqPanel);
+    connect(m_eqOn, &QAbstractButton::toggled, this, [this](bool on) {
+        m_eqPanel->setVisible(on);
+        if (m_loading)
+            return;
+        equalizer::setEnabled(on);
+        if (onEqualizerChanged)
+            onEqualizerChanged(-1);
+    });
+    connect(m_eqPreset, &QComboBox::currentTextChanged, this, [this](const QString &name) {
+        if (m_loading)
+            return;
+        for (const equalizer::Preset &preset : equalizer::presets())
+            if (preset.name == name) {
+                equalizer::setGains(preset.gains);
+                showEqualizer();
+                if (onEqualizerChanged)
+                    onEqualizerChanged(-1);
+            }
+    });
+
     // Windows' own list of what opens at sign-in, so the setting is
     // whatever that list says (Task Manager's Startup apps can turn it off
     // too).
@@ -1328,6 +1410,9 @@ void SettingsPage::load()
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
     m_autoplay->setChecked(settings.value("playback/autoplay", true).toBool());
     m_normalize->setChecked(settings.value("playback/normalize", true).toBool());
+    m_eqOn->setChecked(equalizer::enabled());
+    m_eqPanel->setVisible(equalizer::enabled());
+    showEqualizer();
     m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
     m_miniOnLeave->setChecked(QSettings().value("video/miniOnLeave", false).toBool());
     m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));
@@ -1431,5 +1516,18 @@ void SettingsPage::setPrivate(bool on)
     const bool was = m_loading;
     m_loading = true;
     m_private->setChecked(on);
+    m_loading = was;
+}
+
+void SettingsPage::showEqualizer()
+{
+    // The sliders and the preset as kept, without telling anyone.
+    const bool was = m_loading;
+    m_loading = true;
+    const QVector<int> gains = equalizer::gains();
+    for (int i = 0; i < m_eqSliders.size(); ++i)
+        m_eqSliders[i]->setValue(gains.value(i));
+    const QString preset = equalizer::presetFor(gains);
+    m_eqPreset->setCurrentText(preset.isEmpty() ? QStringLiteral("Custom") : preset);
     m_loading = was;
 }
