@@ -367,12 +367,20 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     };
     homeColumn->addWidget(m_channelHeader);
     // Scrolled down, the header folds to one row.
-    connect(m_homeGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
+    // Not while the bar's handle is held: the grid grew as the header
+    // folded, the range under the mouse shrank, and the handle jumped ten
+    // rows at once (Lytra's page, 2026-11-11). It folds once let go.
+    const auto foldChannel = [this] {
+        QScrollBar *bar = m_homeGrid->verticalScrollBar();
+        const int value = bar->value();
         // Folded past the first row, open again only at the top: the grid
         // growing as it folds does not flip it back.
-        if (m_channelHeader->isVisible() && (value > 40 || value == 0) && m_channelHeader->folded() != (value > 40))
+        if (!bar->isSliderDown() && m_channelHeader->isVisible() && (value > 40 || value == 0) &&
+            m_channelHeader->folded() != (value > 40))
             m_channelHeader->setFolded(value > 40, true);
-    });
+    };
+    connect(m_homeGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, foldChannel);
+    connect(m_homeGrid->verticalScrollBar(), &QScrollBar::sliderReleased, this, foldChannel);
     m_homeGrid->installEventFilter(this);
     m_homeGrid->viewport()->installEventFilter(this);
     homeColumn->addWidget(m_homeGrid, 1);
@@ -982,9 +990,13 @@ void SearchPage::fitHomeGrid()
         chip->setVisible(!full);
         used += w + 8;
     }
-    if (m_homeGrid->gridSize() != m_homeCards->cardSize())
+    // Laid out again only when the cards' size changed: the channel header
+    // folding changes the grid's height every frame of its animation, and a
+    // layout of every card each frame made the scrolling stutter.
+    if (m_homeGrid->gridSize() != m_homeCards->cardSize()) {
         m_homeGrid->setGridSize(m_homeCards->cardSize());
-    m_homeGrid->doItemsLayout();
+        m_homeGrid->doItemsLayout();
+    }
 }
 
 void SearchPage::moreYouTube()
