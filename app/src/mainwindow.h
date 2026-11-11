@@ -376,6 +376,7 @@ private:
     class QPushButton *m_profileButton = nullptr;
     QTimer m_profileSoon;
     QTimer m_resumeSave;
+    QTimer m_markSoon;   // the rows' playing mark once mpv's values have settled
     void refreshProfile();
     // "Pick up where you left off": where mpv is, kept every few seconds and
     // on quitting, then shown in the bar while nothing plays.

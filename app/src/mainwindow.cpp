@@ -722,6 +722,9 @@ MainWindow::MainWindow()
 
     m_nowPlaying = new NowPlayingBar(&m_mpv, &m_covers);
     m_nowPlaying->onResume = [this] { resume(); };
+    m_markSoon.setSingleShot(true);
+    m_markSoon.setInterval(250);
+    connect(&m_markSoon, &QTimer::timeout, this, &MainWindow::markPlaying);
     m_resumeSave.setInterval(10000);
     connect(&m_resumeSave, &QTimer::timeout, this, &MainWindow::saveResume);
     m_resumeSave.start();
@@ -1055,6 +1058,12 @@ MainWindow::MainWindow()
             QTimer::singleShot(500, repaint);
         if (name == "playlist-pos" || name == "playlist-path" || name == "path")
             markPlaying();
+        // mpv sends a new song's place, path and list one by one; marked
+        // between them, a queued song's row stayed lit after the list came
+        // back (seen with a list page open, right after reopening). Once
+        // they have all come, the marks are made again.
+        if (name == "playlist-pos" || name == "playlist-path" || name == "path" || name == "playlist")
+            m_markSoon.start();
         if (name == "playlist" || name == "playlist-pos")
             syncQueue();
         if (name == "playlist-pos" || name == "playlist-count" || name == "loop-playlist" || name == "loop-file")
