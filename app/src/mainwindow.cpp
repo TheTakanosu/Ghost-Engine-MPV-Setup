@@ -3226,6 +3226,7 @@ QString MainWindow::likedPath(bool make)
     path = m_library.createPlaylist(QStringLiteral("Liked songs"), QString());
     if (!path.isEmpty())
         settings.setValue("liked/path", path);
+    m_likedKnown = false;   // its cover follows
     return path;
 }
 
@@ -5799,8 +5800,13 @@ QVector<QPixmap> MainWindow::coversFor(int index)
         return {*cached};
     // Liked songs has a cover of its own, not its first song's, until one is
     // chosen for it (Batın, 2026-11-11).
-    const QString liked = QSettings().value("liked/path").toString();
-    if (!liked.isEmpty() && QFileInfo(liked) == QFileInfo(all[index].path)) {
+    // Painted for every row on every repaint: the path is read once, and
+    // compared as text (QFileInfo's == asks the disk).
+    if (!m_likedKnown) {
+        m_likedFile = QDir::cleanPath(QSettings().value("liked/path").toString());
+        m_likedKnown = true;
+    }
+    if (!m_likedFile.isEmpty() && m_likedFile.compare(QDir::cleanPath(all[index].path), Qt::CaseInsensitive) == 0) {
         const QColor accent = theme::accent();
         if (m_likedCover.isNull() || m_likedAccent != accent) {
             m_likedCover = tiles::likedCover(640, accent);
