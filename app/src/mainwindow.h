@@ -251,6 +251,17 @@ private:
     bool likedHas(const QString &target);
     void likeMenu(const QString &target, const QString &title, const QPoint &global);
     void copyLink(const QString &id, bool song);
+    // Add to queue / Play next: the songs go into mpv's list right after
+    // the one playing (Play next before the queue, Add to queue after it),
+    // and leave it once played, so the list's own order and the playing
+    // row's mark (matched by path) stay as they were.
+    void queueSongs(const QVector<PlaylistEntry> &songs, bool next);
+    void syncQueue();
+    bool playingQueued() const;
+    QSet<qint64> m_queueIds;            // mpv playlist entry ids put in by the queue
+    QSet<qint64> m_knownIds;            // every id of mpv's list at the last look
+    QStringList m_queuePending;         // targets loaded, ids not seen yet
+    QHash<QString, QString> m_queueTitles;   // target -> "Artist - Title", for Next in queue
     static QString foundFolder();
 
     Library m_library;

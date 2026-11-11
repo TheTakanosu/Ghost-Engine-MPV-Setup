@@ -1052,6 +1052,8 @@ MainWindow::MainWindow()
             QTimer::singleShot(500, repaint);
         if (name == "playlist-pos" || name == "playlist-path" || name == "path")
             markPlaying();
+        if (name == "playlist" || name == "playlist-pos")
+            syncQueue();
         if (name == "playlist-count" || name == "playlist-path" || name == "path")
             applyPendingOrder();
         // A song's lyrics are looked up once its length is known, which
@@ -2380,6 +2382,20 @@ QWidget *MainWindow::buildPlaylistPage()
                 });
             if (!id.isEmpty())
                 menu.addAction(audio ? "Copy song link" : "Copy video link", this, [this, id, audio] { copyLink(id, audio); });
+        }
+        if (listIsAudio(m_library.playlists().value(m_open).path)) {
+            // In the order the page shows them, not the order they were picked.
+            QVector<PlaylistEntry> picked;
+            for (int r = 0; r < m_songs->count(); ++r) {
+                QListWidgetItem *row = m_songs->item(r);
+                if (!row->isSelected())
+                    continue;
+                const QString artist = row->data(tiles::kArtistRole).toString();
+                picked << PlaylistEntry{artist.isEmpty() ? row->text() : artist + QStringLiteral(" - ") + row->text(),
+                                        row->data(Qt::UserRole).toString(), {}};
+            }
+            menu.addAction("Add to queue", this, [this, picked] { queueSongs(picked, false); });
+            menu.addAction("Play next", this, [this, picked] { queueSongs(picked, true); });
         }
         QMenu *to = menu.addMenu(count > 1 ? QStringLiteral("Add %1 songs to playlist").arg(count) : QStringLiteral("Add to playlist"));
         to->addAction("New playlist...", this, [this] { newPlaylist(QString(), true); });
@@ -3861,6 +3877,10 @@ void MainWindow::saveResume()
     QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
     if (id.isEmpty())
         id = idForTarget(path);
+    // A queued song is not in the list's file: what to come back to stays
+    // the list's own song before it.
+    if (playingQueued())
+        return;
     QSettings settings;
     settings.setValue("resume/list", list);
     settings.setValue("resume/pos", m_mpv.property("playlist-pos").toInt());
@@ -6518,7 +6538,10 @@ void MainWindow::refreshPanel()
     if (pos >= 0 && pos + 1 < entries.size()) {
         const QVariantMap next = entries[pos + 1].toMap();
         const QString target = next.value("filename").toString();
-        auto [nextTrack, nextArtist] = splitTitle(next.value("title").toString());
+        QString nextTitle = next.value("title").toString();
+        if (nextTitle.isEmpty())
+            nextTitle = m_queueTitles.value(target);   // put in by Add to queue
+        auto [nextTrack, nextArtist] = splitTitle(nextTitle);
         if (nextTrack.isEmpty())
             nextTrack = target;
         m_panel->setNext(nextTrack, nextArtist, m_covers.get(idForTarget(target), ThumbnailCache::Size::Card));
@@ -6976,6 +6999,13 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
                    [this, items, videos] { playFound(items, items.size() > 1 ? QStringLiteral("Search: %1").arg(m_searchPage->query()) : items.first().title, 0, false, !videos); });
     if (items.size() == 1 && !videos)
         menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
+    if (!videos) {
+        QVector<PlaylistEntry> picked;
+        for (const ytmusic::Item &it : items)
+            picked << PlaylistEntry{it.lineTitle(), it.target(), {}};
+        menu.addAction("Add to queue", this, [this, picked] { queueSongs(picked, false); });
+        menu.addAction("Play next", this, [this, picked] { queueSongs(picked, true); });
+    }
     if (items.size() == 1 && !items.first().id.isEmpty() && items.first().kind != ytmusic::Kind::Playlist) {
         const QString id = items.first().id;
         menu.addAction(videos ? "Copy video link" : "Copy song link", this, [this, id, videos] { copyLink(id, !videos); });
@@ -7102,6 +7132,80 @@ void MainWindow::copyLink(const QString &id, bool song)
     QGuiApplication::clipboard()->setText(song ? QStringLiteral("https://music.youtube.com/watch?v=") + id
                                                : QStringLiteral("https://www.youtube.com/watch?v=") + id);
     toast(song ? QStringLiteral("Song link copied") : QStringLiteral("Video link copied"));
+}
+
+namespace {
+// An mpv option value that may hold commas: "%<bytes>%<text>".
+QString mpvQuoted(const QString &text)
+{
+    return QLatin1Char('%') + QString::number(text.toUtf8().size()) + QLatin1Char('%') + text;
+}
+} // namespace
+
+void MainWindow::queueSongs(const QVector<PlaylistEntry> &songs, bool next)
+{
+    if (songs.isEmpty())
+        return;
+    if (!m_mpv.connected() || m_mpv.property("playlist-pos").toInt() < 0) {
+        toast("Play something first, then add to the queue.");
+        return;
+    }
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    const int pos = m_mpv.property("playlist-pos").toInt();
+    int at = pos + 1;
+    // Add to queue goes after what is queued already; Play next before it.
+    if (!next)
+        while (at < entries.size() && m_queueIds.contains(entries[at].toMap().value("id").toLongLong()))
+            ++at;
+    for (const PlaylistEntry &e : songs) {
+        QVariantList command{"loadfile", e.target, "insert-at", at++};
+        if (!e.title.isEmpty())
+            command << QStringLiteral("force-media-title=") + mpvQuoted(e.title);
+        m_mpv.command(command);
+        m_queuePending << e.target;
+        m_queueTitles.insert(e.target, e.title);
+    }
+    if (next)
+        toast(songs.size() == 1 ? QStringLiteral("Plays next") : QStringLiteral("%1 songs play next").arg(songs.size()));
+    else
+        toast(songs.size() == 1 ? QStringLiteral("Added to queue") : QStringLiteral("%1 songs added to queue").arg(songs.size()));
+}
+
+void MainWindow::syncQueue()
+{
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    const int pos = m_mpv.property("playlist-pos").toInt();
+    QSet<qint64> ids;
+    for (const QVariant &v : entries) {
+        const QVariantMap entry = v.toMap();
+        const qint64 id = entry.value("id").toLongLong();
+        ids.insert(id);
+        // A new entry with a target the queue just loaded is the queue's.
+        if (!m_knownIds.contains(id) && m_queuePending.removeOne(entry.value("filename").toString()))
+            m_queueIds.insert(id);
+    }
+    m_knownIds = ids;
+    m_queueIds.intersect(ids);   // a new list replaced them
+    if (m_queueIds.isEmpty()) {
+        if (m_queuePending.isEmpty())
+            m_queueTitles.clear();
+        return;
+    }
+    // Played: out of the list, from the end so the places hold.
+    for (int i = qMin(pos, int(entries.size())) - 1; i >= 0; --i) {
+        const qint64 id = entries[i].toMap().value("id").toLongLong();
+        if (m_queueIds.contains(id)) {
+            m_queueIds.remove(id);
+            m_mpv.command({"playlist-remove", i});
+        }
+    }
+}
+
+bool MainWindow::playingQueued() const
+{
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    const int pos = m_mpv.property("playlist-pos").toInt();
+    return pos >= 0 && pos < entries.size() && m_queueIds.contains(entries[pos].toMap().value("id").toLongLong());
 }
 
 // -- back and forward ---------------------------------------------------------
