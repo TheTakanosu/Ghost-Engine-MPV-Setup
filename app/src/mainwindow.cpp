@@ -1054,6 +1054,8 @@ MainWindow::MainWindow()
             markPlaying();
         if (name == "playlist" || name == "playlist-pos")
             syncQueue();
+        if (name == "playlist-pos" || name == "playlist-count" || name == "loop-playlist" || name == "loop-file")
+            maybeAutoplay();
         if (name == "playlist-count" || name == "playlist-path" || name == "path")
             applyPendingOrder();
         // A song's lyrics are looked up once its length is known, which
@@ -6540,7 +6542,7 @@ void MainWindow::refreshPanel()
         const QString target = next.value("filename").toString();
         QString nextTitle = next.value("title").toString();
         if (nextTitle.isEmpty())
-            nextTitle = m_queueTitles.value(target);   // put in by Add to queue
+            nextTitle = m_queueTitles.value(target, m_autoplayTitles.value(target));   // queue, Autoplay
         auto [nextTrack, nextArtist] = splitTitle(nextTitle);
         if (nextTrack.isEmpty())
             nextTrack = target;
@@ -7206,6 +7208,52 @@ bool MainWindow::playingQueued() const
     const QVariantList entries = m_mpv.property("playlist").toList();
     const int pos = m_mpv.property("playlist-pos").toInt();
     return pos >= 0 && pos < entries.size() && m_queueIds.contains(entries[pos].toMap().value("id").toLongLong());
+}
+
+void MainWindow::maybeAutoplay()
+{
+    if (!m_mpv.connected() || !QSettings().value("playback/autoplay", true).toBool() ||
+        !m_mpv.property("user-data/ghost/audio").toBool())
+        return;
+    const auto looping = [](const QVariant &v) {
+        return v.isValid() && v.toString() != QLatin1String("no") && v.toString() != QLatin1String("false");
+    };
+    if (looping(m_mpv.property("loop-playlist")) || looping(m_mpv.property("loop-file")))
+        return;   // repeat on: the list itself comes again
+    const int pos = m_mpv.property("playlist-pos").toInt();
+    const int count = m_mpv.property("playlist-count").toInt();
+    if (count <= 0 || pos != count - 1)
+        return;
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    const QString target = entries.value(pos).toMap().value("filename").toString();
+    QString id = youtube::videoId(target);
+    if (id.isEmpty())
+        id = idForTarget(target);
+    if (id.isEmpty() || id == m_autoplayFor)
+        return;
+    m_autoplayFor = id;
+    m_ytClient.radio(id, [this, id](QVector<ytmusic::Item> items) {
+        // Only while that song is still the last one playing.
+        const QVariantList now = m_mpv.property("playlist").toList();
+        const int at = m_mpv.property("playlist-pos").toInt();
+        if (m_autoplayFor != id || at != now.size() - 1 || items.isEmpty())
+            return;
+        QSet<QString> have;
+        for (const QVariant &v : now)
+            have.insert(youtube::videoId(v.toMap().value("filename").toString()));
+        int added = 0;
+        for (const ytmusic::Item &it : items) {
+            if (it.id.isEmpty() || it.id == id || have.contains(it.id) || added >= 25)
+                continue;
+            have.insert(it.id);
+            const QString title = it.lineTitle();
+            m_mpv.command({"loadfile", it.target(), "append", -1, QStringLiteral("force-media-title=") + mpvQuoted(title)});
+            m_autoplayTitles.insert(it.target(), title);
+            ++added;
+        }
+        if (added > 0)
+            toast(QStringLiteral("Autoplay: songs like this one come next"));
+    });
 }
 
 // -- back and forward ---------------------------------------------------------

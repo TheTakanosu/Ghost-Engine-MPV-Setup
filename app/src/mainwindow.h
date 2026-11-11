@@ -262,6 +262,11 @@ private:
     QSet<qint64> m_knownIds;            // every id of mpv's list at the last look
     QStringList m_queuePending;         // targets loaded, ids not seen yet
     QHash<QString, QString> m_queueTitles;   // target -> "Artist - Title", for Next in queue
+    // Autoplay: at a song list's last song, with repeat off, its radio is
+    // put after it (Settings > Playback > Autoplay).
+    void maybeAutoplay();
+    QString m_autoplayFor;                   // the song whose radio was asked for
+    QHash<QString, QString> m_autoplayTitles;
     static QString foundFolder();
 
     Library m_library;

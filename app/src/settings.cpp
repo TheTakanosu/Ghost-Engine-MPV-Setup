@@ -704,6 +704,16 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
             onResumeChanged();
     });
 
+    // When a list ends, songs like its last one (Spotify's Autoplay).
+    m_autoplay = new ToggleSwitch;
+    addRow(playback, "Autoplay",
+           "When a song list ends and repeat is off, songs like its last one play on, from YouTube Music's radio.",
+           m_autoplay);
+    connect(m_autoplay, &QAbstractButton::toggled, this, [this](bool on) {
+        if (!m_loading)
+            QSettings().setValue("playback/autoplay", on);
+    });
+
     // Windows' own list of what opens at sign-in, so the setting is
     // whatever that list says (Task Manager's Startup apps can turn it off
     // too).
@@ -1297,6 +1307,7 @@ void SettingsPage::load()
     m_presenceSongs->setChecked(settings.value("presence/songs", true).toBool());
     m_history->setChecked(settings.value("history/keep", true).toBool());
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
+    m_autoplay->setChecked(settings.value("playback/autoplay", true).toBool());
     m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
     m_miniOnLeave->setChecked(QSettings().value("video/miniOnLeave", false).toBool());
     m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));

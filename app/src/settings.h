@@ -118,6 +118,7 @@ private:
     ToggleSwitch *m_presenceSongs;
     ToggleSwitch *m_history;
     ToggleSwitch *m_resume;
+    ToggleSwitch *m_autoplay;
     ToggleSwitch *m_startup;
     ToggleSwitch *m_searchMiddle;
     ToggleSwitch *m_presenceVideos;
