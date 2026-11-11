@@ -1319,7 +1319,7 @@ void SettingsPage::load()
     m_history->setChecked(settings.value("history/keep", true).toBool());
     m_resume->setChecked(settings.value("playback/resume", true).toBool());
     m_autoplay->setChecked(settings.value("playback/autoplay", true).toBool());
-    m_normalize->setChecked(settings.value("playback/normalize", false).toBool());
+    m_normalize->setChecked(settings.value("playback/normalize", true).toBool());
     m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
     m_miniOnLeave->setChecked(QSettings().value("video/miniOnLeave", false).toBool());
     m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));

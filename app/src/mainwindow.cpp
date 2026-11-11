@@ -7338,10 +7338,11 @@ void MainWindow::applyNormalize()
     // quiet parts stay and nothing pumps; it aims peaks at 0.9 (headroom,
     // no clipping) and lifts at most 4x (+12 dB), so a hushed intro or a
     // noisy live take is not blown up. No compression (s=0). Measured on
-    // mpv 0.41: it adds no start-up delay. Off by default: to be judged by
-    // ear (2026-11-11).
+    // mpv 0.41: it adds no start-up delay. On by default since Batın heard
+    // it (2026-11-11): the difference is clear and it stops the loud jumps.
+    // Turned off, it stays off (the setting is kept).
     m_mpv.command({"af", "remove", "@ghostnorm"});
-    if (QSettings().value("playback/normalize", false).toBool())
+    if (QSettings().value("playback/normalize", true).toBool())
         m_mpv.command({"af", "add", "@ghostnorm:lavfi=[dynaudnorm=f=500:g=31:p=0.9:m=4]"});
 }
 
