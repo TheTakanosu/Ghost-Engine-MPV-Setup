@@ -250,6 +250,7 @@ private:
     void fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip = QString());
     bool likedHas(const QString &target);
     void likeMenu(const QString &target, const QString &title, const QPoint &global);
+    void copyLink(const QString &id, bool song);
     static QString foundFolder();
 
     Library m_library;

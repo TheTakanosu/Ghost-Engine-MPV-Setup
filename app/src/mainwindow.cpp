@@ -2366,6 +2366,20 @@ QWidget *MainWindow::buildPlaylistPage()
             const QString title = item->text();
             const QString artist = item->data(tiles::kArtistRole).toString();
             menu.addAction("About this song", this, [this, target, title, artist] { showSongInfo(target, title, artist); });
+            // As Spotify's: the song's radio, and a link to send (2026-11-11).
+            const QString id = idForTarget(target);
+            const bool audio = listIsAudio(m_library.playlists().value(m_open).path);
+            if (!id.isEmpty() && audio)
+                menu.addAction("Go to song radio", this, [this, id, title, artist] {
+                    ytmusic::Item song;
+                    song.kind = ytmusic::Kind::Song;
+                    song.id = id;
+                    song.title = title;
+                    song.artist = artist;
+                    m_searchPage->playRadio(song);
+                });
+            if (!id.isEmpty())
+                menu.addAction(audio ? "Copy song link" : "Copy video link", this, [this, id, audio] { copyLink(id, audio); });
         }
         QMenu *to = menu.addMenu(count > 1 ? QStringLiteral("Add %1 songs to playlist").arg(count) : QStringLiteral("Add to playlist"));
         to->addAction("New playlist...", this, [this] { newPlaylist(QString(), true); });
@@ -6962,6 +6976,10 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
                    [this, items, videos] { playFound(items, items.size() > 1 ? QStringLiteral("Search: %1").arg(m_searchPage->query()) : items.first().title, 0, false, !videos); });
     if (items.size() == 1 && !videos)
         menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
+    if (items.size() == 1 && !items.first().id.isEmpty() && items.first().kind != ytmusic::Kind::Playlist) {
+        const QString id = items.first().id;
+        menu.addAction(videos ? "Copy video link" : "Copy song link", this, [this, id, videos] { copyLink(id, !videos); });
+    }
     if (videos) {
         bool allKept = true;
         QSet<QString> kept;
@@ -7076,6 +7094,14 @@ void MainWindow::likeMenu(const QString &target, const QString &title, const QPo
     to->addSection(QStringLiteral("Add to playlist"));
     fillAddTo(to, {PlaylistEntry{title, target, {}}}, likedPath(false));
     menu.exec(global);
+}
+
+// A song's link on YouTube Music, a video's on YouTube, on the clipboard.
+void MainWindow::copyLink(const QString &id, bool song)
+{
+    QGuiApplication::clipboard()->setText(song ? QStringLiteral("https://music.youtube.com/watch?v=") + id
+                                               : QStringLiteral("https://www.youtube.com/watch?v=") + id);
+    toast(song ? QStringLiteral("Song link copied") : QStringLiteral("Video link copied"));
 }
 
 // -- back and forward ---------------------------------------------------------
