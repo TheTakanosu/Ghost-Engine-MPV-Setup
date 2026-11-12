@@ -108,7 +108,8 @@ private:
     void editDescription(int index);
     void showDescription();
     QWidget *m_recBox = nullptr;
-    QWidget *m_recCard = nullptr;   // its own card under the page, in the middle column
+    QWidget *m_recCard = nullptr;   // a sheet rising from the page's bottom
+    QWidget *m_recShade = nullptr;  // its shadow over the songs
     QWidget *m_listPage = nullptr;
     void updateRecCard();
     QListWidget *m_recList = nullptr;

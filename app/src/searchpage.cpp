@@ -453,7 +453,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     auto *homePage = new QWidget;
     auto *homeColumn = new QVBoxLayout(homePage);
     homeColumn->setContentsMargins(20, 16, 12, 0);
-    homeColumn->setSpacing(8);   // as the gaps between the cards (a channel's header is one)
+    homeColumn->setSpacing(10);
     m_homeChips = new QWidget;
     m_homeChips->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);   // the chips that do not fit hide
     auto *homeChipRow = new QHBoxLayout(m_homeChips);

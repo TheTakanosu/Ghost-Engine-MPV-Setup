@@ -446,7 +446,7 @@ void apply(QApplication &app)
     QString css = fill(QStringLiteral(R"(
         QWidget#central { background: @base; }
         QWidget#topBar { background: @base; }
-        QWidget#libraryPanel, QWidget#panel, QWidget#recCard { background: @window; border-radius: 12px; }
+        QWidget#libraryPanel, QWidget#panel { background: @window; border-radius: 12px; }
         QWidget#home, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }
         QPushButton#bigPlay {
             font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: @accent; border: none;

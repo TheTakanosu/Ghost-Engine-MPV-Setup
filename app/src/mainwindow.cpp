@@ -185,6 +185,38 @@ constexpr double kLiveGoTo = 12;
 // A followed channel's name, kept apart from the row's text (empty when folded).
 constexpr int kChannelNameRole = Qt::UserRole + 41;
 
+// Recommended under a list (Kaptan, 2026-11-12): a sheet rising from the
+// page's bottom, on the page itself with no gap, a step lighter than it, its
+// top corners round and a small grip on its top edge. Its bottom corners are
+// the page's own.
+class RecSheet : public QWidget {
+public:
+    using QWidget::QWidget;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        constexpr qreal r = 12;
+        p.fillPath(roundedAll(QRectF(rect()), r), theme::panelRaised());
+        QColor grip = theme::muted();
+        grip.setAlphaF(0.55);
+        const qreal w = 36 * theme::zoom(), h = 4;
+        QPainterPath bar;
+        bar.addRoundedRect(QRectF((width() - w) / 2, 7, w, h), h / 2, h / 2);
+        p.fillPath(bar, grip);
+    }
+
+private:
+    static QPainterPath roundedAll(const QRectF &box, qreal r)
+    {
+        QPainterPath path;
+        path.addRoundedRect(box, r, r);
+        return path;
+    }
+};
+
 // Wheel scrolling that glides instead of jumping three rows a notch: each
 // notch moves the target 110 px and the view eases to it, as Spotify's does.
 class SmoothScroll : public QObject {
@@ -562,22 +594,20 @@ MainWindow::MainWindow()
     theme::whenChanged(mainPanel, [this] { applyLayoutColors(); });
     auto *mainBox = new QVBoxLayout(mainPanel);
     mainBox->setContentsMargins(0, 0, 0, 0);
-    mainBox->addWidget(m_pages);
-    // The middle column: the page, and under a list's page its Recommended
-    // card, apart by the same gap as the panels beside them.
-    auto *middle = new QWidget;
-    auto *middleBox = new QVBoxLayout(middle);
-    middleBox->setContentsMargins(0, 0, 0, 0);
-    middleBox->setSpacing(8);
-    middleBox->addWidget(mainPanel, 1);
-    middleBox->addWidget(m_recCard);
+    mainBox->setSpacing(0);
+    mainBox->addWidget(m_pages, 1);
+    // Under a list's page, its Recommended sheet, on the page card itself;
+    // a soft shadow falls up from its top edge over the songs.
+    mainBox->addWidget(m_recCard);
+    m_recShade = new tiles::Shade(mainPanel, false);
+    m_recCard->installEventFilter(this);
     connect(m_pages, &QStackedWidget::currentChanged, this, [this] { updateRecCard(); });
 
     // The now playing view, Spotify's, at the right of the page: a panel of
     // its own, its width the user's.
     m_panel = new NowPlayingPanel;
     m_rightSplit = new QSplitter(Qt::Horizontal);
-    m_rightSplit->addWidget(middle);
+    m_rightSplit->addWidget(mainPanel);
     m_rightSplit->addWidget(m_panel);
     m_rightSplit->setStretchFactor(0, 1);
     m_rightSplit->setStretchFactor(1, 0);
@@ -2788,6 +2818,16 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_recCard && m_recShade &&
+        (event->type() == QEvent::Move || event->type() == QEvent::Resize || event->type() == QEvent::Show ||
+         event->type() == QEvent::Hide)) {
+        auto *shade = static_cast<tiles::Shade *>(m_recShade);
+        const bool shown = event->type() != QEvent::Hide && m_recCard->isVisibleTo(m_mainPanel);
+        shade->setGeometry(0, m_recCard->y() - tiles::Shade::depth(), m_mainPanel->width(), tiles::Shade::depth());
+        shade->setStrength(shown ? 1.0 : 0.0);
+        if (shown)
+            shade->raise();
+    }
     // A click on a place that takes no focus (the page's empty space, a
     // header, a label) leaves the box being typed in, as in a browser; before,
     // only Esc or Enter did (Batin, 2026-11-12). The boxes that edit
@@ -5093,7 +5133,7 @@ void MainWindow::applyLayoutColors()
     centralWidget()->setStyleSheet(QStringLiteral(
         "QWidget#central, QWidget#topBar, QWidget#nowPlaying { background: %1; }"
         "QSplitter::handle { background: transparent; }"
-        "QWidget#libraryPanel, QWidget#panel, QWidget#recCard { background: %2; border-radius: 12px; }")
+        "QWidget#libraryPanel, QWidget#panel { background: %2; border-radius: 12px; }")
                                        .arg(ground.name(), page.name()));
     if (menu) {
         menu->raisedLook = true;
@@ -5112,11 +5152,10 @@ void MainWindow::applyLayoutColors()
             add(m_ytSidebar, FloatingCard::kShadow - 2);
             add(m_libraryPanel);
             add(m_mainPanel);
-            add(m_recCard);
             add(m_panel);
             return out;
         };
-        for (QWidget *w : {static_cast<QWidget *>(m_mainPanel), m_ytSidebar, m_libraryPanel, static_cast<QWidget *>(m_panel), m_recCard})
+        for (QWidget *w : {static_cast<QWidget *>(m_mainPanel), m_ytSidebar, m_libraryPanel, static_cast<QWidget *>(m_panel)})
             if (w)
                 static_cast<ShadowLayer *>(layer)->follow(w);
         m_shadows = layer;
@@ -7793,15 +7832,14 @@ void MainWindow::updateHistoryButtons()
 
 QWidget *MainWindow::buildRecommended()
 {
-    // A card of its own under the page, apart from the list as the panels
-    // are from each other (Batin, 2026-11-12: the dark rule over it did not
-    // go with the themes).
-    m_recCard = new QWidget;
-    m_recCard->setObjectName("recCard");
-    m_recCard->setAttribute(Qt::WA_StyledBackground);
+    // A sheet rising from the page's bottom (see RecSheet): shut, only its
+    // header row shows; opened, it grows upward over the page's room
+    // (Batin, 2026-11-12: first a dark rule, then a card apart whose gap
+    // read as a black strip).
+    m_recCard = new RecSheet;
     m_recCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     auto *cardBox = new QVBoxLayout(m_recCard);
-    cardBox->setContentsMargins(20, 6, 16, 6);
+    cardBox->setContentsMargins(20, 16, 16, 6);
     m_recBox = new QWidget;
     cardBox->addWidget(m_recBox);
     auto *column = new QVBoxLayout(m_recBox);

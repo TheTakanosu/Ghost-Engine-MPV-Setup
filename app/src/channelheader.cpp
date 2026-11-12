@@ -2,6 +2,7 @@
 
 #include "profile.h"
 #include "theme.h"
+#include "tiles.h"
 
 #include <QDesktopServices>
 #include <QGraphicsOpacityEffect>
@@ -40,27 +41,6 @@ protected:
         const QSizeF fill = QSizeF(picture.size()).scaled(QSizeF(size()), Qt::KeepAspectRatioByExpanding);
         const QPointF at((width() - fill.width()) / 2, (height() - fill.height()) / 2);
         p.drawPixmap(QRectF(at, fill), picture, QRectF(picture.rect()));
-    }
-};
-
-// The ground between the header's card and the videos' (see placeGap).
-class CardGap : public QWidget {
-public:
-    using QWidget::QWidget;
-    static constexpr int kRound = 12;
-    int strip = 8;
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-        QPainterPath ground;
-        ground.addRect(QRectF(rect()));
-        QPainterPath above, below;
-        above.addRoundedRect(QRectF(0, -4 * kRound, width(), 5 * kRound), kRound, kRound);
-        below.addRoundedRect(QRectF(0, kRound + strip, width(), 5 * kRound), kRound, kRound);
-        p.fillPath(ground.subtracted(above).subtracted(below), theme::ground());
     }
 };
 
@@ -248,7 +228,7 @@ ChannelHeader::ChannelHeader(RemotePictures *pictures, QWidget *parent) : QWidge
         m_avatar->update();
         m_smallAvatar->update();
         if (m_gap)
-            m_gap->update();
+            m_gap->update();   // its shade follows the theme
     });
     connect(m_pictures, &RemotePictures::ready, this, [this](const QString &url) {
         if (url == m_bannerUrl || url == m_avatarUrl)
@@ -480,26 +460,23 @@ void ChannelHeader::hideEvent(QHideEvent *event)
 
 void ChannelHeader::placeGap()
 {
-    // Under the header the page parts as the cards beside it do: a strip of
-    // the window's ground, the header's bottom corners and the videos' top
-    // corners rounded off, so the header reads as a card of its own (as
-    // Recommended under a list, 2026-11-12). Laid over the page, across its
-    // whole width; the mouse goes through.
+    // The header is the page's own card; once videos pass under it, a soft
+    // shadow falls from its bottom edge over them, coming in over the first
+    // 40 px of scrolling (Batin and Kaptan, 2026-11-12: the strip of ground
+    // that parted it from the videos read as a black gap). Laid over the
+    // videos across the page's width, the mouse going through; it pushes
+    // nothing.
     QWidget *page = parentWidget();
     if (!page || !isVisible())
         return;
-    if (!m_gap) {
-        m_gap = new CardGap(page);
-        m_gap->setAttribute(Qt::WA_TransparentForMouseEvents);
-    }
-    const int top = geometry().bottom() + 1;
-    const int spacing = page->layout() ? qMax(0, page->layout()->spacing()) : 8;
-    auto *gap = static_cast<CardGap *>(m_gap);
-    gap->strip = spacing;
-    gap->setGeometry(0, top - CardGap::kRound, page->width(), spacing + 2 * CardGap::kRound);
-    gap->show();
-    gap->raise();
-    gap->update();
+    if (!m_gap)
+        m_gap = new tiles::Shade(page, true);
+    auto *shade = static_cast<tiles::Shade *>(m_gap);
+    // From where the videos are cut off: the header's bottom and the gap under it.
+    const int spacing = page->layout() ? qMax(0, page->layout()->spacing()) : 0;
+    shade->setGeometry(0, geometry().bottom() + 1 + spacing, page->width(), tiles::Shade::depth());
+    shade->setStrength(m_scrolled / 40.0);
+    shade->raise();
 }
 
 void ChannelHeader::wheelEvent(QWheelEvent *event)

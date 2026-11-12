@@ -376,6 +376,39 @@ void tiles::paintLikeMark(QPainter &painter, const QRectF &ring, bool liked, boo
     painter.restore();
 }
 
+tiles::Shade::Shade(QWidget *parent, bool down) : QWidget(parent), m_down(down)
+{
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setAttribute(Qt::WA_TranslucentBackground);
+    hide();
+}
+
+int tiles::Shade::depth()
+{
+    return qRound(12 * theme::zoom());
+}
+
+void tiles::Shade::setStrength(qreal strength)
+{
+    strength = qBound(0.0, strength, 1.0);
+    setVisible(strength > 0.005);
+    if (qFuzzyCompare(strength + 1, m_strength + 1))
+        return;
+    m_strength = strength;
+    update();
+}
+
+void tiles::Shade::paintEvent(QPaintEvent *)
+{
+    // Black on the dark themes, about 40% at the edge; on Light far softer.
+    QPainter p(this);
+    const qreal edge = (theme::c().light ? 0.14 : 0.40) * m_strength;
+    QLinearGradient fall(0, m_down ? 0 : height(), 0, m_down ? height() : 0);
+    fall.setColorAt(0, QColor(0, 0, 0, qRound(255 * edge)));
+    fall.setColorAt(1, QColor(0, 0, 0, 0));
+    p.fillRect(rect(), fall);
+}
+
 QRectF SongDelegate::likeRect(const QRect &rowRect)
 {
     const QRectF row = QRectF(rowRect).adjusted(0, 1, -4, -1);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QWidget>
+
 #include <QPixmap>
 #include <QStyledItemDelegate>
 #include <QVector>
@@ -14,6 +16,25 @@ namespace tiles {
 // font, whose + sat half a pixel off the ring's centre. `ring` should be
 // whole pixels and an odd size, so a 1.5 px stroke falls on the centre.
 void paintLikeMark(QPainter &painter, const QRectF &ring, bool liked, bool hover);
+
+// A soft shadow cast by an edge over what scrolls under it (2026-11-12): a
+// strip laid over the page, the mouse going through, dark at the edge and
+// clear at its far side. `down`: the edge is the strip's top (a header
+// above the videos); else its bottom (a panel rising from below).
+// `strength` 0..1 fades it in, as the content starts to pass under it.
+class Shade : public QWidget {
+public:
+    explicit Shade(QWidget *parent, bool down);
+    static int depth();   // the strip's height, at the zoom
+    void setStrength(qreal strength);
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+
+private:
+    bool m_down;
+    qreal m_strength = 0;
+};
 
 // The playlist's index in the library, kept on each tile.
 constexpr int kIndexRole = Qt::UserRole;

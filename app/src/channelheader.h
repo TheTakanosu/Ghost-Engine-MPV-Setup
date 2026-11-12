@@ -85,7 +85,7 @@ private:
     QPushButton *m_smallFollow = nullptr;
     class QGraphicsOpacityEffect *m_bodyFade = nullptr;
     class QGraphicsOpacityEffect *m_rowFade = nullptr;
-    QWidget *m_gap = nullptr;
+    QWidget *m_gap = nullptr;   // the shade under it, over the videos
     int m_scrolled = 0;
     bool m_inResize = false;
 };
