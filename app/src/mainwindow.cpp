@@ -177,6 +177,12 @@ std::pair<QString, QString> splitTitle(const QString &title)
 } // namespace
 
 
+// A live stream: "LIVE" this close to the end of its timeline, "Go live"
+// to this far from it, and the speed it catches up at (2026-11-12).
+constexpr double kLiveBehind = 25;
+constexpr double kLiveGoTo = 12;
+constexpr double kLiveCatchUp = 1.05;
+
 // A followed channel's name, kept apart from the row's text (empty when folded).
 constexpr int kChannelNameRole = Qt::UserRole + 41;
 
@@ -524,7 +530,10 @@ MainWindow::MainWindow()
     m_videoPage->onSkip = [this](double s) { m_mpv.command({"seek", s, "relative+exact"}); };
     m_videoPage->onScrub = [this](double s) { m_mpv.command({"seek", s, "absolute+keyframes"}); };
     m_videoPage->onSubtitle = [this](const QVariant &sid) { m_mpv.setProperty("sid", sid); };
-    m_videoPage->onSpeed = [this](double s) { m_mpv.setProperty("speed", s); };
+    m_videoPage->onSpeed = [this](double s) {
+        m_liveCatching = false;   // the viewer's speed from now on
+        m_mpv.setProperty("speed", s);
+    };
     m_videoPage->onQuality = [this](int height) {
         // The cap for this and the next videos, this one reopened at the
         // same second (quality.lua does the same when it steps down).
@@ -948,26 +957,52 @@ MainWindow::MainWindow()
         if (!m_videoChannelId.isEmpty() && url == m_channelAvatars.value(m_videoChannelId))
             showVideoChannel();
     });
+    // Live, measured in the app (2026-11-12): it plays steadily some 10-17 s
+    // from the end of the timeline (YouTube's segments are 5 s and come a few
+    // seconds after they are filmed), and right at the end it waits for each
+    // new one and falls back. So "LIVE" up to 25 s from the end, "Go live"
+    // takes it 12 s from the end, and while more than 9 s are buffered ahead
+    // it plays at 1.05x to creep closer, back to 1x under 3 s or 6 s behind.
     connect(&m_mpv, &MpvClient::propertyChanged, this, [this, showLive](const QString &name) {
         const bool live = m_mpv.property("user-data/ghost/live").toBool();
         if (name == "user-data/ghost/live") {
             m_liveBehind = false;
+            if (!live && m_liveCatching) {
+                m_liveCatching = false;
+                m_mpv.setProperty("speed", 1.0);
+            }
             showLive();
-        } else if (live && (name == "time-pos" || name == "duration" || name == "pause")) {
+        } else if (live && (name == "time-pos" || name == "duration" || name == "pause" ||
+                            name == "demuxer-cache-duration" || name == "paused-for-cache")) {
             const double at = m_mpv.property("time-pos").toDouble();
             const double end = m_mpv.property("duration").toDouble();
-            const bool behind = end > 0 && end - at > 12;
+            const double lag = end - at;
+            const bool behind = end > 0 && lag > kLiveBehind;
             if (behind != m_liveBehind) {
                 m_liveBehind = behind;
                 showLive();
+            }
+            // Catching up, only from 1x (a speed the viewer chose is theirs).
+            const double speed = m_mpv.property("speed").toDouble();
+            const double ahead = m_mpv.property("demuxer-cache-duration").toDouble();
+            const bool waiting = m_mpv.property("paused-for-cache").toBool() || m_mpv.property("pause").toBool();
+            if (!m_liveCatching && qFuzzyCompare(speed, 1.0) && end > 0 && !behind && !waiting && lag > 9 && ahead > 9) {
+                m_liveCatching = true;
+                m_mpv.setProperty("speed", kLiveCatchUp);
+            } else if (m_liveCatching && (behind || waiting || lag < 6 || ahead < 3)) {
+                m_liveCatching = false;
+                if (qAbs(speed - kLiveCatchUp) < 0.001)
+                    m_mpv.setProperty("speed", 1.0);
             }
         }
     });
     m_videoPage->onGoLive = [this, showLive] {
         const double end = m_mpv.property("duration").toDouble();
         m_mpv.setProperty("pause", false);
+        // Not the very end: there it waits for each new segment and falls
+        // back to where the next one is anyway (measured, 2026-11-12).
         if (end > 0)
-            m_mpv.command({"seek", qMax(0.0, end - 3), "absolute"});
+            m_mpv.command({"seek", qMax(0.0, end - kLiveGoTo), "absolute"});
         else
             m_mpv.command({"playlist-play-index", "current"});
         m_liveBehind = false;
@@ -1140,8 +1175,8 @@ MainWindow::MainWindow()
                                       m_mpv.property("duration").isValid() ? m_mpv.property("duration").toDouble() : -1);
             if (name == "track-list")
                 m_videoPage->setTracks(m_mpv.property("track-list").toList());
-            if (name == "speed")
-                m_videoPage->setSpeed(m_mpv.property("speed").toDouble());
+            if (name == "speed")   // catching up live is not a speed the viewer chose: 1x
+                m_videoPage->setSpeed(m_liveCatching ? 1.0 : m_mpv.property("speed").toDouble());
             if (name == "ytdl-format") {
                 static const QRegularExpression cap(QStringLiteral(R"(height<=(\d+))"));
                 m_videoPage->setQualityCap(cap.match(m_mpv.property("ytdl-format").toString()).captured(1).toInt());
