@@ -5311,6 +5311,25 @@ void MainWindow::openPlaylist(int index, bool keepView)
     const int scrolled = keepView ? m_songs->verticalScrollBar()->value() : 0;
     const QString searched = keepView ? m_songSearch->text() : QString();
     m_open = index;
+    // The library shows which list is open, however it was opened (a row,
+    // the island's or the bar's cover, the profile): Batin, 2026-11-12, the
+    // cover went to Liked songs and the row stayed on the list before.
+    {
+        QListWidgetItem *mark = nullptr;
+        for (int r = 0; r < m_libraryList->count() && !mark; ++r) {
+            QListWidgetItem *row = m_libraryList->item(r);
+            if (row->data(tiles::kFolderRole).toString().isEmpty() && row->data(tiles::kIndexRole).toInt() == index &&
+                row->data(tiles::kIndexRole).isValid())
+                mark = row;
+        }
+        if (mark) {
+            if (m_libraryList->currentItem() != mark)
+                m_libraryList->setCurrentItem(mark);
+        } else {
+            m_libraryList->clearSelection();
+            m_libraryList->setCurrentItem(nullptr);
+        }
+    }
     const Playlist &p = all[index];
     m_playlistKind->setText(p.audio ? "PLAYLIST  ·  SONGS" : "PLAYLIST  ·  VIDEOS");
     m_playlistInfo->setText(subtitleFor(p) + QStringLiteral("  ·  added ") +
