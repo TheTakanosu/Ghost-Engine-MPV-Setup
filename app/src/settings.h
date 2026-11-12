@@ -62,6 +62,8 @@ public:
     // Told when a setting the rest of the app shows changes.
     std::function<void()> onLookChanged;
     std::function<void(bool middle)> onSearchPlaceChanged;
+    std::function<void()> onUsageChanged;    // look/usage: both, music, youtube
+    std::function<void()> onIslandChanged;   // look/island
     std::function<void()> onRegionChanged;
     std::function<void(bool on)> onHistoryChanged;
     std::function<void()> onResumeChanged;
@@ -135,6 +137,8 @@ private:
     void showEqualizer();
     ToggleSwitch *m_startup;
     ToggleSwitch *m_searchMiddle;
+    QComboBox *m_usage = nullptr;
+    ToggleSwitch *m_island = nullptr;
     ToggleSwitch *m_presenceVideos;
     QLabel *m_confPath;
     QComboBox *m_offlineQuality;

@@ -52,6 +52,7 @@ private:
     bool m_wantOpen = false;
     QTimer *m_hover;
     QString m_title, m_channel, m_videoId;
+    bool m_audio = false;   // a song, not a video
     icons::IconButton *m_play;
     QPushButton *m_openButton;
     QPushButton *m_miniButton;

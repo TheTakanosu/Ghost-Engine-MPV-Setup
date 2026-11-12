@@ -132,6 +132,10 @@ private:
     int m_liveSerial = 0;
     void checkLive();
     void markLive();
+    QPixmap channelFace(const QString &id, bool live, int side);
+    void showVideoChannel();
+    void applyUsage();
+    QSet<QString> m_avatarAsked;   // channels whose picture was asked for once
     QWidget *buildHome();
     QWidget *buildPlaylistPage();
     QListWidget *makeShelf();

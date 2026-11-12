@@ -889,6 +889,10 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_channel = new QLabel;
     m_channel->setObjectName("videoChannel");
     m_channel->installEventFilter(this);
+    // The channel's picture before its name (LIVE on it when on air).
+    m_channelFace = new QLabel;
+    m_channelFace->installEventFilter(this);
+    m_channelFace->hide();
     m_follow = new QPushButton("Follow");
     m_follow->setObjectName("chip");
     m_follow->setCheckable(true);
@@ -910,6 +914,7 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     });
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(8);
+    buttons->addWidget(m_channelFace);
     buttons->addWidget(m_channel);
     buttons->addSpacing(6);
     buttons->addWidget(m_follow);
@@ -1408,9 +1413,12 @@ void VideoPage::setPlaying(const QString &target, const QString &title, const QS
     if (link != m_link)
         setDescription(QString());
     m_title->setText(title);
-    m_channel->setText(channel);
-    if (link != m_link)
+    if (!channel.isEmpty() || link != m_link)
+        m_channel->setText(channel);
+    if (link != m_link) {
         setChannel(QString(), false);
+        setChannelFace(QPixmap());
+    }
     m_link = link;
     m_youtube->setVisible(!link.isEmpty());
     for (int i = 0; i < m_list->count(); ++i) {
@@ -1630,19 +1638,34 @@ void VideoPage::hideMini()
             ShowWindow(reinterpret_cast<HWND>(w->winId()), SW_HIDE);
 }
 
+void VideoPage::setChannelFace(const QPixmap &face)
+{
+    m_channelFace->setPixmap(face);
+    m_channelFace->setVisible(!face.isNull());
+}
+
+void VideoPage::setChannelName(const QString &name)
+{
+    if (m_channel->text().isEmpty())
+        m_channel->setText(name);
+}
+
 void VideoPage::setChannel(const QString &channelId, bool following)
 {
     m_channelId = channelId;
     m_follow->setVisible(!channelId.isEmpty());
     m_follow->setChecked(following);
     m_follow->setText(following ? QStringLiteral("Following") : QStringLiteral("Follow"));
-    m_channel->setCursor(channelId.isEmpty() ? Qt::ArrowCursor : Qt::PointingHandCursor);
-    m_channel->setToolTip(channelId.isEmpty() ? QString() : QStringLiteral("Open the channel"));
+    for (QLabel *label : {m_channel, m_channelFace}) {
+        label->setCursor(channelId.isEmpty() ? Qt::ArrowCursor : Qt::PointingHandCursor);
+        label->setToolTip(channelId.isEmpty() ? QString() : QStringLiteral("Open the channel"));
+    }
 }
 
 bool VideoPage::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_channel && event->type() == QEvent::MouseButtonRelease && !m_channelId.isEmpty()) {
+    if ((watched == m_channel || watched == m_channelFace) && event->type() == QEvent::MouseButtonRelease &&
+        !m_channelId.isEmpty()) {
         if (onOpenChannel)
             onOpenChannel();
         return true;

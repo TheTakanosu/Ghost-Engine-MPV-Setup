@@ -274,6 +274,7 @@ void ChannelHeader::setFolded(bool folded, bool animate)
     if (!animate || !changes || !isVisible()) {
         if (m_heightGlide)
             m_heightGlide->stop();
+        setMinimumHeight(0);
         setMaximumHeight(QWIDGETSIZE_MAX);
         return;
     }
@@ -296,6 +297,39 @@ void ChannelHeader::setFolded(bool folded, bool animate)
     m_heightGlide->setStartValue(before);
     m_heightGlide->setEndValue(after);
     m_heightGlide->start();
+}
+
+void ChannelHeader::setScrolled(int scrolled)
+{
+    // As a list's header on the music side: it shrinks as far as the videos
+    // are scrolled, one for one, and is the one row once it is that small;
+    // back at the top it is whole again (Batın, 2026-11-12: the fold at 40 px
+    // with a glide still jumped).
+    if (m_heightGlide)
+        m_heightGlide->stop();
+    const auto wanted = [this] {
+        return layout()->hasHeightForWidth() ? layout()->totalHeightForWidth(width()) : sizeHint().height();
+    };
+    if (!m_folded)
+        m_openHeight = wanted();
+    const int foldedHeight = m_foldedHeight > 0 ? m_foldedHeight : qRound(80 * theme::zoom());
+    const int distance = m_openHeight - foldedHeight;
+    if (distance <= 0 || scrolled >= distance) {
+        if (!m_folded) {
+            setFolded(true);
+            m_foldedHeight = wanted();
+        }
+        setMinimumHeight(0);
+        setMaximumHeight(QWIDGETSIZE_MAX);
+        return;
+    }
+    if (m_folded) {
+        setFolded(false);
+        m_openHeight = wanted();
+    }
+    const int h = qMax(foldedHeight, m_openHeight - qMax(0, scrolled));
+    setMinimumHeight(h);
+    setMaximumHeight(h);
 }
 
 void ChannelHeader::showMore(bool more)

@@ -30,6 +30,8 @@ public:
     // under it glide up instead of jumping (Batın, 2026-11-10).
     void setFolded(bool folded, bool animate = false);
     bool folded() const { return m_folded; }
+    // How far the videos under it are scrolled: it shrinks by as much.
+    void setScrolled(int scrolled);
     QString channelId() const { return m_id; }
 
     std::function<void(bool follow)> onFollow;
@@ -49,6 +51,8 @@ private:
     QString m_bannerUrl;
     QString m_avatarUrl;
     bool m_folded = false;
+    int m_openHeight = 0;
+    int m_foldedHeight = 0;
     bool m_more = false;
     bool m_hasBanner = false;
     bool m_canMore = false;   // the page gave a way to its About

@@ -507,14 +507,12 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     // Not while the bar's handle is held: the grid grew as the header
     // folded, the range under the mouse shrank, and the handle jumped ten
     // rows at once (Lytra's page, 2026-11-11). It folds once let go.
+    // As a list's header on the music side (2026-11-12): it shrinks with the
+    // scrolling, one for one, not folded at a point with a glide of its own.
     const auto foldChannel = [this] {
         QScrollBar *bar = m_homeGrid->verticalScrollBar();
-        const int value = bar->value();
-        // Folded past the first row, open again only at the top: the grid
-        // growing as it folds does not flip it back.
-        if (!bar->isSliderDown() && m_channelHeader->isVisible() && (value > 40 || value == 0) &&
-            m_channelHeader->folded() != (value > 40))
-            m_channelHeader->setFolded(value > 40, true);
+        if (!bar->isSliderDown() && m_channelHeader->isVisible())
+            m_channelHeader->setScrolled(bar->value());
     };
     connect(m_homeGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, foldChannel);
     connect(m_homeGrid->verticalScrollBar(), &QScrollBar::sliderReleased, this, foldChannel);

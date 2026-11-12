@@ -679,6 +679,8 @@ MainWindow::MainWindow()
     QTimer::singleShot(1500, this, [this] { WhatsNewDialog::showIfUpdated(this); });
     m_settings->onLookChanged = [this] { applyLook(); };
     m_settings->onSearchPlaceChanged = [this](bool middle) { setSearchMiddle(middle); };
+    m_settings->onUsageChanged = [this] { applyUsage(); };
+    m_settings->onIslandChanged = [this] { m_island->refresh(); };
     m_settings->onRegionChanged = [this] {
         m_searchPage->setRegion(ytmusic::searchRegion());
         m_ytClient.setRegion(ytmusic::searchRegion());
@@ -889,8 +891,13 @@ MainWindow::MainWindow()
     // The island: a YouTube video playing whose page is not open.
     m_island = new NowIsland(&m_mpv, &m_covers, this);
     m_island->shouldShow = [this] {
-        return m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool() && !m_videoFull &&
-               m_pages->currentWidget() != m_videoPage;
+        // On both sides, for a song as for a video (Batın, 2026-11-12); a
+        // video's not over its own page or full screen. Off in Settings.
+        if (!QSettings().value("look/island", true).toBool() || !m_mpv.connected())
+            return false;
+        if (m_mpv.property("user-data/ghost/audio").toBool())
+            return true;
+        return !m_videoFull && m_pages->currentWidget() != m_videoPage;
     };
     m_island->freeSpan = [this] {
         // From the last thing on the left (the search box, or its button) to
@@ -901,7 +908,13 @@ MainWindow::MainWindow()
         const int right = rightmost->mapTo(this, QPoint(0, 0)).x();
         return QPair<int, int>(left, right);
     };
-    m_island->onOpen = [this] { openPlayingList(); };
+    m_island->onOpen = [this] {
+        // A song from the YouTube side: its list is on the music side.
+        if (m_youtubeLayout && m_mpv.property("user-data/ghost/audio").toBool() && !songVideo())
+            setYouTubeLayout(false, true, [this] { openPlayingList(); });
+        else
+            openPlayingList();
+    };
     m_island->onMini = [this] {
         m_miniAsked = true;
         m_pictureAway = false;
@@ -917,7 +930,12 @@ MainWindow::MainWindow()
     // after a click on the timeline: Batın, 2026-11-09).
     const auto showLive = [this] {
         m_videoPage->setLive(m_mpv.property("user-data/ghost/live").toBool(), m_liveBehind);
+        showVideoChannel();   // LIVE on its picture
     };
+    connect(&m_pictures, &RemotePictures::ready, this, [this](const QString &url) {
+        if (!m_videoChannelId.isEmpty() && url == m_channelAvatars.value(m_videoChannelId))
+            showVideoChannel();
+    });
     connect(&m_mpv, &MpvClient::propertyChanged, this, [this, showLive](const QString &name) {
         const bool live = m_mpv.property("user-data/ghost/live").toBool();
         if (name == "user-data/ghost/live") {
@@ -978,6 +996,7 @@ MainWindow::MainWindow()
     m_searchPage->onViewChanged = [this] { m_visitSoon.start(); };
     if (settings.value("layout/youtube", false).toBool())
         QTimer::singleShot(0, this, [this] { setYouTubeLayout(true, false); });
+    QTimer::singleShot(0, this, [this] { applyUsage(); });
     m_rightSplit->restoreState(settings.value("window/panelSplit").toByteArray());
     setLibraryCompact(m_split->sizes().value(0) < compactBelow());
 
@@ -4533,19 +4552,21 @@ void MainWindow::checkLive()
     }
 }
 
-void MainWindow::markLive()
+QPixmap MainWindow::channelFace(const QString &id, bool live, int shown)
 {
-    // Each channel's own picture before its name, round; one on air has a red
-    // ring and a small LIVE under it, as YouTube draws it (Batın, 2026-11-10).
+    // A channel's own picture, round; one on air has a red ring and a small
+    // LIVE under it, as YouTube draws it (Batın, 2026-11-10). Drawn at 26 and
+    // scaled to the size asked for.
     const qreal dpr = 2;
     const int side = 26;
-    const auto face = [&](const QString &id, bool live) {
-        QPixmap pm(QSize(side, side) * dpr);
-        pm.setDevicePixelRatio(dpr);
-        pm.fill(Qt::transparent);
+    QPixmap pm(QSize(shown, shown) * dpr);
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    {
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.scale(qreal(shown) / side, qreal(shown) / side);
         const QRectF circle = live ? QRectF(3, 2, side - 6, side - 6) : QRectF(1, 1, side - 2, side - 2);
         QPainterPath round;
         round.addEllipse(circle);
@@ -4574,8 +4595,39 @@ void MainWindow::markLive()
             p.setPen(Qt::white);
             p.drawText(tag, Qt::AlignCenter, QStringLiteral("LIVE"));
         }
-        return QIcon(pm);
-    };
+    }
+    return pm;
+}
+
+void MainWindow::showVideoChannel()
+{
+    // The channel's picture beside its name under the video, with LIVE when
+    // the stream is on air (Batın, 2026-11-12). A channel not followed has
+    // no picture kept: asked once, as the live check asks for followed ones.
+    const QString id = m_videoChannelId;
+    if (id.isEmpty()) {
+        m_videoPage->setChannelFace(QPixmap());
+        return;
+    }
+    if (!m_channelAvatars.contains(id) && !m_avatarAsked.contains(id)) {
+        m_avatarAsked.insert(id);
+        m_ytClient.liveNow(id, [this, id](const ytmusic::Item &live) {
+            const QString avatar = live.avatar.startsWith(QLatin1String("//")) ? QStringLiteral("https:") + live.avatar : live.avatar;
+            if (avatar.isEmpty())
+                return;
+            m_channelAvatars.insert(id, avatar);
+            if (id == m_videoChannelId)
+                showVideoChannel();
+        });
+    }
+    const bool live = m_mpv.property("user-data/ghost/live").toBool();
+    m_videoPage->setChannelFace(channelFace(id, live, 36));
+}
+
+void MainWindow::markLive()
+{
+    const int side = 26;
+    const auto face = [&](const QString &id, bool live) { return QIcon(channelFace(id, live, side)); };
     m_ytChannels->setIconSize(QSize(side, side));
     for (int i = 0; i < m_ytChannels->count(); ++i) {
         QListWidgetItem *row = m_ytChannels->item(i);
@@ -5041,8 +5093,33 @@ void MainWindow::holdSurfaceWhile(QObject *animation)
     });
 }
 
+void MainWindow::applyUsage()
+{
+    // Music only / YouTube only (Settings > Appearance): the video button is
+    // gone and the app stays on that side (Batın, 2026-11-12).
+    const QString usage = QSettings().value("look/usage", "both").toString();
+    m_youtubeButton->setVisible(usage == QLatin1String("both"));
+    if (usage == QLatin1String("music") && m_youtubeLayout)
+        setYouTubeLayout(false, false);
+    else if (usage == QLatin1String("youtube") && !m_youtubeLayout)
+        setYouTubeLayout(true, false);
+}
+
 void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then)
 {
+    {
+        const QString usage = QSettings().value("look/usage", "both").toString();
+        if (usage == QLatin1String("music"))
+            youtube = false;
+        else if (usage == QLatin1String("youtube"))
+            youtube = true;
+        // Held on its side already: only what was to follow.
+        if (usage != QLatin1String("both") && youtube == m_youtubeLayout) {
+            if (then)
+                then();
+            return;
+        }
+    }
     // How the layouts change: the ghost intro (default), a slide, or at once.
     const QString style = QSettings().value("look/layoutSwitch", "ghost").toString();
     const bool slideStyle = style == QLatin1String("slide");
@@ -6531,6 +6608,11 @@ void MainWindow::describeVideo(const QString &id)
         m_videoPage->setAvailableHeight(tallest);
         m_videoChannelId = facts.value(2).trimmed().startsWith(QLatin1String("UC")) ? facts.value(2).trimmed() : QString();
         m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
+        // Its name, when mpv had none for it (a live stream has no uploader).
+        const QString name = facts.mid(4).join(QLatin1Char('|')).trimmed();
+        if (!name.isEmpty() && name != QLatin1String("NA"))
+            m_videoPage->setChannelName(name);
+        showVideoChannel();
     };
     if (m_descriptions.contains(id)) {
         show(m_descriptions.value(id));
@@ -6559,7 +6641,7 @@ void MainWindow::describeVideo(const QString &id)
     });
     proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
                 {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
-                 "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s|%(formats.:.height)l", "--print", "description",
+                 "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s|%(formats.:.height)l|%(channel)s", "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
 }
 

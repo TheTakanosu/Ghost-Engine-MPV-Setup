@@ -95,6 +95,14 @@ mp.add_hook("on_load", 11, function()
     if rate then
         mp.set_property("file-local-options/hls-bitrate", tostring(rate))
     end
+    -- From the newest segment, not ffmpeg's third from the end: YouTube's
+    -- are 5 s, so that started 12-16 s behind what is on air, and "Go live"
+    -- showed at once (Batin, 2026-11-12). Measured on a stream: the third
+    -- from the end played 12-16 s from the end of the timeline, the newest
+    -- 1-5 s, without stalling. Other demuxer options are kept.
+    local lavf = mp.get_property_native("options/demuxer-lavf-o", {}) or {}
+    lavf["live_start_index"] = "-1"
+    mp.set_property_native("file-local-options/demuxer-lavf-o", lavf)
     mp.msg.info("live stream: the HLS master playlist, sound and picture together" ..
                 (rate and (" (up to " .. rate .. " b/s)") or ""))
     mp.set_property("stream-open-filename", manifest)

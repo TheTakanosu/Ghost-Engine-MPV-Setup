@@ -145,6 +145,8 @@ public:
     // The channel under the title: a click opens its page; Follow beside it,
     // once the channel is known (it comes with the description).
     void setChannel(const QString &channelId, bool following);
+    void setChannelFace(const QPixmap &face);   // null: none
+    void setChannelName(const QString &name);   // when the player had none
     std::function<void()> onOpenChannel;
     std::function<void()> onFollow;
     // A song list's song shown as its video: "Switch to audio" instead of the pop out.
@@ -202,6 +204,7 @@ private:
     QWidget *m_side;
     QLabel *m_title;
     QLabel *m_channel;
+    QLabel *m_channelFace = nullptr;
     QLabel *m_listName;
     QPushButton *m_youtube;
     QPushButton *m_popOut = nullptr;

@@ -154,6 +154,9 @@ void NowIsland::refresh()
     if (id.isEmpty())
         id = youtube::videoId(m_mpv->property("path").toString());
     m_videoId = id;
+    // A song: no corner player, and Open goes to its list (2026-11-12).
+    m_audio = m_mpv->property("user-data/ghost/audio").toBool();
+    m_openButton->setToolTip(m_audio ? QStringLiteral("Go to the playlist") : QStringLiteral("Go to the video's page"));
     m_play->setIcon(m_mpv->property("pause").toBool() ? icons::Icon::Play : icons::Icon::Pause);
     place();
     show();
@@ -200,7 +203,7 @@ void NowIsland::place()
     m_miniButton->move(x + z(40) + m_openButton->width() + 8, y + 4);
     for (QWidget *button : {static_cast<QWidget *>(m_play), static_cast<QWidget *>(m_openButton),
                             static_cast<QWidget *>(m_miniButton)})
-        button->setVisible(shown);
+        button->setVisible(shown && !(m_audio && button == m_miniButton));
 }
 
 bool NowIsland::eventFilter(QObject *watched, QEvent *event)

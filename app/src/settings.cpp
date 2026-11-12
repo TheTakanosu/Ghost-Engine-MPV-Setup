@@ -970,6 +970,33 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (!m_loading)
             QSettings().setValue("look/layoutSwitch", m_layoutSwitch->currentData().toString());
     });
+    // What the app is used for, and the island (Batın, 2026-11-12).
+    m_usage = new QComboBox;
+    m_usage->addItem("Music and YouTube", "both");
+    m_usage->addItem("Music only", "music");
+    m_usage->addItem("YouTube only", "youtube");
+    m_usage->setMinimumWidth(190);
+    addRow(look, "Use Ghost Engine for",
+           "Music only or YouTube only hides the video button in the top bar and keeps the app on that side.",
+           m_usage);
+    connect(m_usage, &QComboBox::currentIndexChanged, this, [this] {
+        if (m_loading)
+            return;
+        QSettings().setValue("look/usage", m_usage->currentData().toString());
+        if (onUsageChanged)
+            onUsageChanged();
+    });
+    m_island = new ToggleSwitch;
+    addRow(look, "Floating island",
+           "The pill in the middle of the top bar saying what plays, on the music and the YouTube side. "
+           "Off: it never shows.", m_island);
+    connect(m_island, &QAbstractButton::toggled, this, [this](bool on) {
+        if (m_loading)
+            return;
+        QSettings().setValue("look/island", on);
+        if (onIslandChanged)
+            onIslandChanged();
+    });
     addRow(look, "Search region",
            "The country YouTube ranks searches and the YouTube home page for. What you type matters more, "
            "so it shows most in short or English searches.", m_region);
@@ -1414,6 +1441,8 @@ void SettingsPage::load()
     m_eqPanel->setVisible(equalizer::enabled());
     showEqualizer();
     m_searchMiddle->setChecked(QSettings().value("search/middle", false).toBool());
+    m_usage->setCurrentIndex(qMax(0, m_usage->findData(QSettings().value("look/usage", "both").toString())));
+    m_island->setChecked(QSettings().value("look/island", true).toBool());
     m_miniOnLeave->setChecked(QSettings().value("video/miniOnLeave", false).toBool());
     m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));
     m_region->setCurrentIndex(qMax(0, m_region->findData(QSettings().value("search/region").toString().toUpper())));
