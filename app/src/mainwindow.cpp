@@ -798,7 +798,7 @@ MainWindow::MainWindow()
     });
     QTimer::singleShot(0, this, &MainWindow::showResume);
     // After an update, once: what the new version brings.
-    QTimer::singleShot(1500, this, [this] { WhatsNewDialog::showIfUpdated(this); });
+    QTimer::singleShot(1500, this, [this] { WhatsNewDialog::showIfUpdated(this, [](QAbstractScrollArea *area) { new SmoothScroll(area); }); });
     m_settings->onLookChanged = [this] { applyLook(); };
     m_settings->onSearchPlaceChanged = [this](bool middle) { setSearchMiddle(middle); };
     m_settings->onUsageChanged = [this] { applyUsage(); };

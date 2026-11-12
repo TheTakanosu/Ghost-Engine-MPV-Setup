@@ -8,6 +8,7 @@
 #include <functional>
 
 class QAbstractButton;
+class QAbstractScrollArea;
 class QLabel;
 class QPlainTextEdit;
 class QProcess;
@@ -89,7 +90,9 @@ private:
 class WhatsNewDialog : public QDialog {
 public:
     // Shown if this version has notes and an older one ran here before.
-    static void showIfUpdated(QWidget *parent);
+    // smooth, if given, is called with the notes' scroll area (the app's
+    // gliding wheel scroll).
+    static void showIfUpdated(QWidget *parent, const std::function<void(QAbstractScrollArea *)> &smooth = {});
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -97,6 +100,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
 
 private:
-    WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent);
+    WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent,
+                   const std::function<void(QAbstractScrollArea *)> &smooth);
     QPoint m_dragFrom;
 };

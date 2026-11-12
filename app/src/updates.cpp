@@ -10,6 +10,8 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -19,6 +21,8 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -438,7 +442,7 @@ QStringList notesSince(const QString &seen, const QString &now)
 
 } // namespace
 
-void WhatsNewDialog::showIfUpdated(QWidget *parent)
+void WhatsNewDialog::showIfUpdated(QWidget *parent, const std::function<void(QAbstractScrollArea *)> &smooth)
 {
     QSettings settings;
     const QString now = QStringLiteral(GHOST_VERSION);
@@ -450,11 +454,13 @@ void WhatsNewDialog::showIfUpdated(QWidget *parent)
     const QStringList lines = notesSince(seen, now);
     if (seen == now || !ranBefore || lines.isEmpty())
         return;
-    WhatsNewDialog dialog(now, lines, parent);
+    WhatsNewDialog dialog(now, lines, parent, smooth);
     dialog.exec();
 }
 
-WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent) : QDialog(parent)
+WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent,
+                               const std::function<void(QAbstractScrollArea *)> &smooth)
+    : QDialog(parent)
 {
     setWindowTitle("What's new");
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
@@ -470,6 +476,14 @@ WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines,
     box->addSpacing(4);
     box->addWidget(about);
     box->addSpacing(12);
+    // The lines scroll in a box of their own between the title and the
+    // button, so the window fits its screen however many versions it tells
+    // (1.4.0 and 1.5.0 together run past a 1080 px screen).
+    auto *list = new QWidget;
+    list->setAttribute(Qt::WA_TranslucentBackground);
+    auto *listBox = new QVBoxLayout(list);
+    listBox->setContentsMargins(0, 0, 8, 0);   // clear of the scroll bar
+    listBox->setSpacing(8);
     for (const QString &line : lines) {
         auto *row = new QHBoxLayout;
         row->setSpacing(10);
@@ -479,9 +493,19 @@ WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines,
         words->setTextFormat(Qt::PlainText);
         row->addWidget(dot, 0, Qt::AlignTop);
         row->addWidget(words, 1, Qt::AlignTop);
-        box->addLayout(row);
-        box->addSpacing(8);
+        listBox->addLayout(row);
     }
+    auto *scroll = new QScrollArea;
+    scroll->setWidget(list);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet(QStringLiteral("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }"));
+    scroll->viewport()->setAutoFillBackground(false);
+    if (smooth)
+        smooth(scroll);
+    box->addWidget(scroll, 1);
+    box->addSpacing(8);
     auto *notes = text(QStringLiteral("<a href='https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/releases/tag/v%1' "
                                       "style='color:%2; text-decoration:none'>All the changes</a>")
                            .arg(version, theme::accent().name()), 10, theme::c().textBody);
@@ -498,6 +522,25 @@ WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines,
     buttons->addWidget(ok);
     box->addSpacing(8);
     box->addLayout(buttons);
+
+    // As tall as the lines need, but at most 80% of the screen it opens on,
+    // and placed over the window inside that screen.
+    QScreen *screen = parent ? parent->screen() : QGuiApplication::primaryScreen();
+    const QRect room = screen ? screen->availableGeometry() : QRect(0, 0, 1280, 720);
+    const int listWidth = width() - box->contentsMargins().left() - box->contentsMargins().right();
+    const int listHeight = list->heightForWidth(listWidth) > 0 ? list->heightForWidth(listWidth) : list->sizeHint().height();
+    scroll->setFixedHeight(listHeight);
+    const int rest = box->sizeHint().height() - listHeight;
+    const int most = room.height() * 8 / 10;
+    if (rest + listHeight > most)
+        scroll->setFixedHeight(qMax(80, most - rest));
+    setFixedHeight(qMin(most, box->sizeHint().height()));
+    const QRect over = parent ? parent->window()->frameGeometry() : room;
+    QRect where(QPoint(0, 0), size());
+    where.moveCenter(over.center());
+    where.moveLeft(qBound(room.left(), where.left(), room.right() + 1 - where.width()));
+    where.moveTop(qBound(room.top(), where.top(), room.bottom() + 1 - where.height()));
+    move(where.topLeft());
 }
 
 void WhatsNewDialog::paintEvent(QPaintEvent *)
