@@ -159,7 +159,7 @@ protected:
         QPainterPath shape;
         shape.addRoundedRect(QRectF(picture.isEmpty() ? rect() : picture), corner, corner);
         p.setCompositionMode(QPainter::CompositionMode_Source);
-        p.fillPath(outside.subtracted(shape), theme::window());   // the panel the page sits on
+        p.fillPath(outside.subtracted(shape), theme::panel());   // the panel the page sits on
     }
     void mouseReleaseEvent(QMouseEvent *event) override
     {
@@ -755,7 +755,7 @@ NativeSurface::NativeSurface(QWidget *window)
     // in Black and Light.
     const auto paint = [hwnd = static_cast<HWND>(m_hwnd)] {
         static HBRUSH brush = nullptr;
-        const QColor c = theme::window();
+        const QColor c = theme::panel();
         HBRUSH next = CreateSolidBrush(RGB(c.red(), c.green(), c.blue()));
         SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, reinterpret_cast<LONG_PTR>(next));
         if (brush)

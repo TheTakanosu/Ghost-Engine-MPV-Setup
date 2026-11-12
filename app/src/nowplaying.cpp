@@ -17,6 +17,25 @@
 #include <QWheelEvent>
 
 namespace {
+// The bar's Liked songs button: the same drawn mark as the song rows.
+class LikeButton : public QPushButton {
+public:
+    bool liked = false;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        const int d = (qMin(width(), height()) - 1) | 1;   // odd, so the + falls on whole pixels
+        const QRectF ring((width() - d) / 2, (height() - d) / 2, d, d);
+        tiles::paintLikeMark(p, ring, liked, underMouse());
+    }
+    void enterEvent(QEnterEvent *e) override { QPushButton::enterEvent(e); update(); }
+    void leaveEvent(QEvent *e) override { QPushButton::leaveEvent(e); update(); }
+};
+} // namespace
+
+namespace {
 
 constexpr int kVolumeStep = 5;   // per wheel notch on the volume slider
 
@@ -117,7 +136,8 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     // the link (only the name is underlined under the mouse).
     m_where = new QLabel;
     m_where->setObjectName("npSubtitle");
-    m_like = new QPushButton;
+    m_like = new LikeButton;
+    m_like->setFixedSize(21, 21);
     m_like->setCursor(Qt::PointingHandCursor);
     m_like->hide();
     connect(m_like, &QPushButton::clicked, this, [this] {
@@ -512,15 +532,9 @@ void NowPlayingBar::refreshLike()
     if (!can)
         return;
     const bool liked = isLiked && isLiked();
-    m_like->setText(QString(QChar(liked ? 0xE73E : 0xE710)));
+    static_cast<LikeButton *>(m_like)->liked = liked;
     m_like->setToolTip(liked ? "Remove from Liked songs" : "Add to Liked songs");
-    // A ring with a + in it; liked, filled in the accent with a tick.
-    theme::style(m_like, QStringLiteral(
-        "QPushButton { font-family: \"Segoe Fluent Icons\", \"Segoe MDL2 Assets\"; font-size: 8pt; padding: 0;"
-        " min-width: 20px; max-width: 20px; min-height: 20px; max-height: 20px; border-radius: 10px; %1 }"
-        "QPushButton:hover { border-color: @text; color: @text; }")
-        .arg(liked ? QStringLiteral("background: @accent; color: @onAccent; border: 1px solid @accent;")
-                   : QStringLiteral("background: transparent; color: @muted; border: 1px solid @muted;")));
+    m_like->update();
 }
 
 void NowPlayingBar::resizeEvent(QResizeEvent *event)

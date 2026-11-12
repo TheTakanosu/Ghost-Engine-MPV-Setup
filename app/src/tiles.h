@@ -9,6 +9,12 @@ class QPainter;
 
 namespace tiles {
 
+// The Liked songs mark (Batin, 2026-11-07/12): a ring with a + in it, or,
+// liked, a disc in the accent with a tick. Drawn, not taken from the icon
+// font, whose + sat half a pixel off the ring's centre. `ring` should be
+// whole pixels and an odd size, so a 1.5 px stroke falls on the centre.
+void paintLikeMark(QPainter &painter, const QRectF &ring, bool liked, bool hover);
+
 // The playlist's index in the library, kept on each tile.
 constexpr int kIndexRole = Qt::UserRole;
 constexpr int kSubtitleRole = Qt::UserRole + 1;

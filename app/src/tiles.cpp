@@ -1,4 +1,5 @@
 #include "tiles.h"
+#include <cmath>
 
 #include "icons.h"
 #include "theme.h"
@@ -344,12 +345,43 @@ QSize SongDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) 
     return {400, int(56 * theme::zoom())};
 }
 
+void tiles::paintLikeMark(QPainter &painter, const QRectF &ring, bool liked, bool hover)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QPointF c = ring.center();
+    const qreal arm = std::round(ring.width() * 0.22) + 0.5;
+    if (liked) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(theme::accent());
+        painter.drawEllipse(ring);
+        QPen pen(theme::c().onAccent, 1.6);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        const qreal s = arm / 4.5;
+        painter.drawPolyline(QPolygonF{c + QPointF(-4.0 * s, 0.3 * s), c + QPointF(-1.3 * s, 3.0 * s),
+                                       c + QPointF(4.2 * s, -2.6 * s)});
+    } else {
+        painter.setPen(QPen(hover ? theme::text() : theme::muted(), 1.2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(ring.adjusted(0.6, 0.6, -0.6, -0.6));
+        QPen pen(theme::text(), 1.5);
+        pen.setCapStyle(Qt::FlatCap);
+        painter.setPen(pen);
+        painter.drawLine(QPointF(c.x() - arm, c.y()), QPointF(c.x() + arm, c.y()));
+        painter.drawLine(QPointF(c.x(), c.y() - arm), QPointF(c.x(), c.y() + arm));
+    }
+    painter.restore();
+}
+
 QRectF SongDelegate::likeRect(const QRect &rowRect)
 {
     const QRectF row = QRectF(rowRect).adjusted(0, 1, -4, -1);
-    const qreal d = 20;
-    const qreal left = row.right() - kDurationColumn - 8 + 4;
-    return {left, row.center().y() - d / 2, d, d};
+    const qreal d = 21;   // odd: the + has a pixel row and column of its own at the centre
+    const qreal left = std::round(row.right() - kDurationColumn - 8 + 4);
+    return {left, std::round(row.center().y() - d / 2), d, d};
 }
 
 void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -397,25 +429,7 @@ void SongDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     // accent on a song already liked, as Spotify's.
     const bool liked = index.data(kLikedRole).toBool();
     if (hover || liked) {
-        const QRectF ring = likeRect(option.rect);
-        QFont glyphs = option.font;
-        glyphs.setFamilies({QStringLiteral("Segoe Fluent Icons"), QStringLiteral("Segoe MDL2 Assets")});
-        glyphs.setPointSizeF(option.font.pointSizeF() * 0.72);
-        painter->setFont(glyphs);
-        if (liked) {
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(theme::accent());
-            painter->drawEllipse(ring);
-            painter->setPen(theme::c().onAccent);
-            painter->drawText(ring, Qt::AlignCenter, QString(QChar(0xE73E)));
-        } else {
-            painter->setPen(QPen(theme::muted(), 1.2));
-            painter->setBrush(Qt::NoBrush);
-            painter->drawEllipse(ring.adjusted(0.5, 0.5, -0.5, -0.5));
-            painter->setPen(theme::text());
-            painter->drawText(ring, Qt::AlignCenter, QString(QChar(0xE710)));
-        }
-        painter->setFont(option.font);
+        tiles::paintLikeMark(*painter, likeRect(option.rect), liked, false);
         painter->setPen(theme::muted());
     }
     if (roomy)

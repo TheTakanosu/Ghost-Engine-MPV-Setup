@@ -85,6 +85,12 @@ void setZoom(QApplication &app, qreal factor);
 
 // The roles the app used before there were themes, kept for the many callers.
 inline QColor window() { return c().window; }
+// The layout's own fills (Batin, 2026-11-08): the grey ground under the
+// cards, the cards on it (library, page, side panel), and the YouTube menu a
+// step lighter. Anything painted to stand for a card's colour uses these.
+QColor ground();
+QColor panel();
+QColor panelRaised();
 inline QColor card() { return c().card; }
 inline QColor cardHover() { return c().raised; }
 inline QColor cardSelected() { return c().cardSelected; }

@@ -45,7 +45,7 @@ void PlaylistHeader::paintEvent(QPaintEvent *)
     // the same colour instead.
     if (theme::c().light)
         tint = QColor::fromHsv(tint.hsvHue(), qMin(tint.hsvSaturation(), 70), 232);
-    QColor clear = theme::window();
+    QColor clear = theme::panel();
     clear.setAlpha(0);
     QLinearGradient wash(0, 0, 0, height());
     wash.setColorAt(0, tint);

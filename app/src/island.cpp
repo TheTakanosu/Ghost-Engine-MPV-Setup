@@ -96,7 +96,11 @@ NowIsland::NowIsland(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
     m_play->hide();
     connect(m_play, &QAbstractButton::clicked, this, [this] { m_mpv->command({"cycle", "pause"}); });
     m_openButton = textButton("Open", "Go to the video's page");
-    connect(m_openButton, &QPushButton::clicked, this, [this] { if (onOpen) onOpen(); });
+    connect(m_openButton, &QPushButton::clicked, this, [this] {
+        closeNow();
+        if (onOpen)
+            onOpen();
+    });
     m_miniButton = textButton("Mini player", "Keep watching in a small window in the corner");
     connect(m_miniButton, &QPushButton::clicked, this, [this] {
         setOpen(false);
@@ -242,12 +246,21 @@ void NowIsland::mousePressEvent(QMouseEvent *event)
     // The pill, or the card's picture and words: to the video.
     if (event->button() != Qt::LeftButton || !body().contains(event->position()))
         return;
+    closeNow();
+    if (onOpen)
+        onOpen();
+}
+
+void NowIsland::closeNow()
+{
+    // Back to the pill at once, laid out and painted so (Batin, 2026-11-12:
+    // after a click on the cover the card stayed open over the list).
     m_hover->stop();
     m_anim->stop();
     m_open = 0;
     m_wantOpen = false;
-    if (onOpen)
-        onOpen();
+    place();
+    update();
 }
 
 void NowIsland::paintEvent(QPaintEvent *)

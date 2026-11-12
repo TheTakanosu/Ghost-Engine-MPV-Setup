@@ -202,6 +202,33 @@ qreal chromeZoom() { return qMin(g_zoom, 1.2); }
 
 const Palette &c() { return g_palette; }
 
+namespace {
+QColor mixColor(const QColor &a, const QColor &b, double t)
+{
+    return QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
+                  int(a.blue() + (b.blue() - a.blue()) * t));
+}
+} // namespace
+
+// Dark themes step lighter towards the eye: ground, page, menu. Light ones
+// the other way round: their "raised" is a darker hover grey, so the ground
+// is the grey and the cards are white on it.
+QColor ground()
+{
+    const Palette &p = g_palette;
+    return p.window.lightness() > 128 ? mixColor(p.base, p.window, 0.45) : mixColor(p.window, p.card, 0.33);
+}
+QColor panel()
+{
+    const Palette &p = g_palette;
+    return p.window.lightness() > 128 ? p.card : mixColor(p.window, p.card, 0.85);
+}
+QColor panelRaised()
+{
+    const Palette &p = g_palette;
+    return p.window.lightness() > 128 ? p.card : mixColor(p.card, p.raised, 0.6);
+}
+
 Kind kind() { return g_kind; }
 
 QString kindName(Kind kind)
@@ -419,7 +446,7 @@ void apply(QApplication &app)
     QString css = fill(QStringLiteral(R"(
         QWidget#central { background: @base; }
         QWidget#topBar { background: @base; }
-        QWidget#libraryPanel, QWidget#panel { background: @window; border-radius: 12px; }
+        QWidget#libraryPanel, QWidget#panel, QWidget#recCard { background: @window; border-radius: 12px; }
         QWidget#home, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }
         QPushButton#bigPlay {
             font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: @accent; border: none;

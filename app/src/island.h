@@ -42,6 +42,7 @@ protected:
 
 private:
     void setOpen(bool open);
+    void closeNow();
     void place();
     QRectF body() const;
 

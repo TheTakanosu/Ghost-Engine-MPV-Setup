@@ -311,7 +311,8 @@ MainWindow::MainWindow()
 
     m_pages = new QStackedWidget;
     m_pages->addWidget(buildHome());
-    m_pages->addWidget(buildPlaylistPage());
+    m_listPage = buildPlaylistPage();
+    m_pages->addWidget(m_listPage);
     m_settings = new SettingsPage;
     m_pages->addWidget(m_settings);
     m_lyricsView = new LyricsView;
@@ -562,12 +563,21 @@ MainWindow::MainWindow()
     auto *mainBox = new QVBoxLayout(mainPanel);
     mainBox->setContentsMargins(0, 0, 0, 0);
     mainBox->addWidget(m_pages);
+    // The middle column: the page, and under a list's page its Recommended
+    // card, apart by the same gap as the panels beside them.
+    auto *middle = new QWidget;
+    auto *middleBox = new QVBoxLayout(middle);
+    middleBox->setContentsMargins(0, 0, 0, 0);
+    middleBox->setSpacing(8);
+    middleBox->addWidget(mainPanel, 1);
+    middleBox->addWidget(m_recCard);
+    connect(m_pages, &QStackedWidget::currentChanged, this, [this] { updateRecCard(); });
 
     // The now playing view, Spotify's, at the right of the page: a panel of
     // its own, its width the user's.
     m_panel = new NowPlayingPanel;
     m_rightSplit = new QSplitter(Qt::Horizontal);
-    m_rightSplit->addWidget(mainPanel);
+    m_rightSplit->addWidget(middle);
     m_rightSplit->addWidget(m_panel);
     m_rightSplit->setStretchFactor(0, 1);
     m_rightSplit->setStretchFactor(1, 0);
@@ -2508,7 +2518,7 @@ QWidget *MainWindow::buildPlaylistPage()
     list->addWidget(columns);
     list->addWidget(m_emptyHint);
     list->addWidget(m_songs, 1);
-    list->addWidget(buildRecommended());
+    buildRecommended();   // a card of its own under the page (see the middle column)
 
     auto *page = new QWidget;
     auto *box = new QVBoxLayout(page);
@@ -2778,6 +2788,20 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // A click on a place that takes no focus (the page's empty space, a
+    // header, a label) leaves the box being typed in, as in a browser; before,
+    // only Esc or Enter did (Batin, 2026-11-12). The boxes that edit
+    // something keep what was typed: the rename box saves on leaving, as on
+    // Enter. Other windows (a popup, a dialog) are left alone.
+    if (event->type() == QEvent::MouseButtonPress && watched->isWidgetType()) {
+        auto *clicked = static_cast<QWidget *>(watched);
+        QWidget *focus = QApplication::focusWidget();
+        const bool typing = qobject_cast<QLineEdit *>(focus) || qobject_cast<QTextEdit *>(focus) ||
+                            qobject_cast<QPlainTextEdit *>(focus) || qobject_cast<QAbstractSpinBox *>(focus);
+        if (typing && clicked != focus && !focus->isAncestorOf(clicked) &&
+            clicked->window() == focus->window() && !(clicked->focusPolicy() & Qt::ClickFocus))
+            focus->clearFocus();
+    }
     if (m_ytChannels && watched == m_ytChannels->viewport() && event->type() == QEvent::Resize)
         padYtChannels();
     if (watched == m_ytSidebar && event->type() == QEvent::Resize) {
@@ -4247,6 +4271,11 @@ protected:
     {
         if (!cards)
             return;
+        // On a dark ground a shadow cannot be seen as one: it only showed as
+        // darker pixels round the cards' corners (Batin, 2026-11-12), so
+        // there the cards sit flat on the ground.
+        if (theme::ground().lightness() < 128)
+            return;
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(Qt::NoPen);
@@ -5056,25 +5085,15 @@ void MainWindow::applyLayoutColors()
     if (!m_mainPanel || !centralWidget())
         return;
     auto *menu = static_cast<FloatingCard *>(m_ytSidebar);
-    const auto mix = [](const QColor &a, const QColor &b, double t) {
-        return QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
-                      int(a.blue() + (b.blue() - a.blue()) * t));
-    };
-    const theme::Palette &c = theme::c();
-    // Dark themes step lighter towards the eye: ground, page, menu. Light
-    // ones the other way round: their "raised" is a darker hover grey, so the
-    // ground is the grey and the cards are white on it (worked out for Light
-    // before it was seen: the menu came out darker than the ground).
-    const bool light = c.window.lightness() > 128;
-    const QColor ground = light ? mix(c.base, c.window, 0.45) : mix(c.window, c.card, 0.33);   // Black 18, Light ~240
-    const QColor page = light ? c.card : mix(c.window, c.card, 0.85);                          // Black 24, Light 255
-    const QColor raised = light ? c.card : mix(c.card, c.raised, 0.6);                         // Black 32, Light 255
+    const QColor ground = theme::ground();   // Black 18, Light ~240
+    const QColor page = theme::panel();      // Black 24, Light 255
+    const QColor raised = theme::panelRaised();
     // The library, the page and the now playing panel are all "#panel"-like
     // cards on the ground; the YouTube menu is a step lighter still.
     centralWidget()->setStyleSheet(QStringLiteral(
         "QWidget#central, QWidget#topBar, QWidget#nowPlaying { background: %1; }"
         "QSplitter::handle { background: transparent; }"
-        "QWidget#libraryPanel, QWidget#panel { background: %2; border-radius: 12px; }")
+        "QWidget#libraryPanel, QWidget#panel, QWidget#recCard { background: %2; border-radius: 12px; }")
                                        .arg(ground.name(), page.name()));
     if (menu) {
         menu->raisedLook = true;
@@ -5093,10 +5112,11 @@ void MainWindow::applyLayoutColors()
             add(m_ytSidebar, FloatingCard::kShadow - 2);
             add(m_libraryPanel);
             add(m_mainPanel);
+            add(m_recCard);
             add(m_panel);
             return out;
         };
-        for (QWidget *w : {static_cast<QWidget *>(m_mainPanel), m_ytSidebar, m_libraryPanel, static_cast<QWidget *>(m_panel)})
+        for (QWidget *w : {static_cast<QWidget *>(m_mainPanel), m_ytSidebar, m_libraryPanel, static_cast<QWidget *>(m_panel), m_recCard})
             if (w)
                 static_cast<ShadowLayer *>(layer)->follow(w);
         m_shadows = layer;
@@ -5306,6 +5326,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
     // (reopened after a change) keeps the ones shown, less any added.
     if (!p.audio) {
         m_recBox->hide();
+        updateRecCard();
         m_recFor.clear();
     } else if (p.path != m_recFor) {
         m_recFor = p.path;
@@ -7753,17 +7774,20 @@ void MainWindow::updateHistoryButtons()
 
 QWidget *MainWindow::buildRecommended()
 {
+    // A card of its own under the page, apart from the list as the panels
+    // are from each other (Batin, 2026-11-12: the dark rule over it did not
+    // go with the themes).
+    m_recCard = new QWidget;
+    m_recCard->setObjectName("recCard");
+    m_recCard->setAttribute(Qt::WA_StyledBackground);
+    m_recCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    auto *cardBox = new QVBoxLayout(m_recCard);
+    cardBox->setContentsMargins(20, 6, 16, 6);
     m_recBox = new QWidget;
+    cardBox->addWidget(m_recBox);
     auto *column = new QVBoxLayout(m_recBox);
-    column->setContentsMargins(0, 6, 0, 0);
+    column->setContentsMargins(0, 0, 0, 0);
     column->setSpacing(4);
-    // A dark rule between the list and its recommendations, so they read as
-    // a section of their own and not more of the list (2026-11-12).
-    auto *rule = new QFrame;
-    rule->setFixedHeight(3);
-    theme::style(rule, "background: @base; border: none; border-radius: 1px;");
-    column->addWidget(rule);
-    column->addSpacing(4);
     auto *head = new QHBoxLayout;
     m_recToggle = new QPushButton;
     m_recToggle->setObjectName("columnButton");
@@ -7832,7 +7856,15 @@ QWidget *MainWindow::buildRecommended()
         menu.exec(m_recList->viewport()->mapToGlobal(pos));
     });
     m_recBox->hide();
-    return m_recBox;
+    m_recCard->hide();
+    return m_recCard;
+}
+
+void MainWindow::updateRecCard()
+{
+    // Only under a list's page, and only once there is something for it.
+    if (m_recCard)
+        m_recCard->setVisible(m_recBox && !m_recBox->isHidden() && m_pages && m_pages->currentWidget() == m_listPage);
 }
 
 void MainWindow::setRecommendedOpen(bool open)
@@ -7862,6 +7894,7 @@ void MainWindow::loadRecommended(bool fresh, bool advance)
         m_recSeed = back + 3;
     }
     m_recBox->show();
+    updateRecCard();
     if (seed.isEmpty()) {
         m_recStatus->setText(entries.isEmpty() ? QStringLiteral("Add a song first: they are found from its radio.")
                                                : QStringLiteral("Nothing more to find."));
@@ -7927,6 +7960,7 @@ void MainWindow::showRecommended(bool refresh)
     m_recStatus->setText(m_recShown.isEmpty() ? QStringLiteral("Nothing found this time.")
                                               : QStringLiteral("Based on the songs at the end of this list"));
     m_recBox->show();
+    updateRecCard();
     // Too few left for the next Refresh: ask further back now.
     if (m_recPool.size() < 5 && !m_recShown.isEmpty() && refresh)
         loadRecommended(false);
