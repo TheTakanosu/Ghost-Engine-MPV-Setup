@@ -127,6 +127,8 @@ private:
     bool m_recOpen = false;
     int m_recWanted = 0;          // the height it was left at, 0 for all its songs
     int m_recDragHeight = -1;     // while its top edge is pulled
+    bool m_recAutoArmed = true;   // the end of the list may open it
+    int listPageOverhead() const;
     int recShutHeight() const;
     int recNaturalHeight() const;
     void fitRecSheet();

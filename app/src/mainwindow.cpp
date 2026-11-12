@@ -2633,9 +2633,29 @@ QWidget *MainWindow::buildPlaylistPage()
     return page;
 }
 
+int MainWindow::listPageOverhead() const
+{
+    // What a list's page needs under its header to stay readable: the
+    // buttons, the column names and two songs, with the gaps between.
+    if (!m_listPage || !m_listPage->layout())
+        return 0;
+    QLayout *page = m_listPage->layout();
+    const QMargins m = page->contentsMargins();
+    int need = m.top() + m.bottom() + 2 * qMax(0, page->spacing());
+    if (page->count() > 1)
+        need += page->itemAt(1)->sizeHint().height();   // the buttons
+    if (page->count() > 2 && page->itemAt(2)->layout() && page->itemAt(2)->layout()->count() > 0)
+        need += page->itemAt(2)->layout()->itemAt(0)->sizeHint().height() + 4;   // the column names
+    return need + 2 * int(56 * theme::zoom());
+}
+
 int MainWindow::headerTallNow() const
 {
-    return listheader::tallFor(m_pages ? m_pages->height() : 0);
+    // Never taller than the page leaves room for (Batin, 2026-11-12: with
+    // Recommended open in a small window, the buttons and the column names
+    // lay over the big cover): down to the folded header when it must.
+    const int page = m_pages ? m_pages->height() : 0;
+    return qBound(listheader::folded(), page - listPageOverhead(), listheader::tallFor(page));
 }
 
 void MainWindow::foldHeader()
@@ -2891,6 +2911,12 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // The page shorter or taller (Recommended pulled, the window resized):
+    // the header's tall height follows; the card resized: so does the sheet.
+    if (watched == m_pages && event->type() == QEvent::Resize && m_playlistCover)
+        QTimer::singleShot(0, this, &MainWindow::foldHeader);
+    if (watched == m_mainPanel && event->type() == QEvent::Resize && m_recCard)
+        QTimer::singleShot(0, this, &MainWindow::fitRecSheet);
     if (watched == m_recCard && m_recShade &&
         (event->type() == QEvent::Move || event->type() == QEvent::Resize || event->type() == QEvent::Show ||
          event->type() == QEvent::Hide)) {
@@ -5471,6 +5497,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
         m_recFor.clear();
     } else if (p.path != m_recFor) {
         m_recFor = p.path;
+        m_recAutoArmed = true;
         setRecommendedOpen(false);
         QTimer::singleShot(0, this, [this] { loadRecommended(true); });
     } else {
@@ -7985,13 +8012,17 @@ QWidget *MainWindow::buildRecommended()
     // pointer; let go near the bottom it shuts, elsewhere it stays at that
     // height, kept for next time (Batin, 2026-11-12).
     sheet->shutHeight = [this] { return recShutHeight(); };
-    sheet->onClick = [this] { setRecommendedOpen(!m_recOpen); };
+    sheet->onClick = [this] {
+        m_recAutoArmed = false;
+        setRecommendedOpen(!m_recOpen);
+    };
     sheet->onDrag = [this](int height) {
         m_recDragHeight = height;
         fitRecSheet();
     };
     sheet->onDragEnd = [this](int height) {
         m_recDragHeight = -1;
+        m_recAutoArmed = false;
         const int shut = recShutHeight();
         if (height < shut + 40) {
             setRecommendedOpen(false);
@@ -8006,12 +8037,22 @@ QWidget *MainWindow::buildRecommended()
     // Shut by default (it takes no room until asked for), opened with its
     // header or by scrolling the list to its end (2026-11-12).
     setRecommendedOpen(false);
-    connect(m_recToggle, &QPushButton::clicked, this, [this] { setRecommendedOpen(!m_recOpen); });
+    connect(m_recToggle, &QPushButton::clicked, this, [this] {
+        m_recAutoArmed = false;
+        setRecommendedOpen(!m_recOpen);
+    });
     connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         QScrollBar *bar = m_songs->verticalScrollBar();
+        // Only on reaching the end by scrolling: shutting it makes the list
+        // longer and its bar lands on the end again, which reopened it at
+        // once (Batin, 2026-11-12: pulled down past the window's edge, it
+        // sprang back open). Armed again once the list is scrolled up.
+        if (value < bar->maximum() - 4)
+            m_recAutoArmed = true;
         if (value < bar->maximum() || bar->maximum() <= 0 || m_recOpen || !m_recBox->isVisible()
-            || m_recShown.isEmpty())
+            || m_recShown.isEmpty() || !m_recAutoArmed || m_recDragHeight >= 0)
             return;
+        m_recAutoArmed = false;
         setRecommendedOpen(true);
         // The list got shorter: keep its last songs in sight above the rule.
         QTimer::singleShot(0, this, [this] { m_songs->scrollToBottom(); });
@@ -8082,10 +8123,16 @@ void MainWindow::fitRecSheet()
     // The sheet's height: shut, open (all of its songs, or the height it was
     // left at), or where a drag has it. At most ~70% of the page card.
     const int shut = recShutHeight();
-    const int most = qMax(shut, qMin(recNaturalHeight(), int(m_mainPanel ? m_mainPanel->height() * 0.7 : 600)));
+    // At most ~70% of the page card, and never so much that the list's page
+    // has less than its folded header, its buttons, column names and two
+    // songs: a smaller window, or one made smaller later, pulls a height
+    // kept from before down to that too.
+    const int panel = m_mainPanel ? m_mainPanel->height() : 900;
+    const int limit = qMax(shut, qMin(int(panel * 0.7), panel - listheader::folded() - listPageOverhead()));
+    const int most = qMax(shut, qMin(recNaturalHeight(), limit));
     int height = shut;
     if (m_recDragHeight >= 0)
-        height = qBound(shut, m_recDragHeight, qMax(shut, int(m_mainPanel ? m_mainPanel->height() * 0.7 : 600)));
+        height = qBound(shut, m_recDragHeight, limit);
     else if (m_recOpen)
         height = qBound(shut, m_recWanted > 0 ? m_recWanted : recNaturalHeight(), most);
     m_recList->setVisible(height > shut + 4);
