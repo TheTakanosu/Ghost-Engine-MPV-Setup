@@ -124,6 +124,12 @@ private:
     int m_recSerial = 0;
     QWidget *buildRecommended();
     void setRecommendedOpen(bool open);
+    bool m_recOpen = false;
+    int m_recWanted = 0;          // the height it was left at, 0 for all its songs
+    int m_recDragHeight = -1;     // while its top edge is pulled
+    int recShutHeight() const;
+    int recNaturalHeight() const;
+    void fitRecSheet();
     void loadRecommended(bool fresh, bool advance = false);   // advance: then show the next ones
     void showRecommended(bool refresh);   // refresh: the next ones, not the same
     void addRecommended(int row);

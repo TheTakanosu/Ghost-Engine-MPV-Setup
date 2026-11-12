@@ -191,30 +191,95 @@ constexpr int kChannelNameRole = Qt::UserRole + 41;
 // the page's own.
 class RecSheet : public QWidget {
 public:
-    using QWidget::QWidget;
+    explicit RecSheet(QWidget *parent = nullptr) : QWidget(parent) { setMouseTracking(true); }
+
+    // Set by the window: the shut height (the grip and the header row), and
+    // what a drag of the top edge does.
+    std::function<int()> shutHeight;
+    std::function<void(int height)> onDrag;      // follows the pointer
+    std::function<void(int height)> onDragEnd;   // let go after a drag
+    std::function<void()> onClick;               // a plain click: open or shut
+
+    static int grip() { return 16; }   // the band at the top that holds the grip
 
 protected:
     void paintEvent(QPaintEvent *) override
     {
+        // Its own corners, clipped the way the page card's are: outside the
+        // bottom ones is the window's ground, outside the top ones the page;
+        // the sheet's rounded fill goes over both, so no rim of the page's or
+        // the card's colour shows at a corner (Batin, 2026-11-12).
         QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
         constexpr qreal r = 12;
-        p.fillPath(roundedAll(QRectF(rect()), r), theme::panelRaised());
-        QColor grip = theme::muted();
-        grip.setAlphaF(0.55);
-        const qreal w = 36 * theme::zoom(), h = 4;
+        const QRectF box(rect());
+        p.fillRect(rect(), theme::ground());
+        p.fillRect(QRectF(0, 0, width(), height() - r), theme::panel());
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath sheet;
+        sheet.addRoundedRect(box, r, r);
+        const QColor fill = theme::panelRaised();
+        p.fillPath(sheet, fill);
+        // The grip in one solid colour between the sheet's and the muted
+        // text's, so its rounded ends leave no trace of another colour.
+        const QColor m = theme::muted();
+        const QColor grip(int(fill.red() + (m.red() - fill.red()) * 0.55), int(fill.green() + (m.green() - fill.green()) * 0.55),
+                          int(fill.blue() + (m.blue() - fill.blue()) * 0.55));
+        const qreal w = qRound(36 * theme::zoom()), h = 4;
         QPainterPath bar;
-        bar.addRoundedRect(QRectF((width() - w) / 2, 7, w, h), h / 2, h / 2);
+        bar.addRoundedRect(QRectF(qRound((width() - w) / 2), 6, w, h), h / 2, h / 2);
         p.fillPath(bar, grip);
+    }
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() != Qt::LeftButton || event->position().y() > (shutHeight ? shutHeight() : grip())) {
+            QWidget::mousePressEvent(event);
+            return;
+        }
+        m_pressY = event->globalPosition().y();
+        m_pressHeight = height();
+        m_pressed = true;
+        m_dragging = false;
+        event->accept();
+    }
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (!m_pressed) {
+            // Over the grip, the pointer says the sheet can be pulled.
+            setCursor(event->position().y() < grip() ? Qt::SizeVerCursor : Qt::ArrowCursor);
+            return;
+        }
+        const int moved = qRound(m_pressY - event->globalPosition().y());
+        if (!m_dragging && qAbs(moved) < 4)
+            return;
+        m_dragging = true;
+        setCursor(Qt::SizeVerCursor);
+        if (onDrag)
+            onDrag(m_pressHeight + moved);
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        if (!m_pressed || event->button() != Qt::LeftButton)
+            return;
+        m_pressed = false;
+        if (m_dragging) {
+            m_dragging = false;
+            if (onDragEnd)
+                onDragEnd(m_pressHeight + qRound(m_pressY - event->globalPosition().y()));
+        } else if (onClick) {
+            onClick();
+        }
+    }
+    void leaveEvent(QEvent *) override
+    {
+        if (!m_pressed)
+            unsetCursor();
     }
 
 private:
-    static QPainterPath roundedAll(const QRectF &box, qreal r)
-    {
-        QPainterPath path;
-        path.addRoundedRect(box, r, r);
-        return path;
-    }
+    bool m_pressed = false;
+    bool m_dragging = false;
+    qreal m_pressY = 0;
+    int m_pressHeight = 0;
 };
 
 // Wheel scrolling that glides instead of jumping three rows a notch: each
@@ -7871,10 +7936,13 @@ QWidget *MainWindow::buildRecommended()
     // header row shows; opened, it grows upward over the page's room
     // (Batin, 2026-11-12: first a dark rule, then a card apart whose gap
     // read as a black strip).
-    m_recCard = new RecSheet;
-    m_recCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    auto *sheet = new RecSheet;
+    m_recCard = sheet;
+    m_recCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     auto *cardBox = new QVBoxLayout(m_recCard);
-    cardBox->setContentsMargins(20, 16, 16, 6);
+    // As much under the header row as the grip's band over it, so the row
+    // sits in the middle of the shut sheet (it sat low, 2026-11-12).
+    cardBox->setContentsMargins(20, RecSheet::grip(), 16, RecSheet::grip());
     m_recBox = new QWidget;
     cardBox->addWidget(m_recBox);
     auto *column = new QVBoxLayout(m_recBox);
@@ -7909,15 +7977,39 @@ QWidget *MainWindow::buildRecommended()
         return m_covers.get(index.data(Qt::UserRole).toString(), ThumbnailCache::Size::Card);
     }, m_recList));
     m_recList->viewport()->installEventFilter(this);
-    column->addWidget(m_recList);
+    m_recList->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    column->addWidget(m_recList, 1);
+    m_recWanted = QSettings().value("recommended/height", 0).toInt();
+
+    // Pulled by its top edge (the grip, the header row) it follows the
+    // pointer; let go near the bottom it shuts, elsewhere it stays at that
+    // height, kept for next time (Batin, 2026-11-12).
+    sheet->shutHeight = [this] { return recShutHeight(); };
+    sheet->onClick = [this] { setRecommendedOpen(!m_recOpen); };
+    sheet->onDrag = [this](int height) {
+        m_recDragHeight = height;
+        fitRecSheet();
+    };
+    sheet->onDragEnd = [this](int height) {
+        m_recDragHeight = -1;
+        const int shut = recShutHeight();
+        if (height < shut + 40) {
+            setRecommendedOpen(false);
+            return;
+        }
+        const int natural = recNaturalHeight();
+        m_recWanted = height >= natural - 8 ? 0 : qMax(height, shut);
+        QSettings().setValue("recommended/height", m_recWanted);
+        setRecommendedOpen(true);
+    };
 
     // Shut by default (it takes no room until asked for), opened with its
     // header or by scrolling the list to its end (2026-11-12).
     setRecommendedOpen(false);
-    connect(m_recToggle, &QPushButton::clicked, this, [this] { setRecommendedOpen(!m_recList->isVisible()); });
+    connect(m_recToggle, &QPushButton::clicked, this, [this] { setRecommendedOpen(!m_recOpen); });
     connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         QScrollBar *bar = m_songs->verticalScrollBar();
-        if (value < bar->maximum() || bar->maximum() <= 0 || m_recList->isVisible() || !m_recBox->isVisible()
+        if (value < bar->maximum() || bar->maximum() <= 0 || m_recOpen || !m_recBox->isVisible()
             || m_recShown.isEmpty())
             return;
         setRecommendedOpen(true);
@@ -7961,9 +8053,43 @@ void MainWindow::updateRecCard()
 
 void MainWindow::setRecommendedOpen(bool open)
 {
+    m_recOpen = open;
     m_recToggle->setText(QStringLiteral("Recommended  %1").arg(open ? QStringLiteral("\u25BE") : QStringLiteral("\u25B8")));
-    m_recList->setVisible(open);
     m_recRefresh->setVisible(open);
+    fitRecSheet();
+}
+
+int MainWindow::recShutHeight() const
+{
+    // The grip's band, the header row, as much again under it.
+    int row = 0;
+    for (QWidget *w : {static_cast<QWidget *>(m_recToggle), static_cast<QWidget *>(m_recStatus), static_cast<QWidget *>(m_recRefresh)})
+        row = qMax(row, w->sizeHint().height());
+    return 2 * RecSheet::grip() + row;
+}
+
+int MainWindow::recNaturalHeight() const
+{
+    // Open with every song shown: the shut sheet, the gap, the rows.
+    const int rows = m_recList->count();
+    if (rows == 0)
+        return recShutHeight();
+    return recShutHeight() + 4 + int(56 * theme::zoom()) * rows + 4;
+}
+
+void MainWindow::fitRecSheet()
+{
+    // The sheet's height: shut, open (all of its songs, or the height it was
+    // left at), or where a drag has it. At most ~70% of the page card.
+    const int shut = recShutHeight();
+    const int most = qMax(shut, qMin(recNaturalHeight(), int(m_mainPanel ? m_mainPanel->height() * 0.7 : 600)));
+    int height = shut;
+    if (m_recDragHeight >= 0)
+        height = qBound(shut, m_recDragHeight, qMax(shut, int(m_mainPanel ? m_mainPanel->height() * 0.7 : 600)));
+    else if (m_recOpen)
+        height = qBound(shut, m_recWanted > 0 ? m_recWanted : recNaturalHeight(), most);
+    m_recList->setVisible(height > shut + 4);
+    m_recCard->setFixedHeight(height);
 }
 
 void MainWindow::loadRecommended(bool fresh, bool advance)
@@ -8000,7 +8126,7 @@ void MainWindow::loadRecommended(bool fresh, bool advance)
         m_recStatus->setText(entries.isEmpty() ? QStringLiteral("Add a song first: they are found from its radio.")
                                                : QStringLiteral("Nothing more to find."));
         m_recList->clear();
-        m_recList->setFixedHeight(0);
+        fitRecSheet();
         return;
     }
     m_recStatus->setText("Finding songs...");
@@ -8071,8 +8197,7 @@ void MainWindow::showRecommended(bool refresh)
         row->setToolTip("Double-click to play, + to add to this playlist");
         m_recList->addItem(row);
     }
-    const int rowHeight = int(56 * theme::zoom());
-    m_recList->setFixedHeight(rowHeight * m_recList->count() + 4);
+    fitRecSheet();
     m_recStatus->setText(m_recShown.isEmpty() ? QStringLiteral("Nothing found this time.")
                                               : QStringLiteral("Based on the songs at the end of this list"));
     m_recBox->show();
