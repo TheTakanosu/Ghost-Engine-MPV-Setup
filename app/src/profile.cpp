@@ -224,12 +224,33 @@ QPixmap RemotePictures::get(const QString &url, const QString &keepAs)
     m_pictures.insert(url, QPixmap());   // asked; empty until it arrives
     if (!keepAs.isEmpty())
         m_keepAs.insert(url, keepAs);
-    QNetworkReply *reply = m_net.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, url] {
+    // A fetch that hangs ends after 10 s as a failure, so it is tried again:
+    // without a limit a stalled request stayed "asked" for good and the
+    // picture never came (Batin, 2026-11-12: the followed channels' list
+    // empty, the selected one a plain accent circle).
+    QNetworkRequest request{QUrl(url)};
+    request.setTransferTimeout(10000);
+    const qint64 sent = QDateTime::currentMSecsSinceEpoch();
+    QNetworkReply *reply = m_net.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, sent] {
         reply->deleteLater();
         const QString name = m_keepAs.take(url);
         QPixmap picture;
-        if (reply->error() == QNetworkReply::NoError && picture.loadFromData(reply->readAll())) {
+        const QByteArray data = reply->error() == QNetworkReply::NoError ? reply->readAll() : QByteArray();
+        if (reply->error() != QNetworkReply::NoError || !picture.loadFromData(data)) {
+            // Beside the app's other network notes.
+            QFile log(QDir::temp().filePath(QStringLiteral("ghost-net.log")));
+            if (log.size() > 512 * 1024)
+                log.remove();
+            if (log.open(QIODevice::Append | QIODevice::Text))
+                log.write(QStringLiteral("%1 picture status=%2 error=%3 \"%4\" bytes=%5 %6ms %7\n")
+                              .arg(QDateTime::currentDateTime().toString(Qt::ISODate))
+                              .arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt())
+                              .arg(int(reply->error())).arg(reply->errorString()).arg(data.size())
+                              .arg(QDateTime::currentMSecsSinceEpoch() - sent).arg(url.left(80))
+                              .toUtf8());
+        }
+        if (!picture.isNull()) {
             m_pictures.insert(url, picture);
             m_failed.remove(url);
             if (!name.isEmpty()) {
@@ -238,6 +259,11 @@ QPixmap RemotePictures::get(const QString &url, const QString &keepAs)
             }
             emit ready(url);
         } else {
+            // A stalled connection would hold every later picture too (all
+            // ask the same server over one connection): the next try opens
+            // a new one.
+            if (reply->error() == QNetworkReply::OperationCanceledError || reply->error() == QNetworkReply::TimeoutError)
+                m_net.clearConnectionCache();
             m_pictures.remove(url);
             m_failed.insert(url, QDateTime::currentMSecsSinceEpoch());
             // Asked again in a while, so the one waiting for it gets it.
