@@ -69,6 +69,8 @@ private:
     class QStackedWidget *m_leftStack = nullptr;
     QPushButton *m_youtubeButton = nullptr;
     QList<QPushButton *> m_ytNav;   // Home, History
+    QPushButton *m_ytSearchNav = nullptr;
+    int m_ytMark = 0;   // the menu row lit: kYtSearch, an index of m_ytNav, or -1
     class QListWidget *m_ytLists = nullptr;
     class QListWidget *m_ytChannels = nullptr;
     QWidget *m_ytSidebar = nullptr;
@@ -182,6 +184,11 @@ private:
     void applyPendingOrder();
     void showHome();
     void showYouTube();
+    // Lights the YouTube menu's row for the page that is open, and no other:
+    // nav is an index of m_ytNav or kYtSearch (-1 none), list a video list's
+    // index, channel a followed channel's id.
+    static constexpr int kYtSearch = 4;
+    void markYouTubeMenu(int nav, int list = -1, const QString &channel = QString());
     // The search: in the top bar, or the box in the middle (SearchPopup).
     void openSearch();
     void openSearchPopup();

@@ -454,16 +454,9 @@ MainWindow::MainWindow()
     m_searchPage->isFollowed = [this](const QString &id) { return follows(id); };
     m_searchPage->onFollow = [this](const QString &id, const QString &name, bool follow) { setFollowing(id, name, follow); };
     m_searchPage->onChannelShown = [this](const QString &channelId, const QString &) {
-        for (QPushButton *b : m_ytNav)
-            b->setChecked(false);
         // A followed channel opened from anywhere (a card, a search) is lit
         // on the left too, as when it is clicked there.
-        if (!m_ytChannels)
-            return;
-        m_ytChannels->clearSelection();
-        for (int i = 0; i < m_ytChannels->count(); ++i)
-            if (m_ytChannels->item(i)->data(Qt::UserRole).toString() == channelId)
-                m_ytChannels->setCurrentRow(i);
+        markYouTubeMenu(-1, -1, channelId);
     };
     // The YouTube home is made from the videos watched here (newest first)
     // and the channels watched most.
@@ -508,6 +501,8 @@ MainWindow::MainWindow()
         const QSignalBlocker quiet(m_search);
         m_searchTimer.stop();
         m_search->setText(query);
+        if (!query.isEmpty())
+            markYouTubeMenu(kYtSearch);   // results again: Search is lit
     };
     m_pages->addWidget(m_searchPage);
     {
@@ -735,8 +730,7 @@ MainWindow::MainWindow()
         if (!m_youtubeLayout)
             setYouTubeLayout(true, false);
         showYouTube();
-        for (QPushButton *b : m_ytNav)
-            b->setChecked(false);
+        markYouTubeMenu(-1, -1, id);
         m_searchPage->showChannel(id, name);
     };
 
@@ -4496,8 +4490,13 @@ QWidget *MainWindow::buildYouTubeSidebar()
         return b;
     };
     QPushButton *search = nav(QChar(0xE721), "Search");
-    search->setCheckable(false);
-    connect(search, &QPushButton::clicked, this, &MainWindow::openSearch);
+    m_ytSearchNav = search;
+    // Lit while search results are open; a click opens the box and leaves
+    // the row as the page has it.
+    connect(search, &QPushButton::clicked, this, [this] {
+        m_ytSearchNav->setChecked(m_ytMark == kYtSearch);
+        openSearch();
+    });
     QPushButton *home = nav(kIconHome, "Home");
     QPushButton *followingNav = nav(QChar(0xE734), "Following");
     m_ytNav << home;
@@ -4523,8 +4522,6 @@ QWidget *MainWindow::buildYouTubeSidebar()
     m_ytLists->setMouseTracking(true);
     theme::style(m_ytLists, listStyle);
     connect(m_ytLists, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
-        for (QPushButton *b : m_ytNav)
-            b->setChecked(false);
         openPlaylist(item->data(Qt::UserRole).toInt());
     });
     box->addWidget(m_ytLists, 1);
@@ -4552,9 +4549,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
         }
         if (!id.isEmpty()) {
             showYouTube();
-            for (QPushButton *b : m_ytNav)
-                b->setChecked(false);
-            m_ytChannels->setCurrentItem(item);
+            markYouTubeMenu(-1, -1, id);
             m_searchPage->showChannel(id, item->data(kChannelNameRole).toString());
         }
     });
@@ -4566,11 +4561,9 @@ QWidget *MainWindow::buildYouTubeSidebar()
         const QString id = item->data(Qt::UserRole).toString(), name = item->data(kChannelNameRole).toString();
         QMenu menu(this);
         if (m_liveNow.contains(id))
-            menu.addAction(QStringLiteral("Go to %1").arg(name), this, [this, id, name, item] {
+            menu.addAction(QStringLiteral("Go to %1").arg(name), this, [this, id, name] {
                 showYouTube();
-                for (QPushButton *b : m_ytNav)
-                    b->setChecked(false);
-                m_ytChannels->setCurrentItem(item);
+                markYouTubeMenu(-1, -1, id);
                 m_searchPage->showChannel(id, name);
             });
         menu.addAction(QStringLiteral("Unfollow %1").arg(name), this, [this, id, name] { setFollowing(id, name, false); });
@@ -4891,15 +4884,10 @@ void MainWindow::setFollowing(const QString &channelId, const QString &name, boo
 void MainWindow::showFollowing(const QString &onlyChannel)
 {
     showYouTube();
-    for (QPushButton *b : m_ytNav)
-        b->setChecked(onlyChannel.isEmpty() && b == m_ytNav.value(2));
-    if (!onlyChannel.isEmpty()) {
-        for (int i = 0; i < m_ytChannels->count(); ++i)
-            if (m_ytChannels->item(i)->data(Qt::UserRole).toString() == onlyChannel)
-                m_ytChannels->setCurrentRow(i);
-    } else {
-        m_ytChannels->clearSelection();
-    }
+    if (onlyChannel.isEmpty())
+        markYouTubeMenu(2);
+    else
+        markYouTubeMenu(-1, -1, onlyChannel);
     QList<QPair<QString, QString>> channels;
     QString title = QStringLiteral("Following");
     for (const auto &c : following())
@@ -5025,8 +5013,7 @@ void MainWindow::setWatchLater(const QVector<ytmusic::Item> &items, bool keep)
 void MainWindow::showWatchLater()
 {
     showYouTube();
-    for (int i = 0; i < m_ytNav.size(); ++i)
-        m_ytNav[i]->setChecked(i == 3);
+    markYouTubeMenu(3);
     const QVector<ytmusic::Item> items = watchLater();
     m_searchPage->showVideos(items.isEmpty() ? QStringLiteral("Watch later: nothing yet. Right-click a video, then Save to Watch later.")
                                              : QStringLiteral("Watch later"), items);
@@ -5034,12 +5021,8 @@ void MainWindow::showWatchLater()
 
 void MainWindow::showVideoHistory()
 {
-    for (QPushButton *b : m_ytNav)
-        b->setChecked(b == m_ytNav.value(1));
-    m_ytLists->clearSelection();
     showYouTube();
-    m_ytNav.value(0)->setChecked(false);
-    m_ytNav.value(1)->setChecked(true);
+    markYouTubeMenu(1);
     QVector<ytmusic::Item> items;
     QSet<QString> seen;
     const QDateTime now = QDateTime::currentDateTime();
@@ -5409,14 +5392,34 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     group->start();
 }
 
+void MainWindow::markYouTubeMenu(int nav, int list, const QString &channel)
+{
+    m_ytMark = nav;
+    for (int i = 0; i < m_ytNav.size(); ++i)
+        m_ytNav[i]->setChecked(i == nav);
+    if (m_ytSearchNav)
+        m_ytSearchNav->setChecked(nav == kYtSearch);
+    const auto mark = [](QListWidget *rows, const QVariant &key) {
+        if (!rows)
+            return;
+        QListWidgetItem *hit = nullptr;
+        for (int i = 0; i < rows->count() && key.isValid() && !hit; ++i)
+            if (rows->item(i)->data(Qt::UserRole) == key)
+                hit = rows->item(i);
+        if (hit) {
+            rows->setCurrentItem(hit);
+        } else {
+            rows->clearSelection();
+            rows->setCurrentItem(nullptr);
+        }
+    };
+    mark(m_ytLists, list >= 0 ? QVariant(list) : QVariant());
+    mark(m_ytChannels, channel.isEmpty() ? QVariant() : QVariant(channel));
+}
+
 void MainWindow::showYouTube()
 {
-    for (int i = 0; i < m_ytNav.size(); ++i)
-        m_ytNav[i]->setChecked(i == 0);
-    if (m_ytLists)
-        m_ytLists->clearSelection();
-    if (m_ytChannels)
-        m_ytChannels->clearSelection();
+    markYouTubeMenu(0);
     QWidget *now = m_pages->currentWidget();
     if (now != m_searchPage)
         m_beforeSearch = now == m_videoPage || now == m_lyricsView ? m_pages->widget(0) : now;
@@ -5478,6 +5481,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
             m_libraryList->setCurrentItem(nullptr);
         }
     }
+    markYouTubeMenu(-1, index);   // a video list's row on the YouTube menu
     const Playlist &p = all[index];
     m_playlistKind->setText(p.audio ? "PLAYLIST  ·  SONGS" : "PLAYLIST  ·  VIDEOS");
     m_playlistInfo->setText(subtitleFor(p) + QStringLiteral("  ·  added ") +
@@ -7368,6 +7372,7 @@ void MainWindow::runSearch()
         // Emptied in YouTube mode: its home again.
         m_searchPage->setQuery(QString());
         m_searchPage->showYouTubeHome();
+        markYouTubeMenu(0);
         return;
     }
     if (text.isEmpty()) {
@@ -7387,10 +7392,7 @@ void MainWindow::runSearch()
     m_searchPage->setQuery(text);
     m_pages->setCurrentWidget(m_searchPage);
     SearchPopup::remember(text);
-    for (QPushButton *b : m_ytNav)
-        b->setChecked(false);
-    if (m_ytChannels)
-        m_ytChannels->clearSelection();
+    markYouTubeMenu(kYtSearch);
 }
 
 void MainWindow::openSearch()
@@ -7515,8 +7517,7 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
         menu.addAction(QStringLiteral("Go to %1").arg(it.artist.isEmpty() ? QStringLiteral("the channel") : it.artist), this,
                        [this, it] {
             showYouTube();
-            for (QPushButton *b : m_ytNav)
-                b->setChecked(false);
+            markYouTubeMenu(-1, -1, it.channelId);
             m_searchPage->showChannel(it.channelId, it.artist);
         });
     }
@@ -7859,10 +7860,7 @@ MainWindow::Place MainWindow::herePlace()
         const QString text = m_search->text();
         const std::function<void()> view = m_searchPage->viewRestore();
         // Which of the YouTube menu's rows was lit (Home, History...): lit again.
-        int nav = -1;
-        for (int i = 0; i < m_ytNav.size(); ++i)
-            if (m_ytNav[i]->isChecked())
-                nav = i;
+        const int nav = m_ytMark;
         p.key = QStringLiteral("search:") + m_searchPage->viewKey();
         p.go = [this, text, view, nav] {
             QWidget *was = m_pages->currentWidget();
@@ -7876,8 +7874,7 @@ MainWindow::Place MainWindow::herePlace()
             if (view)
                 view();
             m_pages->setCurrentWidget(m_searchPage);
-            for (int i = 0; i < m_ytNav.size(); ++i)
-                m_ytNav[i]->setChecked(i == nav);
+            markYouTubeMenu(nav);
         };
     } else if (m_pages->currentIndex() == 1 && m_open >= 0 && m_open < m_library.playlists().size()) {
         // By its file: the indexes move as lists are added or sorted.
