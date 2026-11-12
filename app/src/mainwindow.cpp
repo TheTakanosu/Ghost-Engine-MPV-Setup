@@ -570,7 +570,7 @@ MainWindow::MainWindow()
                                           : QStringLiteral("bestvideo+bestaudio/best");
         m_mpv.setProperty("ytdl-format", format);
         m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
-        m_resetStart = true;
+        armStartReset(m_mpv.property("playlist-pos").toInt());
         m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
     };
     // The video page's keys (arrows, F, I) are shortcuts now: see
@@ -1203,6 +1203,13 @@ MainWindow::MainWindow()
         }
         // A reload at a second has started playing: later files start at 0.
         if (name == "time-pos" && m_resetStart && m_mpv.property("time-pos").toDouble() > 0) {
+            m_resetStart = false;
+            m_mpv.setProperty("start", "none");
+        }
+        // ...or once another entry comes up: the one reloaded at a second
+        // never played (that second past its end), and the next must not
+        // start there too.
+        if (name == "playlist-pos" && m_resetStart && m_mpv.property("playlist-pos").toInt() != m_resetStartPos) {
             m_resetStart = false;
             m_mpv.setProperty("start", "none");
         }
@@ -6263,6 +6270,9 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
             restartPlayer(QueuedPlay{path, shuffle, startAt, order}, 0);
             return;
         }
+        // A list chosen now starts at 0, whatever a reload left set.
+        m_resetStart = false;
+        m_mpv.setProperty("start", "none");
         m_mpv.command({"loadfile", path, "replace", -1, QStringLiteral("playlist-start=%1").arg(startAt)});
         if (shuffle)
             QTimer::singleShot(400, this, [this] { m_mpv.command({"playlist-shuffle"}); });
@@ -6287,8 +6297,14 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         args << "--shuffle";
     if (startAt > 0)
         args << QStringLiteral("--playlist-start=%1").arg(startAt);
-    if (m_startSeconds > 1)
+    if (m_startSeconds > 1) {
         args << QStringLiteral("--start=%1").arg(m_startSeconds, 0, 'f', 1);
+        // --start is mpv's for every file it opens, not this one's: left
+        // set, each later song began at that second, past the end of a short
+        // one, and failed (Batin, 2026-11-12: nothing would play, every
+        // song "could not be opened", mpv stuck at start=266.2).
+        armStartReset(startAt);
+    }
     m_startSeconds = 0;
     // Inside the app whenever videos may show there, so a video list later
     // does not need mpv started again. Keys go to the app (it passes them
@@ -6360,6 +6376,14 @@ int MainWindow::embedFor(bool audio) const
     // A song list draws nothing unless it was asked to have a window; that
     // window must then be mpv's own, not one hidden in the app.
     return QSettings().value("player/window", false).toBool() ? 0 : -1;
+}
+
+void MainWindow::armStartReset(int entry)
+{
+    // mpv's `start` is one for all files: set to reload an entry at a
+    // second, it is put back to none once that entry plays or another comes.
+    m_resetStart = true;
+    m_resetStartPos = entry;
 }
 
 void MainWindow::restartPlayer(const QueuedPlay &q, double seconds)
@@ -6959,7 +6983,7 @@ void MainWindow::setPanelVideo(bool on)
     }
     // ghost.lua names the entry from mpv's own path and replays it at the
     // same second.
-    m_resetStart = true;
+    armStartReset(m_mpv.property("playlist-pos").toInt());
     m_mpv.command({"script-message", "ghost-video-once", on ? "yes" : "no"});
     refreshPanel();
     schedulePlace();
@@ -6994,7 +7018,7 @@ void MainWindow::setSongVideo(bool on)
     m_mpv.setProperty("user-data/ghost/video-mode", on);
     m_mpv.setProperty("user-data/ghost/video-once", QString());
     m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
-    m_resetStart = true;
+    armStartReset(m_mpv.property("playlist-pos").toInt());
     m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
     refreshPanel();
 }

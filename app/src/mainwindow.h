@@ -392,6 +392,8 @@ private:
     std::optional<QueuedPlay> m_restartPlay;
     QString m_videoListPath;
     bool m_resetStart = false;       // a quality change reloaded at a second
+    int m_resetStartPos = -1;        // the entry reloaded there
+    void armStartReset(int entry);
     QHash<QString, QString> m_descriptions;   // video id -> its description
     QString m_describing;            // the id being fetched
     void describeVideo(const QString &id);
