@@ -85,9 +85,12 @@ public:
     explicit AboutCard(std::function<QPixmap()> photo, QWidget *parent = nullptr)
         : QWidget(parent), m_photo(std::move(photo))
     {
+        // The photo is a box of its own on the left; the text starts right
+        // of it (main session's screen test, 2026-11-12).
         auto *column = new QVBoxLayout(this);
-        column->setContentsMargins(24, 20, 24, 18);
+        column->setContentsMargins(kPad + photoSide() + 24, kPad, 24, 18);
         column->setSpacing(8);
+        setMinimumHeight(photoSide() + 2 * kPad);
         m_body = new QLabel;
         m_body->setWordWrap(true);
         m_body->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -142,34 +145,40 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
+        // A tone lighter than the page, with a hairline, so its edge shows.
         QPainterPath shape;
-        shape.addRoundedRect(QRectF(rect()), 14, 14);
-        p.setClipPath(shape);
-        const QColor ground = theme::c().card;
-        p.fillRect(rect(), ground);
+        shape.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+        p.fillPath(shape, theme::c().raised);
+        p.setPen(QPen(theme::c().line, 1));
+        p.drawPath(shape);
+        // The photo: a sharp rounded square, only slightly dimmed.
+        const int side = photoSide();
+        const QRect box(kPad, kPad, side, side);
+        QPainterPath round;
+        round.addRoundedRect(QRectF(box), 10, 10);
         const QPixmap photo = m_photo ? m_photo() : QPixmap();
-        if (!photo.isNull()) {
-            // As tall as the card, at most half its width, dimmed and fading
-            // into the card towards the text.
-            const int w = qMin(width() / 2, qMax(height(), 260));
-            const QPixmap fitted = photo.scaled(w, height(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-            const QRect src((fitted.width() - w) / 2, (fitted.height() - height()) / 2, w, height());
-            p.setOpacity(theme::c().light ? 0.22 : 0.35);
-            p.drawPixmap(QRect(0, 0, w, height()), fitted, src);
-            p.setOpacity(1);
-            QColor clear = ground;
-            clear.setAlpha(0);
-            QLinearGradient fade(0, 0, w, 0);
-            fade.setColorAt(0, clear);
-            fade.setColorAt(1, ground);
-            p.fillRect(QRect(0, 0, w, height()), fade);
+        if (photo.isNull()) {
+            p.fillPath(round, theme::c().card);
+            return;
         }
+        const qreal ratio = devicePixelRatioF();
+        const QPixmap fitted = photo.scaled(QSize(side, side) * ratio, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        const QRect src((fitted.width() - int(side * ratio)) / 2, (fitted.height() - int(side * ratio)) / 2,
+                        int(side * ratio), int(side * ratio));
+        p.save();
+        p.setClipPath(round);
+        p.drawPixmap(box, fitted, src);
+        p.fillRect(box, QColor(0, 0, 0, 38));   // about 15%
+        p.restore();
     }
 
 private:
+    static constexpr int kPad = 20;
+    static int photoSide() { return int(150 * theme::zoom()); }
+
     void fit()
     {
-        const int width = m_body->width() > 0 ? m_body->width() : this->width() - 48;
+        const int width = m_body->width() > 0 ? m_body->width() : this->width() - kPad - photoSide() - 48;
         const int shut = m_body->fontMetrics().lineSpacing() * 3;
         const int full = m_body->heightForWidth(width);
         const bool longer = full > shut + 2;
