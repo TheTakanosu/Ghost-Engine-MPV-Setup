@@ -35,7 +35,12 @@ QString recentKey()
 
 QStringList recent()
 {
-    return QSettings().value(recentKey()).toStringList();
+    // Kept before a case was one: the newest of each spelling only.
+    QStringList out;
+    for (const QString &q : QSettings().value(recentKey()).toStringList())
+        if (!out.contains(q, Qt::CaseInsensitive))
+            out << q;
+    return out;
 }
 
 // An earlier search's row: an x at its right end, drawn here and clicked
@@ -134,7 +139,8 @@ void SearchPopup::remember(const QString &query)
     if (q.isEmpty())
         return;
     QStringList list = recent();
-    list.removeAll(q);
+    // "Lytra" and "lytra" are one search: the newest spelling stays.
+    list.removeIf([&q](const QString &old) { return old.compare(q, Qt::CaseInsensitive) == 0; });
     list.prepend(q);
     QSettings().setValue(recentKey(), list.mid(0, kRecentMax));
 }
