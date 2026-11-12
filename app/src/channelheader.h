@@ -80,6 +80,7 @@ private:
     QWidget *m_row = nullptr;    // folded: the one row
     class RoundPicture *m_smallAvatar = nullptr;
     QLabel *m_smallName = nullptr;
+    class QSpacerItem *m_avatarNudge = nullptr;
     QLabel *m_smallMeta = nullptr;
     QPushButton *m_smallFollow = nullptr;
     class QGraphicsOpacityEffect *m_bodyFade = nullptr;

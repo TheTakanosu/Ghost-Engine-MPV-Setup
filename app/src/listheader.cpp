@@ -1,4 +1,5 @@
 #include "listheader.h"
+#include <QBoxLayout>
 
 #include "icons.h"
 #include "theme.h"
@@ -96,7 +97,18 @@ void arrange(PlaylistHeader *header, QHBoxLayout *row, QLabel *kicker, QLabel *i
     const QRect cover = header->coverRect();
     const qreal z = theme::zoom();
     const bool isTall = header->height() > 160 * z;
-    row->setContentsMargins(cover.right() + (isTall ? 26 : 16), cover.top(), 28, cover.top());
+    // Tall, the words sit on the cover's bottom line, as Spotify's. Folded,
+    // they are centred on the cover, and have the header's whole height to
+    // grow in: kept within the cover's, the name was cut at its top for a
+    // frame or two of the fold (Batin, 2026-11-12), and sat low beside it.
+    row->setContentsMargins(cover.right() + (isTall ? 26 : 16), isTall ? cover.top() : 0, 28, isTall ? cover.top() : 0);
+    if (auto *text = row->count() > 0 ? qobject_cast<QBoxLayout *>(row->itemAt(0)->layout()) : nullptr) {
+        if (text->count() == 0 || !text->itemAt(text->count() - 1)->spacerItem())
+            text->addStretch(0);
+        if (text->itemAt(0)->spacerItem())
+            text->setStretch(0, 1);
+        text->setStretch(text->count() - 1, isTall ? 0 : 1);
+    }
     if (kicker)
         kicker->setVisible(isTall);
     if (info)

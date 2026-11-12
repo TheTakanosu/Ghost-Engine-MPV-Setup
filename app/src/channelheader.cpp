@@ -6,6 +6,7 @@
 #include <QDesktopServices>
 #include <QGraphicsOpacityEffect>
 #include <QResizeEvent>
+#include <QSpacerItem>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -194,7 +195,16 @@ ChannelHeader::ChannelHeader(RemotePictures *pictures, QWidget *parent) : QWidge
     small->setContentsMargins(8, 2, 8, 10);
     small->setSpacing(14);
     m_smallAvatar = new RoundPicture;
-    small->addWidget(m_smallAvatar, 0, Qt::AlignVCenter);
+    // Centred on the words as they are seen, not on their boxes: the name's
+    // box has room over its capitals the counts' has not under their line,
+    // and the picture stood a little high (Batin, 2026-11-12).
+    auto *avatarColumn = new QVBoxLayout;
+    avatarColumn->setSpacing(0);
+    m_avatarNudge = new QSpacerItem(0, 0, QSizePolicy::Minimum, QSizePolicy::Fixed);
+    avatarColumn->addItem(m_avatarNudge);
+    avatarColumn->addWidget(m_smallAvatar);
+    small->addLayout(avatarColumn);
+    small->setAlignment(avatarColumn, Qt::AlignVCenter);
     auto *smallText = new QVBoxLayout;
     smallText->setSpacing(2);
     m_smallName = new QLabel;
@@ -347,6 +357,17 @@ void ChannelHeader::measure()
     m_avatar->setFixedSize(side, side);
     const int smallSide = qRound(48 * theme::zoom());
     m_smallAvatar->setFixedSize(smallSide, smallSide);
+    {
+        // The words' ink runs from the name's capitals to the counts'
+        // baseline; the picture, centred with a spacer over it, moves down by
+        // half the spacer, which is the half-difference times two.
+        const QFontMetricsF name(m_smallName->font()), meta(m_smallMeta->font());
+        const qreal over = name.ascent() - name.capHeight();   // empty above the capitals
+        const qreal under = meta.descent();                    // empty below the baseline
+        const int nudge = qMax(0, qRound(over - under));
+        m_avatarNudge->changeSize(0, nudge, QSizePolicy::Minimum, QSizePolicy::Fixed);
+        m_row->layout()->invalidate();
+    }
     m_descriptionBox->setVisible(!m_description->text().isEmpty());
     const int lines = QFontMetrics(m_description->font()).lineSpacing();
     const int boxWidth = m_descriptionBox->width() > 100 ? m_descriptionBox->width() : qMax(100, width() - side - 60);
