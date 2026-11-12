@@ -502,7 +502,14 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
                          event->buttons(), event->modifiers(), event->phase(), event->inverted());
         QCoreApplication::sendEvent(m_homeGrid->viewport(), &copy);
     };
-    homeColumn->addWidget(m_channelHeader);
+    // The header and the videos as one pair with no gap of the layout's
+    // between them: the gap is the header's own bottom, so the videos are
+    // cut off at its edge and nothing of them shows in it (2026-11-12).
+    auto *channelPair = new QWidget;
+    auto *pairBox = new QVBoxLayout(channelPair);
+    pairBox->setContentsMargins(0, 0, 0, 0);
+    pairBox->setSpacing(0);
+    pairBox->addWidget(m_channelHeader);
     // Scrolled down, the header folds to one row.
     // Not while the bar's handle is held: the grid grew as the header
     // folded, the range under the mouse shrank, and the handle jumped ten
@@ -518,7 +525,8 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     connect(m_homeGrid->verticalScrollBar(), &QScrollBar::sliderReleased, this, foldChannel);
     m_homeGrid->installEventFilter(this);
     m_homeGrid->viewport()->installEventFilter(this);
-    homeColumn->addWidget(m_homeGrid, 1);
+    pairBox->addWidget(m_homeGrid, 1);
+    homeColumn->addWidget(channelPair, 1);
     m_views->addWidget(homePage);
     connect(m_homeGrid, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
         if (onPlay)

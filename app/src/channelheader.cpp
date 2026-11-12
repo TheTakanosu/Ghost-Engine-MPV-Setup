@@ -389,8 +389,11 @@ void ChannelHeader::setScrolled(int scrolled)
     };
     fade(m_body, m_bodyFade, (p - 0.22) / 0.33);
     fade(m_row, m_rowFade, 1.0 - p / 0.2);
-    if (height() != h || minimumHeight() != h || maximumHeight() != h) {
-        setFixedHeight(h);
+    // The gap to the videos is the header's own (see placeGap).
+    m_below = qRound(10 * theme::zoom());
+    const int tall = h + m_below;
+    if (height() != tall || minimumHeight() != tall || maximumHeight() != tall) {
+        setFixedHeight(tall);
         // The videos under it move in the same frame, not one later.
         if (!m_inResize && parentWidget() && parentWidget()->layout())
             parentWidget()->layout()->activate();
@@ -472,11 +475,24 @@ void ChannelHeader::placeGap()
     if (!m_gap)
         m_gap = new tiles::Shade(page, true);
     auto *shade = static_cast<tiles::Shade *>(m_gap);
-    // From where the videos are cut off: the header's bottom and the gap under it.
-    const int spacing = page->layout() ? qMax(0, page->layout()->spacing()) : 0;
-    shade->setGeometry(0, geometry().bottom() + 1 + spacing, page->width(), tiles::Shade::depth());
+    // The videos are cut off at the header's bottom edge and nowhere lower
+    // (Batin, 2026-11-12: a strip under the folded header showed the
+    // captions of the row above): the gap between them is the header's own
+    // bottom, painted and lying over the videos, and the shadow starts on
+    // that edge.
+    const int edge = geometry().bottom() + 1;
+    shade->setGeometry(0, edge, page->width(), tiles::Shade::depth());
     shade->setStrength(m_scrolled / 40.0);
+    raise();
     shade->raise();
+}
+
+void ChannelHeader::paintEvent(QPaintEvent *)
+{
+    // Opaque, the page card's colour, the strip under it too: nothing of the
+    // videos shows through or above their edge.
+    QPainter p(this);
+    p.fillRect(rect(), theme::panel());
 }
 
 void ChannelHeader::wheelEvent(QWheelEvent *event)

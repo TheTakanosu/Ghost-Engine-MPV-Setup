@@ -42,6 +42,7 @@ protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     void refreshPictures();
@@ -88,4 +89,5 @@ private:
     QWidget *m_gap = nullptr;   // the shade under it, over the videos
     int m_scrolled = 0;
     bool m_inResize = false;
+    int m_below = 0;   // the layout's gap under it, taken into its own height
 };
