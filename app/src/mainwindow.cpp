@@ -973,7 +973,7 @@ MainWindow::MainWindow()
             }
             showLive();
         } else if (live && (name == "time-pos" || name == "duration" || name == "pause" ||
-                            name == "demuxer-cache-duration" || name == "paused-for-cache")) {
+                            name == "demuxer-cache-time" || name == "paused-for-cache")) {
             const double at = m_mpv.property("time-pos").toDouble();
             const double end = m_mpv.property("duration").toDouble();
             const double lag = end - at;
@@ -984,7 +984,9 @@ MainWindow::MainWindow()
             }
             // Catching up, only from 1x (a speed the viewer chose is theirs).
             const double speed = m_mpv.property("speed").toDouble();
-            const double ahead = m_mpv.property("demuxer-cache-duration").toDouble();
+            // What is read ahead of the playing point. Not demuxer-cache-duration:
+            // in the app it said 4.5 s while 20 s were read ahead (seen, 2026-11-12).
+            const double ahead = m_mpv.property("demuxer-cache-time").toDouble() - at;
             const bool waiting = m_mpv.property("paused-for-cache").toBool() || m_mpv.property("pause").toBool();
             if (!m_liveCatching && qFuzzyCompare(speed, 1.0) && end > 0 && !behind && !waiting && lag > 9 && ahead > 9) {
                 m_liveCatching = true;
