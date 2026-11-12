@@ -904,10 +904,19 @@ void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &
 int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
 {
     int added = 0;
+    // The home made for the viewer (All): at most three of a channel, so one
+    // channel watched lately does not fill it as the Following page would
+    // (Batın, 2026-11-12).
+    const bool mixed = m_homeChannel.isEmpty() && m_homeChannelId.isEmpty() && !m_homeSearch && !m_homeFixed;
     for (const ytmusic::Item &it : items) {
         if (m_homeSeen.contains(it.id))
             continue;
+        const QString channel = it.channelId.isEmpty() ? it.artist : it.channelId;
+        if (mixed && !channel.isEmpty() && m_homeByChannel.value(channel) >= 3)
+            continue;
         m_homeSeen.insert(it.id);
+        if (!channel.isEmpty())
+            ++m_homeByChannel[channel];
         const int i = m_home.size();
         m_home << it;
         auto *row = new QListWidgetItem(it.title);
@@ -1040,10 +1049,19 @@ void SearchPage::fillHome(bool reset)
         for (const QString &id : m_homeSeeds)
             m_homeSeen.insert(id);   // watched already: not offered again
         m_homeSeeds = m_homeSeeds.mid(0, 12);
+        m_homeByChannel.clear();
+        m_homeTurn = 0;
+        // What was searched on the YouTube side lately, beside what was
+        // watched: the home follows both (Batın, 2026-11-12).
+        m_homeQueries.clear();
+        if (m_homeChannel.isEmpty())
+            for (const QString &q : QSettings().value("search/recentYouTube").toStringList())
+                if (m_homeQueries.size() < 6 && !m_homeQueries.contains(q, Qt::CaseInsensitive))
+                    m_homeQueries << q;
         m_homeGrid->verticalScrollBar()->setValue(0);
     }
-    if (!m_homeChannel.isEmpty() || m_homeSeeds.isEmpty()) {
-        // A chip, or nothing watched yet: a YouTube search fills the grid.
+    if (!m_homeChannel.isEmpty() || (m_homeSeeds.isEmpty() && m_homeQueries.isEmpty())) {
+        // A chip, or nothing watched or searched yet: a YouTube search fills the grid.
         QString query = m_homeChannel;
         if (query.isEmpty()) {
             const QStringList channels = watchedChannels ? watchedChannels() : QStringList();
@@ -1101,8 +1119,8 @@ void SearchPage::homeMore()
         });
         return;
     }
-    const bool search = !m_homeChannel.isEmpty() || (m_homeSeeds.isEmpty() && m_home.isEmpty())
-                        || (m_homeSeeds.isEmpty() && !m_homeNext.isEmpty());
+    const bool search = !m_homeChannel.isEmpty() || (m_homeSeeds.isEmpty() && m_homeQueries.isEmpty() && m_home.isEmpty())
+                        || (m_homeSeeds.isEmpty() && m_homeQueries.isEmpty() && !m_homeNext.isEmpty());
     if (search) {
         if (!m_home.isEmpty() && m_homeNext.isEmpty())
             return;   // the search's last page is there
@@ -1120,8 +1138,21 @@ void SearchPage::homeMore()
         });
         return;
     }
-    // All: what YouTube shows beside the next watched video; once those are
-    // used, beside the videos the grid itself shows, so it goes on.
+    // All, by turns: what YouTube shows beside a watched video (twice), then
+    // the top of a recent search's results (once); a few of each, so no one
+    // video or search fills the page (Batın, 2026-11-12: it followed the
+    // last video watched only). Once those are used, beside the videos the
+    // grid itself shows, so it goes on.
+    const bool searchTurn = !m_homeQueries.isEmpty() && (m_homeTurn++ % 3 == 2 || m_homeSeeds.isEmpty());
+    if (searchTurn) {
+        const QString query = m_homeQueries.takeFirst();
+        m_homeLoading = true;
+        m_client.searchYouTube(query, QString(), [this, add](QVector<ytmusic::Item> items, QString) {
+            if (!add(items.mid(0, 8)) || m_homeGrid->count() < 12)
+                QTimer::singleShot(0, this, &SearchPage::homeMore);
+        });
+        return;
+    }
     if (m_homeSeeds.isEmpty())
         for (int i = 0; i < m_home.size() && m_homeSeeds.size() < 6; i += 4)
             if (!m_homeSeeded.contains(m_home[i].id))
@@ -1133,7 +1164,7 @@ void SearchPage::homeMore()
     m_homeLoading = true;
     m_client.related(seed, [this, add](QVector<ytmusic::Item> items) {
         // Few new ones (a side list much like the last): ask beside the next.
-        if (!add(items) || m_homeGrid->count() < 12)
+        if (!add(items.mid(0, 8)) || m_homeGrid->count() < 12)
             QTimer::singleShot(0, this, &SearchPage::homeMore);
     });
 }

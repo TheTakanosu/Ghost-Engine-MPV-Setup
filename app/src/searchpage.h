@@ -3,6 +3,7 @@
 #include "ytmusic.h"
 
 #include <QColor>
+#include <QHash>
 #include <QPixmap>
 #include <QSet>
 #include <QWidget>
@@ -166,6 +167,9 @@ private:
     QLabel *m_homeStatus = nullptr;
     tiles::VideoCardDelegate *m_homeCards = nullptr;
     QVector<ytmusic::Item> m_home;
+    QStringList m_homeQueries;    // recent YouTube searches still to show a few of
+    QHash<QString, int> m_homeByChannel;   // on the home so far, per channel
+    int m_homeTurn = 0;
     QStringList m_homeSeeds;      // videos whose side lists are still to ask for
     QSet<QString> m_homeSeen;
     class RemotePictures *m_avatars = nullptr;

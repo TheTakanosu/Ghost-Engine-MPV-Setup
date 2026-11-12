@@ -364,12 +364,24 @@ MainWindow::MainWindow()
     };
     // The YouTube home is made from the videos watched here (newest first)
     // and the channels watched most.
+    // Newest first, but the newest of each channel before a second of any:
+    // the home asks beside a spread of what was watched, not ten videos of
+    // the one channel watched last (Batın, 2026-11-12).
     m_searchPage->watchedVideos = [this] {
-        QStringList ids;
-        for (const ListeningStats::Entry &e : m_stats.history())
-            if (e.video && !e.id.isEmpty() && !ids.contains(e.id))
-                ids << e.id;
-        return ids;
+        QStringList first, rest;
+        QSet<QString> channels;
+        for (const ListeningStats::Entry &e : m_stats.history()) {
+            if (!e.video || e.id.isEmpty() || first.contains(e.id) || rest.contains(e.id))
+                continue;
+            const QString channel = e.artist.trimmed().toLower();
+            if (channel.isEmpty() || !channels.contains(channel)) {
+                channels.insert(channel);
+                first << e.id;
+            } else {
+                rest << e.id;
+            }
+        }
+        return first + rest;
     };
     m_searchPage->watchedChannels = [this] {
         QHash<QString, int> plays;
