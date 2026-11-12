@@ -24,9 +24,18 @@ namespace {
 constexpr int kRecentMax = 12;
 constexpr int kRowKind = Qt::UserRole + 1;   // "recent" or "suggested"
 
+// Music and YouTube keep their own earlier searches (2026-11-12): the box
+// searches one or the other, and the two lists never mix.
+bool g_youtube = false;
+
+QString recentKey()
+{
+    return g_youtube ? QStringLiteral("search/recentYouTube") : QStringLiteral("search/recent");
+}
+
 QStringList recent()
 {
-    return QSettings().value("search/recent").toStringList();
+    return QSettings().value(recentKey()).toStringList();
 }
 
 // An earlier search's row: an x at its right end, drawn here and clicked
@@ -127,7 +136,12 @@ void SearchPopup::remember(const QString &query)
     QStringList list = recent();
     list.removeAll(q);
     list.prepend(q);
-    QSettings().setValue("search/recent", list.mid(0, kRecentMax));
+    QSettings().setValue(recentKey(), list.mid(0, kRecentMax));
+}
+
+void SearchPopup::setYouTube(bool youtube)
+{
+    g_youtube = youtube;
 }
 
 void SearchPopup::forget(const QString &query)
@@ -137,7 +151,7 @@ void SearchPopup::forget(const QString &query)
         list.clear();
     else
         list.removeAll(query);
-    QSettings().setValue("search/recent", list);
+    QSettings().setValue(recentKey(), list);
 }
 
 void SearchPopup::open(const QString &text, const QString &placeholder)

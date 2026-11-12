@@ -25,6 +25,8 @@ public:
     // What was searched, newest first (search/recent, at most 12).
     static void remember(const QString &query);
     static void forget(const QString &query);   // one of them; empty: all
+    // Which side's earlier searches: the music side's or YouTube's.
+    static void setYouTube(bool youtube);
 
 protected:
     void paintEvent(QPaintEvent *) override;

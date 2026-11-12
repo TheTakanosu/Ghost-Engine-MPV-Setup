@@ -652,10 +652,21 @@ void SearchPage::updateEmpty()
 void SearchPage::setQuery(const QString &text)
 {
     const QString query = text.trimmed();
-    if (query == m_query && !query.isEmpty())
-        return;
+    // The same search again: nothing to ask when its results are what the
+    // page shows. When it shows something else (an artist's page opened by
+    // "Go to artist" kept the old search under it), the search is made
+    // again: returning here left that page up (Batın, 2026-11-12).
+    if (query == m_query && !query.isEmpty()) {
+        const bool shown = m_youtube ? m_views->currentWidget() == m_homeGrid->parentWidget() && m_homeSearch &&
+                                           m_homeChannel == query
+                                     : m_views->currentIndex() == 0;
+        if (shown)
+            return;
+    }
     m_query = query;
-    if (!query.isEmpty() && query != m_lastQuery) {
+    // The music side's last search, for its Back to results; YouTube's are
+    // its own (2026-11-12).
+    if (!m_youtube && !query.isEmpty() && query != m_lastQuery) {
         m_lastQuery = query;
         QSettings().setValue("search/last", query);
     }
@@ -816,9 +827,10 @@ void SearchPage::setYouTubeMode(bool youtube)
         return;
     m_youtube = youtube;
     QSettings().setValue("search/youtube", youtube);
-    const QString query = m_query;
+    // Each side searches only its own: what the other side searched is not
+    // carried over and asked again here (2026-11-12).
     m_query.clear();
-    setQuery(query);
+    setQuery(QString());
 }
 
 void SearchPage::showYouTubeHome()
@@ -1259,7 +1271,7 @@ void SearchPage::backToResults()
             onQueryShown(m_query);
         return;
     }
-    const QString query = m_query.isEmpty() || m_youtube ? m_lastQuery : m_query;
+    const QString query = m_query.isEmpty() || m_youtube ? m_lastQuery : m_query;   // the music side's
     if (m_youtube) {
         m_youtube = false;
         m_musicMode->setChecked(true);

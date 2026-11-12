@@ -5069,6 +5069,7 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
         QSettings().setValue(m_youtubeLayout ? "layout/ytWidth" : "layout/libraryWidth", m_split->sizes().value(0));
     m_youtubeLayout = youtube;
     QSettings().setValue("layout/youtube", youtube);
+    SearchPopup::setYouTube(youtube);
     {
         const int wanted = QSettings().value(youtube ? "layout/ytWidth" : "layout/libraryWidth", -1).toInt();
         const int total = m_split->sizes().value(0) + m_split->sizes().value(1);
@@ -5082,6 +5083,12 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
         fillYouTubeSidebar();
         showYouTube();
     } else {
+        // What was typed for YouTube is not a music search (2026-11-12).
+        {
+            const QSignalBlocker quiet(m_search);
+            m_search->clear();
+        }
+        m_searchTimer.stop();
         m_search->setPlaceholderText("What do you want to play?");
         if (m_searchPage->youTubeMode())
             m_searchPage->setYouTubeMode(false);
