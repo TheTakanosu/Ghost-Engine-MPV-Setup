@@ -428,16 +428,17 @@ const QList<QPair<QString, QStringList>> &allNotes()
     return notes;
 }
 
-QStringList notesSince(const QString &seen, const QString &now)
+// The versions since seen up to now with their lines, newest first.
+QList<QPair<QString, QStringList>> notesSince(const QString &seen, const QString &now)
 {
     const auto older = [](const QString &a, const QString &b) {
         return QVersionNumber::fromString(a) < QVersionNumber::fromString(b);
     };
-    QStringList lines;
+    QList<QPair<QString, QStringList>> out;
     for (const auto &[version, said] : allNotes())
-        if ((seen.isEmpty() || older(seen, version)) && !older(now, version))
-            lines += said;
-    return lines;
+        if ((seen.isEmpty() || older(seen, version)) && !older(now, version) && !said.isEmpty())
+            out.prepend({version, said});
+    return out;
 }
 
 } // namespace
@@ -451,14 +452,14 @@ void WhatsNewDialog::showIfUpdated(QWidget *parent, const std::function<void(QAb
     // mean the app ran before, so this is an update, not an install.
     const bool ranBefore = !seen.isEmpty() || settings.contains("window/geometry");
     settings.setValue("whatsnew/seen", now);
-    const QStringList lines = notesSince(seen, now);
-    if (seen == now || !ranBefore || lines.isEmpty())
+    const auto notes = notesSince(seen, now);
+    if (seen == now || !ranBefore || notes.isEmpty())
         return;
-    WhatsNewDialog dialog(now, lines, parent, smooth);
+    WhatsNewDialog dialog(now, notes, parent, smooth);
     dialog.exec();
 }
 
-WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent,
+WhatsNewDialog::WhatsNewDialog(const QString &version, const QList<QPair<QString, QStringList>> &versions, QWidget *parent,
                                const std::function<void(QAbstractScrollArea *)> &smooth)
     : QDialog(parent)
 {
@@ -484,16 +485,27 @@ WhatsNewDialog::WhatsNewDialog(const QString &version, const QStringList &lines,
     auto *listBox = new QVBoxLayout(list);
     listBox->setContentsMargins(0, 0, 8, 0);   // clear of the scroll bar
     listBox->setSpacing(8);
-    for (const QString &line : lines) {
-        auto *row = new QHBoxLayout;
-        row->setSpacing(10);
-        auto *dot = text(QStringLiteral("•"), 10.5, theme::accent(), QFont::Bold);
-        dot->setWordWrap(false);
-        auto *words = text(line, 10.5, theme::c().textBright);
-        words->setTextFormat(Qt::PlainText);
-        row->addWidget(dot, 0, Qt::AlignTop);
-        row->addWidget(words, 1, Qt::AlignTop);
-        listBox->addLayout(row);
+    // Several versions: each block under its own number, newest on top
+    // (1.3.4 to 1.5.0 showed 1.4.0's lines first, all as one list).
+    for (int v = 0; v < versions.size(); ++v) {
+        if (versions.size() > 1) {
+            if (v > 0)
+                listBox->addSpacing(10);
+            auto *heading = text(versions[v].first, 10, theme::c().textBody, QFont::Bold);
+            heading->setTextFormat(Qt::PlainText);
+            listBox->addWidget(heading);
+        }
+        for (const QString &line : versions[v].second) {
+            auto *row = new QHBoxLayout;
+            row->setSpacing(10);
+            auto *dot = text(QStringLiteral("•"), 10.5, theme::accent(), QFont::Bold);
+            dot->setWordWrap(false);
+            auto *words = text(line, 10.5, theme::c().textBright);
+            words->setTextFormat(Qt::PlainText);
+            row->addWidget(dot, 0, Qt::AlignTop);
+            row->addWidget(words, 1, Qt::AlignTop);
+            listBox->addLayout(row);
+        }
     }
     auto *scroll = new QScrollArea;
     scroll->setWidget(list);

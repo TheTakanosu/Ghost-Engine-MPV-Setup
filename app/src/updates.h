@@ -5,6 +5,8 @@
 #include <QObject>
 #include <QPoint>
 #include <QString>
+#include <QStringList>
+#include <QPair>
 #include <functional>
 
 class QAbstractButton;
@@ -100,7 +102,8 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
 
 private:
-    WhatsNewDialog(const QString &version, const QStringList &lines, QWidget *parent,
+    // versions: each version's lines, newest version first.
+    WhatsNewDialog(const QString &version, const QList<QPair<QString, QStringList>> &versions, QWidget *parent,
                    const std::function<void(QAbstractScrollArea *)> &smooth);
     QPoint m_dragFrom;
 };
