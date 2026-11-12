@@ -7887,15 +7887,24 @@ void MainWindow::loadRecommended(bool fresh, bool advance)
     }
     const QVector<PlaylistEntry> entries = m_library.playlists()[m_open].readEntries();
     // The radio of a song near the end: the last first, then one further
-    // back each time the shown ones run out.
-    QString seed;
-    for (int back = m_recSeed; back < entries.size() && seed.isEmpty(); ++back) {
-        seed = youtube::videoId(entries[entries.size() - 1 - back].target);
+    // back each time the shown ones run out. Lists made before the app kept
+    // video ids (searches, imports, files) have none in their lines: the id
+    // the covers were found with is used, else the song is looked up by its
+    // name (2026-11-12: such lists only said "Nothing more to find").
+    QString seed, query;
+    for (int back = m_recSeed; back < entries.size() && seed.isEmpty() && query.isEmpty(); ++back) {
+        const PlaylistEntry &e = entries[entries.size() - 1 - back];
+        seed = idForTarget(e.target);
+        if (seed.isEmpty()) {
+            query = youtube::searchQuery(e.target);
+            if (query.isEmpty())
+                query = e.title.trimmed();
+        }
         m_recSeed = back + 3;
     }
     m_recBox->show();
     updateRecCard();
-    if (seed.isEmpty()) {
+    if (seed.isEmpty() && query.isEmpty()) {
         m_recStatus->setText(entries.isEmpty() ? QStringLiteral("Add a song first: they are found from its radio.")
                                                : QStringLiteral("Nothing more to find."));
         m_recList->clear();
@@ -7905,15 +7914,30 @@ void MainWindow::loadRecommended(bool fresh, bool advance)
     m_recStatus->setText("Finding songs...");
     const int serial = ++m_recSerial;
     const QString forList = m_recFor;
-    m_ytClient.radio(seed, [this, serial, forList, advance](QVector<ytmusic::Item> items) {
+    const auto askRadio = [this, serial, forList, advance](const QString &id) {
+        m_ytClient.radio(id, [this, serial, forList, advance](QVector<ytmusic::Item> items) {
+            if (serial != m_recSerial || forList != m_recFor)
+                return;
+            for (const ytmusic::Item &it : items)
+                if (!it.id.isEmpty() && !m_recSeen.contains(it.id)) {
+                    m_recSeen.insert(it.id);
+                    m_recPool << it;
+                }
+            showRecommended(advance);
+        });
+    };
+    if (!seed.isEmpty()) {
+        askRadio(seed);
+        return;
+    }
+    // Videos, not songs: a song search would end one the user is making.
+    m_ytClient.search(query, ytmusic::Kind::Video, [this, serial, forList, advance, askRadio](QVector<ytmusic::Item> items) {
         if (serial != m_recSerial || forList != m_recFor)
             return;
-        for (const ytmusic::Item &it : items)
-            if (!it.id.isEmpty() && !m_recSeen.contains(it.id)) {
-                m_recSeen.insert(it.id);
-                m_recPool << it;
-            }
-        showRecommended(advance);
+        if (items.isEmpty() || items.first().id.isEmpty())
+            showRecommended(advance);   // what there is; Refresh tries further back
+        else
+            askRadio(items.first().id);
     });
 }
 
@@ -7924,7 +7948,7 @@ void MainWindow::showRecommended(bool refresh)
     // Never one already in the list (added since, or there from the start).
     QSet<QString> inList;
     for (const PlaylistEntry &e : m_library.playlists()[m_open].readEntries())
-        inList.insert(youtube::videoId(e.target));
+        inList.insert(idForTarget(e.target));
     const auto keep = [&inList](const ytmusic::Item &it) { return !inList.contains(it.id); };
     QVector<ytmusic::Item> next;
     QVector<ytmusic::Item> stillShown;

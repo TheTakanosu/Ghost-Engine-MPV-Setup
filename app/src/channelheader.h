@@ -26,8 +26,7 @@ public:
     void setAbout(const ytmusic::ChannelAbout &about);
     void setFollowed(bool followed);
     void setLive(bool live);
-    // animate: the header shrinks or grows over a moment, so the videos
-    // under it glide up instead of jumping (Batın, 2026-11-10).
+    // Whole or folded at once (the scrolling folds it bit by bit).
     void setFolded(bool folded, bool animate = false);
     bool folded() const { return m_folded; }
     // How far the videos under it are scrolled: it shrinks by as much.
@@ -39,12 +38,18 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
 
 private:
     void refreshPictures();
     void showMore(bool more);
     void placeBanner();
+    void measure();
+    void remeasure();
+    void placeGap();
 
     RemotePictures *m_pictures;
     QString m_id;
@@ -71,5 +76,15 @@ private:
     QLabel *m_facts = nullptr;
     QLabel *m_liveTag = nullptr;
     QPushButton *m_follow = nullptr;
-    class QVariantAnimation *m_heightGlide = nullptr;
+    QWidget *m_body = nullptr;   // the whole header, one block
+    QWidget *m_row = nullptr;    // folded: the one row
+    class RoundPicture *m_smallAvatar = nullptr;
+    QLabel *m_smallName = nullptr;
+    QLabel *m_smallMeta = nullptr;
+    QPushButton *m_smallFollow = nullptr;
+    class QGraphicsOpacityEffect *m_bodyFade = nullptr;
+    class QGraphicsOpacityEffect *m_rowFade = nullptr;
+    QWidget *m_gap = nullptr;
+    int m_scrolled = 0;
+    bool m_inResize = false;
 };

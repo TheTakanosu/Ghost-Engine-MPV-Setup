@@ -4,6 +4,8 @@
 #include "theme.h"
 
 #include <QDesktopServices>
+#include <QGraphicsOpacityEffect>
+#include <QResizeEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -37,6 +39,27 @@ protected:
         const QSizeF fill = QSizeF(picture.size()).scaled(QSizeF(size()), Qt::KeepAspectRatioByExpanding);
         const QPointF at((width() - fill.width()) / 2, (height() - fill.height()) / 2);
         p.drawPixmap(QRectF(at, fill), picture, QRectF(picture.rect()));
+    }
+};
+
+// The ground between the header's card and the videos' (see placeGap).
+class CardGap : public QWidget {
+public:
+    using QWidget::QWidget;
+    static constexpr int kRound = 12;
+    int strip = 8;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath ground;
+        ground.addRect(QRectF(rect()));
+        QPainterPath above, below;
+        above.addRoundedRect(QRectF(0, -4 * kRound, width(), 5 * kRound), kRound, kRound);
+        below.addRoundedRect(QRectF(0, kRound + strip, width(), 5 * kRound), kRound, kRound);
+        p.fillPath(ground.subtracted(above).subtracted(below), theme::ground());
     }
 };
 
@@ -74,7 +97,13 @@ protected:
 
 ChannelHeader::ChannelHeader(RemotePictures *pictures, QWidget *parent) : QWidget(parent), m_pictures(pictures)
 {
-    auto *column = new QVBoxLayout(this);
+    // Two faces (Batin, 2026-11-12: squeezed in one layout as it folded,
+    // the name, the description and the Joined line ran into each other).
+    // The whole header is one block that slides up under the page's top as
+    // the videos scroll, never squeezed; once it is nearly gone it fades out
+    // and the one row fades in, the two never seen at once.
+    m_body = new QWidget(this);
+    auto *column = new QVBoxLayout(m_body);
     column->setContentsMargins(8, 0, 8, 4);
     column->setSpacing(14);
 
@@ -159,9 +188,46 @@ ChannelHeader::ChannelHeader(RemotePictures *pictures, QWidget *parent) : QWidge
     row->addLayout(text, 1);
     column->addLayout(row);
 
+    // The one row: picture, name and counts, Follow.
+    m_row = new QWidget(this);
+    auto *small = new QHBoxLayout(m_row);
+    small->setContentsMargins(8, 2, 8, 10);
+    small->setSpacing(14);
+    m_smallAvatar = new RoundPicture;
+    small->addWidget(m_smallAvatar, 0, Qt::AlignVCenter);
+    auto *smallText = new QVBoxLayout;
+    smallText->setSpacing(2);
+    m_smallName = new QLabel;
+    m_smallMeta = new QLabel;
+    m_smallMeta->setObjectName("heroInfo");
+    smallText->addStretch();
+    smallText->addWidget(m_smallName);
+    smallText->addWidget(m_smallMeta);
+    smallText->addStretch();
+    small->addLayout(smallText, 1);
+    m_smallFollow = new QPushButton(QStringLiteral("Follow"));
+    m_smallFollow->setObjectName("followBig");
+    m_smallFollow->setCheckable(true);
+    m_smallFollow->setCursor(Qt::PointingHandCursor);
+    m_smallFollow->setToolTip(m_follow->toolTip());
+    connect(m_smallFollow, &QPushButton::clicked, this, [this] {
+        if (onFollow)
+            onFollow(m_smallFollow->isChecked());
+    });
+    small->addWidget(m_smallFollow, 0, Qt::AlignVCenter);
+    m_bodyFade = new QGraphicsOpacityEffect(m_body);
+    m_bodyFade->setEnabled(false);
+    m_body->setGraphicsEffect(m_bodyFade);
+    m_rowFade = new QGraphicsOpacityEffect(m_row);
+    m_rowFade->setEnabled(false);
+    m_row->setGraphicsEffect(m_rowFade);
+    m_row->hide();
+
+    theme::style(m_name, QStringLiteral("color: @textBright; font-size: 24pt; font-weight: 800;"));
+    theme::style(m_smallName, QStringLiteral("color: @textBright; font-size: 14pt; font-weight: 800;"));
     theme::whenChanged(this, [this] {
-        theme::style(m_name, QStringLiteral("color: @textBright; font-size: %1pt; font-weight: 800;").arg(m_folded ? 14 : 24));
-        theme::style(m_follow, QStringLiteral(
+        for (QPushButton *follow : {m_follow, m_smallFollow})
+        theme::style(follow, QStringLiteral(
             "QPushButton#followBig { background: @textBright; color: @window; border: none; border-radius: 17px;"
             " padding: 0 18px; min-height: 34px; max-height: 34px; font-weight: 600; }"
             "QPushButton#followBig:hover { background: @text; }"
@@ -170,6 +236,9 @@ ChannelHeader::ChannelHeader(RemotePictures *pictures, QWidget *parent) : QWidge
         m_links->setText(m_links->text());
         m_banner->update();
         m_avatar->update();
+        m_smallAvatar->update();
+        if (m_gap)
+            m_gap->update();
     });
     connect(m_pictures, &RemotePictures::ready, this, [this](const QString &url) {
         if (url == m_bannerUrl || url == m_avatarUrl)
@@ -189,26 +258,32 @@ void ChannelHeader::reset(const QString &channelId, const QString &name)
     m_aboutKnown = false;
     m_preview.clear();
     m_name->setText(name.isEmpty() ? QStringLiteral("Loading the channel...") : name);
+    m_smallName->setText(m_name->text());
     m_meta->clear();
+    m_smallMeta->clear();
     m_description->clear();
     m_links->clear();
     m_facts->clear();
     setLive(false);
     m_more = false;
+    m_scrolled = 0;
     refreshPictures();
-    setFolded(false);
+    showMore(false);
 }
 
 void ChannelHeader::setPage(const ytmusic::ChannelPage &page)
 {
-    if (!page.name.isEmpty())
+    if (!page.name.isEmpty()) {
         m_name->setText(page.name);
+        m_smallName->setText(page.name);
+    }
     QStringList meta;
     if (!page.handle.isEmpty())
         meta << page.handle;
     if (!page.about.isEmpty())
         meta << page.about;
     m_meta->setText(meta.join(QStringLiteral("  •  ")));
+    m_smallMeta->setText(m_meta->text());
     const auto full = [](const QString &url) {
         return url.startsWith(QLatin1String("//")) ? QStringLiteral("https:") + url : url;
     };
@@ -242,94 +317,84 @@ void ChannelHeader::setAbout(const ytmusic::ChannelAbout &about)
 
 void ChannelHeader::setFollowed(bool followed)
 {
-    m_follow->setChecked(followed);
-    m_follow->setText(followed ? QStringLiteral("Following") : QStringLiteral("Follow"));
+    for (QPushButton *follow : {m_follow, m_smallFollow}) {
+        follow->setChecked(followed);
+        follow->setText(followed ? QStringLiteral("Following") : QStringLiteral("Follow"));
+    }
 }
 
 void ChannelHeader::setLive(bool live)
 {
     m_liveTag->setVisible(live);
-    m_avatar->live = live;
-    m_avatar->update();
+    for (RoundPicture *picture : {m_avatar, m_smallAvatar}) {
+        picture->live = live;
+        picture->update();
+    }
 }
 
-void ChannelHeader::setFolded(bool folded, bool animate)
+void ChannelHeader::setFolded(bool folded, bool)
 {
-    const bool changes = folded != m_folded;
-    const int before = height();
-    m_folded = folded;
-    m_banner->setVisible(!folded && m_hasBanner);
-    const int side = qRound((folded ? 48 : 120) * theme::zoom());
+    setScrolled(folded ? QWIDGETSIZE_MAX / 2 : 0);
+}
+
+void ChannelHeader::measure()
+{
+    // The block at its own size: the banner, the picture, the description in
+    // its box (two lines, or up to eight that scroll), the links and facts
+    // under "more".
+    m_banner->setVisible(m_hasBanner);
+    const int side = qRound(120 * theme::zoom());
     m_avatar->setFixedSize(side, side);
-    m_descriptionBox->setVisible(!folded && !m_description->text().isEmpty());
-    // The first lines as they are; all of it in at most ~8 lines that scroll.
+    const int smallSide = qRound(48 * theme::zoom());
+    m_smallAvatar->setFixedSize(smallSide, smallSide);
+    m_descriptionBox->setVisible(!m_description->text().isEmpty());
     const int lines = QFontMetrics(m_description->font()).lineSpacing();
-    m_descriptionBox->setFixedHeight(m_more ? qMin(m_description->heightForWidth(qMax(100, m_descriptionBox->width())) + 4, lines * 8)
-                                            : qMin(m_description->heightForWidth(qMax(100, m_descriptionBox->width())) + 4, lines * 2 + 4));
-    m_moreButton->setVisible(!folded && m_canMore);
-    m_links->setVisible(!folded && m_more && !m_links->text().isEmpty());
-    m_facts->setVisible(!folded && m_more && !m_facts->text().isEmpty());
-    theme::style(m_name, QStringLiteral("color: @textBright; font-size: %1pt; font-weight: 800;").arg(folded ? 14 : 24));
+    const int boxWidth = m_descriptionBox->width() > 100 ? m_descriptionBox->width() : qMax(100, width() - side - 60);
+    const int wanted = m_description->heightForWidth(boxWidth) + 4;
+    m_descriptionBox->setFixedHeight(qMin(wanted, m_more ? lines * 8 : lines * 2 + 4));
+    m_moreButton->setVisible(m_canMore);
+    m_links->setVisible(m_more && !m_links->text().isEmpty());
+    m_facts->setVisible(m_more && !m_facts->text().isEmpty());
     placeBanner();
-    if (!animate || !changes || !isVisible()) {
-        if (m_heightGlide)
-            m_heightGlide->stop();
-        setMinimumHeight(0);
-        setMaximumHeight(QWIDGETSIZE_MAX);
-        return;
-    }
-    // From the height it had to the one it now wants, eased.
-    const int after = layout()->hasHeightForWidth() ? layout()->totalHeightForWidth(width()) : sizeHint().height();
-    if (!m_heightGlide) {
-        m_heightGlide = new QVariantAnimation(this);
-        m_heightGlide->setDuration(220);
-        m_heightGlide->setEasingCurve(QEasingCurve::OutCubic);
-        connect(m_heightGlide, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
-            setMaximumHeight(v.toInt());
-            setMinimumHeight(v.toInt());
-        });
-        connect(m_heightGlide, &QVariantAnimation::finished, this, [this] {
-            setMinimumHeight(0);
-            setMaximumHeight(QWIDGETSIZE_MAX);
-        });
-    }
-    m_heightGlide->stop();
-    m_heightGlide->setStartValue(before);
-    m_heightGlide->setEndValue(after);
-    m_heightGlide->start();
+    const int w = qMax(1, width());
+    QLayout *full = m_body->layout();
+    full->invalidate();
+    m_openHeight = full->hasHeightForWidth() ? full->totalHeightForWidth(w) : full->totalSizeHint().height();
+    QLayout *one = m_row->layout();
+    m_foldedHeight = one->hasHeightForWidth() ? one->totalHeightForWidth(w) : one->totalSizeHint().height();
+    m_foldedHeight = qMin(m_foldedHeight, m_openHeight);
 }
 
 void ChannelHeader::setScrolled(int scrolled)
 {
     // As a list's header on the music side: it shrinks as far as the videos
-    // are scrolled, one for one, and is the one row once it is that small;
-    // back at the top it is whole again (Batın, 2026-11-12: the fold at 40 px
-    // with a glide still jumped).
-    if (m_heightGlide)
-        m_heightGlide->stop();
-    const auto wanted = [this] {
-        return layout()->hasHeightForWidth() ? layout()->totalHeightForWidth(width()) : sizeHint().height();
+    // are scrolled, one for one, down to the one row; back at the top it is
+    // whole again. Only the block's place and two opacities change on the
+    // way, nothing is laid out again, so the scrolling stays smooth.
+    m_scrolled = qMax(0, scrolled);
+    if (m_openHeight <= 0)
+        measure();
+    const int h = qBound(m_foldedHeight, m_openHeight - m_scrolled, m_openHeight);
+    m_folded = h <= m_foldedHeight;
+    m_body->setGeometry(0, h - m_openHeight, width(), m_openHeight);
+    m_row->setGeometry(0, 0, width(), m_foldedHeight);
+    // 0 folded, 1 whole. The block is gone before the row starts to show.
+    const qreal p = m_openHeight > m_foldedHeight ? qreal(h - m_foldedHeight) / (m_openHeight - m_foldedHeight) : 1.0;
+    const auto fade = [](QWidget *w, QGraphicsOpacityEffect *effect, qreal opacity) {
+        opacity = qBound(0.0, opacity, 1.0);
+        w->setVisible(opacity > 0.01);
+        effect->setEnabled(opacity < 0.99);
+        effect->setOpacity(opacity);
     };
-    if (!m_folded)
-        m_openHeight = wanted();
-    const int foldedHeight = m_foldedHeight > 0 ? m_foldedHeight : qRound(80 * theme::zoom());
-    const int distance = m_openHeight - foldedHeight;
-    if (distance <= 0 || scrolled >= distance) {
-        if (!m_folded) {
-            setFolded(true);
-            m_foldedHeight = wanted();
-        }
-        setMinimumHeight(0);
-        setMaximumHeight(QWIDGETSIZE_MAX);
-        return;
+    fade(m_body, m_bodyFade, (p - 0.22) / 0.33);
+    fade(m_row, m_rowFade, 1.0 - p / 0.2);
+    if (height() != h || minimumHeight() != h || maximumHeight() != h) {
+        setFixedHeight(h);
+        // The videos under it move in the same frame, not one later.
+        if (!m_inResize && parentWidget() && parentWidget()->layout())
+            parentWidget()->layout()->activate();
     }
-    if (m_folded) {
-        setFolded(false);
-        m_openHeight = wanted();
-    }
-    const int h = qMax(foldedHeight, m_openHeight - qMax(0, scrolled));
-    setMinimumHeight(h);
-    setMaximumHeight(h);
+    placeGap();
 }
 
 void ChannelHeader::showMore(bool more)
@@ -338,15 +403,23 @@ void ChannelHeader::showMore(bool more)
     const QString text = more && m_aboutKnown && !m_about.description.isEmpty() ? m_about.description : m_preview;
     m_description->setText(text);
     m_moreButton->setText(more ? QStringLiteral("less") : QStringLiteral("more"));
-    setFolded(m_folded);
+    remeasure();
+}
+
+void ChannelHeader::remeasure()
+{
+    measure();
+    setScrolled(m_scrolled);
 }
 
 void ChannelHeader::refreshPictures()
 {
     m_banner->picture = m_pictures->get(m_bannerUrl);
     m_avatar->picture = m_pictures->get(m_avatarUrl);
+    m_smallAvatar->picture = m_avatar->picture;
     m_banner->update();
     m_avatar->update();
+    m_smallAvatar->update();
 }
 
 void ChannelHeader::placeBanner()
@@ -358,7 +431,54 @@ void ChannelHeader::placeBanner()
 void ChannelHeader::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    placeBanner();
+    m_inResize = true;
+    if (event->size().width() != event->oldSize().width())
+        remeasure();
+    m_inResize = false;
+    placeGap();
+}
+
+void ChannelHeader::moveEvent(QMoveEvent *event)
+{
+    QWidget::moveEvent(event);
+    placeGap();
+}
+
+void ChannelHeader::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    remeasure();
+}
+
+void ChannelHeader::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    if (m_gap)
+        m_gap->hide();
+}
+
+void ChannelHeader::placeGap()
+{
+    // Under the header the page parts as the cards beside it do: a strip of
+    // the window's ground, the header's bottom corners and the videos' top
+    // corners rounded off, so the header reads as a card of its own (as
+    // Recommended under a list, 2026-11-12). Laid over the page, across its
+    // whole width; the mouse goes through.
+    QWidget *page = parentWidget();
+    if (!page || !isVisible())
+        return;
+    if (!m_gap) {
+        m_gap = new CardGap(page);
+        m_gap->setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
+    const int top = geometry().bottom() + 1;
+    const int spacing = page->layout() ? qMax(0, page->layout()->spacing()) : 8;
+    auto *gap = static_cast<CardGap *>(m_gap);
+    gap->strip = spacing;
+    gap->setGeometry(0, top - CardGap::kRound, page->width(), spacing + 2 * CardGap::kRound);
+    gap->show();
+    gap->raise();
+    gap->update();
 }
 
 void ChannelHeader::wheelEvent(QWheelEvent *event)
