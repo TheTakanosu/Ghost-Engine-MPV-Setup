@@ -1,7 +1,10 @@
 #include "profile.h"
 #include "theme.h"
 
+#include <QDateTime>
 #include <QDir>
+#include <QRegularExpression>
+#include <QTimer>
 #include <QEvent>
 #include <QFile>
 #include <QHBoxLayout>
@@ -182,24 +185,66 @@ void DiscordProfile::fetchAvatar(const QString &hash)
     });
 }
 
-QPixmap RemotePictures::get(const QString &url)
+static QString keptFile(const QString &name)
 {
+    // Only the characters a channel id has, so it is always a file name.
+    QString safe = name;
+    safe.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]")), QStringLiteral("_"));
+    const QString dir = dataFile(QStringLiteral("pictures"));
+    QDir().mkpath(dir);
+    return dir + '/' + safe + QStringLiteral(".png");
+}
+
+QPixmap RemotePictures::get(const QString &url, const QString &keepAs)
+{
+    // The one kept on disk under its name, while there is no other: the
+    // followed channels' pictures were fetched anew every time the app
+    // opened, and with the network slow or down they stayed empty
+    // (Batin, 2026-11-12).
+    QPixmap kept;
+    if (!keepAs.isEmpty()) {
+        auto it = m_kept.constFind(keepAs);
+        if (it == m_kept.cend()) {
+            QPixmap fromDisk;
+            fromDisk.load(keptFile(keepAs));
+            it = m_kept.insert(keepAs, fromDisk);
+        }
+        kept = *it;
+    }
     if (!url.startsWith(QStringLiteral("https://")))
-        return {};
+        return kept;
     auto known = m_pictures.constFind(url);
     if (known != m_pictures.cend())
-        return *known;
+        return known->isNull() ? kept : *known;
+    // A fetch that failed is asked again, but not more than every 30 s
+    // (before, one failure left the picture empty until the app closed).
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_failed.contains(url) && now - m_failed.value(url) < 30000)
+        return kept;
     m_pictures.insert(url, QPixmap());   // asked; empty until it arrives
+    if (!keepAs.isEmpty())
+        m_keepAs.insert(url, keepAs);
     QNetworkReply *reply = m_net.get(QNetworkRequest(QUrl(url)));
     connect(reply, &QNetworkReply::finished, this, [this, reply, url] {
         reply->deleteLater();
+        const QString name = m_keepAs.take(url);
         QPixmap picture;
         if (reply->error() == QNetworkReply::NoError && picture.loadFromData(reply->readAll())) {
             m_pictures.insert(url, picture);
+            m_failed.remove(url);
+            if (!name.isEmpty()) {
+                m_kept.insert(name, picture);
+                picture.save(keptFile(name), "PNG");
+            }
             emit ready(url);
+        } else {
+            m_pictures.remove(url);
+            m_failed.insert(url, QDateTime::currentMSecsSinceEpoch());
+            // Asked again in a while, so the one waiting for it gets it.
+            QTimer::singleShot(31000, this, [this, url] { emit ready(url); });
         }
     });
-    return {};
+    return kept;
 }
 
 // -- listening -----------------------------------------------------------------

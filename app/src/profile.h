@@ -60,7 +60,10 @@ class RemotePictures : public QObject {
 
 public:
     explicit RemotePictures(QObject *parent = nullptr) : QObject(parent) {}
-    QPixmap get(const QString &url);
+    // `keepAs`: a name the picture is also kept under on disk (a channel's
+    // id), shown at once next time, before (or without) the network, and
+    // while a changed address is being fetched.
+    QPixmap get(const QString &url, const QString &keepAs = QString());
 
 signals:
     void ready(const QString &url);
@@ -68,6 +71,9 @@ signals:
 private:
     QNetworkAccessManager m_net;
     QHash<QString, QPixmap> m_pictures;
+    QHash<QString, QString> m_keepAs;     // url -> its disk name, while asked
+    QHash<QString, qint64> m_failed;      // url -> when it last failed (ms)
+    QHash<QString, QPixmap> m_kept;       // disk name -> the picture read from disk
 };
 
 // What has been listened to: a song counts as played after 30 seconds of it,

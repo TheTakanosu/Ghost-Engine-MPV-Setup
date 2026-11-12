@@ -4764,7 +4764,7 @@ QPixmap MainWindow::channelFace(const QString &id, bool live, int shown)
         const QRectF circle = live ? QRectF(3, 2, side - 6, side - 6) : QRectF(1, 1, side - 2, side - 2);
         QPainterPath round;
         round.addEllipse(circle);
-        const QPixmap picture = m_pictures.get(m_channelAvatars.value(id));
+        const QPixmap picture = m_pictures.get(m_channelAvatars.value(id), id);   // kept on disk too
         if (picture.isNull()) {
             p.fillPath(round, theme::c().raised);
         } else {
