@@ -164,6 +164,7 @@ private:
     // YouTube home.
     QWidget *m_homeChips = nullptr;
     QListWidget *m_homeGrid = nullptr;
+    QWidget *m_homePage = nullptr;   // the view the grid is on (inside it: the channel pair)
     QLabel *m_homeStatus = nullptr;
     tiles::VideoCardDelegate *m_homeCards = nullptr;
     QVector<ytmusic::Item> m_home;

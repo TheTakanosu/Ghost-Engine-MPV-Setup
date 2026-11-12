@@ -451,6 +451,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
 
     // -- YouTube home -----------------------------------------------------------
     auto *homePage = new QWidget;
+    m_homePage = homePage;
     auto *homeColumn = new QVBoxLayout(homePage);
     homeColumn->setContentsMargins(20, 16, 12, 0);
     homeColumn->setSpacing(10);
@@ -672,7 +673,7 @@ void SearchPage::setQuery(const QString &text)
     // "Go to artist" kept the old search under it), the search is made
     // again: returning here left that page up (Batın, 2026-11-12).
     if (query == m_query && !query.isEmpty()) {
-        const bool shown = m_youtube ? m_views->currentWidget() == m_homeGrid->parentWidget() && m_homeSearch &&
+        const bool shown = m_youtube ? m_views->currentWidget() == m_homePage && m_homeSearch &&
                                            m_homeChannel == query
                                      : m_views->currentIndex() == 0;
         if (shown)
@@ -853,7 +854,7 @@ void SearchPage::showYouTubeHome()
     showChannelHeader(false);
     if (!m_youtube)
         setYouTubeMode(true);
-    m_views->setCurrentWidget(m_homeGrid->parentWidget());
+    m_views->setCurrentWidget(m_homePage);
     // The chips: All, then the channels watched most.
     QLayout *chips = m_homeChips->layout();
     while (QLayoutItem *child = chips->takeAt(0)) {
@@ -954,7 +955,7 @@ void SearchPage::searchInGrid(const QString &query)
     m_homeChannelId.clear();
     // YouTube's results as its home's cards (channel pictures, length,
     // views), page after page as it is scrolled, the chips above.
-    m_views->setCurrentWidget(m_homeGrid->parentWidget());
+    m_views->setCurrentWidget(m_homePage);
     ++m_homeSerial;
     m_homeFixed = false;
     m_homeSearch = true;
@@ -984,9 +985,9 @@ void SearchPage::showChannel(const QString &channelId, const QString &name)
 {
     if (channelId.isEmpty())
         return;
-    if (m_views->currentWidget() != m_homeGrid->parentWidget())
+    if (m_views->currentWidget() != m_homePage)
         showYouTubeHome();
-    m_views->setCurrentWidget(m_homeGrid->parentWidget());
+    m_views->setCurrentWidget(m_homePage);
     ++m_homeSerial;
     m_homeFixed = false;
     m_homeSearch = false;
