@@ -935,7 +935,8 @@ MainWindow::MainWindow()
     root->addWidget(buildTopBar());
     // The same gap on every side of the two panels.
     auto *body = new QHBoxLayout;
-    body->setContentsMargins(8, 0, 8, 0);
+    body->setContentsMargins(8, 0, 8, 0);   // and 8 above and below on Light: see applyLayoutColors
+    m_bodyBox = body;
     body->addWidget(m_split);
     root->addLayout(body, 1);
     root->addWidget(m_nowPlaying);
@@ -4323,7 +4324,8 @@ protected:
         for (const QRect &r : cards()) {
             for (int i = kSpread; i > 0; --i) {
                 QPainterPath ring;
-                ring.addRoundedRect(QRectF(r).adjusted(-i * 0.7, -i * 0.4 + 3, i * 0.7, i + 3), 14 + i * 0.7, 14 + i * 0.7);
+                // Round on all four sides, a pixel lower than the card.
+                ring.addRoundedRect(QRectF(r).adjusted(-i * 0.7, -i * 0.7 + 1, i * 0.7, i * 0.7 + 1), 14 + i * 0.7, 14 + i * 0.7);
                 p.fillPath(ring, QColor(0, 0, 0, 7));
             }
         }
@@ -5135,6 +5137,15 @@ void MainWindow::applyLayoutColors()
         "QSplitter::handle { background: transparent; }"
         "QWidget#libraryPanel, QWidget#panel { background: %2; border-radius: 12px; }")
                                        .arg(ground.name(), page.name()));
+    // On Light the cards' shadow shows on all four sides (Batin, 2026-11-12:
+    // it fell only into the gaps between them, the top and bottom edges met
+    // the strip and the bar flat), so there the cards stand 8 px off them as
+    // they do off each other. The dark themes have no shadow and keep the
+    // cards against the strip and the bar.
+    if (m_bodyBox) {
+        const int edge = theme::c().light ? 8 : 0;
+        m_bodyBox->setContentsMargins(8, edge, 8, edge);
+    }
     if (menu) {
         menu->raisedLook = true;
         menu->raisedFill = raised;

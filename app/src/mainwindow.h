@@ -187,6 +187,7 @@ private:
     // the switch's animation takes its picture of it.
     void setYouTubeLayout(bool youtube, bool animate, const std::function<void()> &then = {});
     bool m_surfaceHeld = false;   // mpv's picture put away while a layout switch plays
+    class QHBoxLayout *m_bodyBox = nullptr;   // the cards' row between the top strip and the bar
     QWidget *m_mainPanel = nullptr;   // the page's card, darker in the YouTube layout
     QWidget *m_shadows = nullptr;     // the cards' shadows on the grey ground
     bool m_liveBehind = false;   // a live stream paused or wound back
