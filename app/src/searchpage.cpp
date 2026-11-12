@@ -19,6 +19,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QWheelEvent>
@@ -74,6 +75,115 @@ QString coverKey(const ytmusic::Item &item)
 {
     return ytmusic::opensPage(item.kind) ? item.thumbnail : item.id;
 }
+
+
+// An artist's About (2026-11-12): a rounded card, the artist's photo dimmed
+// on its left fading into it, the first three lines of the text with "Show
+// more", and the source (Wikipedia's licence line) small and faint under it.
+class AboutCard : public QWidget {
+public:
+    explicit AboutCard(std::function<QPixmap()> photo, QWidget *parent = nullptr)
+        : QWidget(parent), m_photo(std::move(photo))
+    {
+        auto *column = new QVBoxLayout(this);
+        column->setContentsMargins(24, 20, 24, 18);
+        column->setSpacing(8);
+        m_body = new QLabel;
+        m_body->setWordWrap(true);
+        m_body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        m_body->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        theme::style(m_body, "color: @textBright; font-size: 10.5pt;");
+        m_more = new QPushButton;
+        m_more->setObjectName("link");
+        m_more->setCursor(Qt::PointingHandCursor);
+        m_source = new QLabel;
+        m_source->setWordWrap(true);
+        theme::style(m_source, "color: @faint; font-size: 8pt;");
+        auto *moreRow = new QHBoxLayout;
+        moreRow->setContentsMargins(0, 0, 0, 0);
+        moreRow->addWidget(m_more);
+        moreRow->addStretch();
+        column->addWidget(m_body);
+        column->addLayout(moreRow);
+        column->addSpacing(4);
+        column->addWidget(m_source);
+        connect(m_more, &QPushButton::clicked, this, [this] {
+            m_open = !m_open;
+            fit();
+        });
+    }
+
+    void setText(const QString &about)
+    {
+        // YouTube Music ends the biography with where it came from.
+        QString body = about.trimmed();
+        QString source;
+        const int from = body.lastIndexOf(QStringLiteral("From Wikipedia"));
+        if (from > 0) {
+            source = body.mid(from).simplified();
+            body = body.left(from).trimmed();
+        }
+        m_body->setText(body);
+        m_source->setText(source);
+        m_source->setVisible(!source.isEmpty());
+        m_open = false;
+        fit();
+        update();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        fit();
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath shape;
+        shape.addRoundedRect(QRectF(rect()), 14, 14);
+        p.setClipPath(shape);
+        const QColor ground = theme::c().card;
+        p.fillRect(rect(), ground);
+        const QPixmap photo = m_photo ? m_photo() : QPixmap();
+        if (!photo.isNull()) {
+            // As tall as the card, at most half its width, dimmed and fading
+            // into the card towards the text.
+            const int w = qMin(width() / 2, qMax(height(), 260));
+            const QPixmap fitted = photo.scaled(w, height(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            const QRect src((fitted.width() - w) / 2, (fitted.height() - height()) / 2, w, height());
+            p.setOpacity(theme::c().light ? 0.22 : 0.35);
+            p.drawPixmap(QRect(0, 0, w, height()), fitted, src);
+            p.setOpacity(1);
+            QColor clear = ground;
+            clear.setAlpha(0);
+            QLinearGradient fade(0, 0, w, 0);
+            fade.setColorAt(0, clear);
+            fade.setColorAt(1, ground);
+            p.fillRect(QRect(0, 0, w, height()), fade);
+        }
+    }
+
+private:
+    void fit()
+    {
+        const int width = m_body->width() > 0 ? m_body->width() : this->width() - 48;
+        const int shut = m_body->fontMetrics().lineSpacing() * 3;
+        const int full = m_body->heightForWidth(width);
+        const bool longer = full > shut + 2;
+        m_more->setVisible(longer);
+        m_more->setText(m_open ? QStringLiteral("Show less") : QStringLiteral("Show more"));
+        m_body->setMaximumHeight(longer && !m_open ? shut : QWIDGETSIZE_MAX);
+    }
+
+    std::function<QPixmap()> m_photo;
+    QLabel *m_body = nullptr;
+    QLabel *m_source = nullptr;
+    QPushButton *m_more = nullptr;
+    bool m_open = false;
+};
 
 } // namespace
 
@@ -1382,14 +1492,6 @@ void SearchPage::buildArtistView()
     auto *column = new QVBoxLayout(content);
     column->setContentsMargins(0, 0, 0, 28);
     column->setSpacing(18);
-    auto *back = m_artistBack = linkButton(QStringLiteral("\u2039  Back to results"));
-    connect(back, &QPushButton::clicked, this, &SearchPage::goBack);
-    auto *backRow = new QHBoxLayout;
-    backRow->setContentsMargins(28, 10, 28, 0);
-    backRow->addWidget(back);
-    backRow->addStretch();
-    column->addLayout(backRow);
-
     // The same header as a playlist's, its picture the artist's photo.
     m_artistHeader = new PlaylistHeader([this] {
         const QPixmap photo = m_artist.photo.isEmpty() ? QPixmap() : m_covers.get(m_artist.photo, ThumbnailCache::Size::Card);
@@ -1413,6 +1515,14 @@ void SearchPage::buildArtistView()
     m_artistHeadRow = new QHBoxLayout(m_artistHeader);
     m_artistHeadRow->addLayout(text, 1);
     column->addWidget(m_artistHeader);
+    // Back sits in the header's top left corner, over its wash, instead of a
+    // strip of its own above it (2026-11-12).
+    m_artistBack = linkButton(QStringLiteral("\u2039  Back to results"));
+    m_artistBack->setParent(m_artistHeader);
+    m_artistBack->adjustSize();
+    m_artistBack->move(10, 3);
+    m_artistBack->raise();
+    connect(m_artistBack, &QPushButton::clicked, this, &SearchPage::goBack);
 
     auto *play = new icons::IconButton(icons::Icon::Play, 52, "Play its most played songs");
     play->setRound(theme::accent(), theme::accentText(), theme::c().onAccent);
@@ -1478,10 +1588,9 @@ void SearchPage::buildArtistView()
                                          .value(item->data(tiles::kEntryRole).toInt());
             openAlbum(it.id, it.title, it.thumbnail);
         });
-    m_artistAbout = new QLabel;
-    m_artistAbout->setObjectName("heroInfo");
-    m_artistAbout->setWordWrap(true);
-    m_artistAbout->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_artistAbout = new AboutCard([this] {
+        return m_artist.photo.isEmpty() ? QPixmap() : m_covers.get(m_artist.photo, ThumbnailCache::Size::Card);
+    });
     m_artistAboutSection = section("About", m_artistAbout);
     sections->addWidget(m_artistAboutSection);
     column->addLayout(sections);
@@ -1570,7 +1679,7 @@ void SearchPage::openArtist(const QString &id, const QString &name)
         m_artistSongsSection->setVisible(!page.songs.isEmpty());
         m_artistAlbumsSection->setVisible(!page.albums.isEmpty());
         m_artistSinglesSection->setVisible(!page.singles.isEmpty());
-        m_artistAbout->setText(page.about);
+        static_cast<AboutCard *>(m_artistAbout)->setText(page.about);
         m_artistAboutSection->setVisible(!page.about.isEmpty());
         fitArtistTitle();
         m_artistHeader->update();
@@ -1627,8 +1736,10 @@ void SearchPage::setOrigin(bool fromResults)
     m_fromResults = fromResults;
     const QString text = fromResults ? QStringLiteral("\u2039  Back to results") : QStringLiteral("\u2039  Back");
     for (QPushButton *b : {m_listBack, m_artistBack})
-        if (b)
+        if (b) {
             b->setText(text);
+            b->adjustSize();
+        }
 }
 
 void SearchPage::goBack()

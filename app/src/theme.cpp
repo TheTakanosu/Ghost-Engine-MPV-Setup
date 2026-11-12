@@ -270,6 +270,33 @@ void whenChanged(QObject *owner, std::function<void()> refresh)
     refreshers().append({owner, std::move(refresh)});
 }
 
+namespace {
+
+class HoverLink : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Enter || event->type() == QEvent::Leave) {
+            auto *w = static_cast<QWidget *>(watched);
+            QFont f = w->font();
+            f.setUnderline(event->type() == QEvent::Enter);
+            w->setFont(f);
+        }
+        return false;
+    }
+};
+
+} // namespace
+
+void hoverLink(QWidget *widget)
+{
+    widget->setCursor(Qt::PointingHandCursor);
+    widget->installEventFilter(new HoverLink(widget));
+}
+
 QColor customAccent()
 {
     return g_accent;

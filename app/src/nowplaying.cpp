@@ -110,9 +110,13 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     m_title->setObjectName("npTitle");
     m_subtitle = new QLabel;
     m_subtitle->setObjectName("npSubtitle");
-    m_subtitle->setCursor(Qt::PointingHandCursor);
+    theme::hoverLink(m_subtitle);
     m_subtitle->setToolTip("Go to the artist");
     m_subtitle->installEventFilter(this);
+    // The list and the place in it, beside the artist's name but not part of
+    // the link (only the name is underlined under the mouse).
+    m_where = new QLabel;
+    m_where->setObjectName("npSubtitle");
     m_like = new QPushButton;
     m_like->setCursor(Qt::PointingHandCursor);
     m_like->hide();
@@ -142,7 +146,13 @@ NowPlayingBar::NowPlayingBar(MpvClient *mpv, ThumbnailCache *covers, QWidget *pa
     info->setSpacing(2);
     info->addStretch();
     info->addLayout(titleRow);
-    info->addWidget(m_subtitle);
+    auto *subRow = new QHBoxLayout;
+    subRow->setContentsMargins(0, 0, 0, 0);
+    subRow->setSpacing(0);
+    subRow->addWidget(m_subtitle);
+    subRow->addWidget(m_where);
+    subRow->addStretch(1);
+    info->addLayout(subRow);
     info->addStretch();
     auto *leftBox = new QWidget;
     m_leftBox = leftBox;
@@ -342,13 +352,22 @@ void NowPlayingBar::setResume(const QString &title, const QString &subtitle, con
         showIdle();
 }
 
+void NowPlayingBar::setSubtitle(const QString &artist, const QString &where)
+{
+    m_subtitle->setText(artist);
+    m_subtitle->setVisible(!artist.isEmpty());
+    m_where->setText(artist.isEmpty() || where.isEmpty() ? where : QStringLiteral("  \u00B7  ") + where);
+}
+
 void NowPlayingBar::showIdle()
 {
     m_playPause->setIcon(icons::Icon::Play);
     if (!m_resume.title.isEmpty()) {
         // Where the last session stopped, waiting for play.
         m_title->setText(m_resume.title);
-        m_subtitle->setText(m_resume.subtitle);
+        const qsizetype dot = m_resume.subtitle.indexOf(QStringLiteral("  \u00B7  "));
+        setSubtitle(dot < 0 ? QString() : m_resume.subtitle.left(dot),
+                    dot < 0 ? m_resume.subtitle : m_resume.subtitle.mid(dot + 5));
         m_elapsed->setText(clock(m_resume.at));
         m_total->setText(m_resume.duration > 0 ? clock(m_resume.duration) : QStringLiteral("--:--"));
         m_position->setValue(m_resume.duration > 0 ? int(1000 * m_resume.at / m_resume.duration) : 0);
@@ -359,7 +378,7 @@ void NowPlayingBar::showIdle()
         return;
     }
     m_title->setText("Nothing playing");
-    m_subtitle->setText("Pick a playlist and press play");
+    setSubtitle(QString(), "Pick a playlist and press play");
     m_elapsed->setText("--:--");
     m_total->setText("--:--");
     m_position->setValue(0);
@@ -447,9 +466,7 @@ void NowPlayingBar::onProperty(const QString &name)
             if (!given.isEmpty())
                 sub = given;
         }
-        if (!uploader.isEmpty())
-            sub = uploader + (sub.isEmpty() ? QString() : QStringLiteral("  ·  ") + sub);
-        m_subtitle->setText(sub);
+        setSubtitle(uploader, sub);
     }
     if (name == "media-title" || name == "user-data/ghost/source" || name == "path")
         refreshCover();

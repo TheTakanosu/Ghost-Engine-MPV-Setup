@@ -73,6 +73,9 @@ protected:
 private:
     void onProperty(const QString &name);
     void showIdle();
+    // The artist (a link) and, after it, the list and the place in it.
+    void setSubtitle(const QString &artist, const QString &where);
+    QLabel *m_where = nullptr;
 
     MpvClient *m_mpv;
     ThumbnailCache *m_covers;

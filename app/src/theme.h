@@ -96,4 +96,8 @@ inline QColor muted() { return c().muted; }
 // A muted tint picked from the name, so a cover-less list keeps its colour.
 QColor placeholderFor(const QString &name);
 
+// A name that opens something when clicked (an artist's, a channel's):
+// underlined under the mouse, with the hand cursor (2026-11-12).
+void hoverLink(QWidget *widget);
+
 } // namespace theme

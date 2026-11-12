@@ -205,7 +205,7 @@ private:
     QLabel *m_artistKicker = nullptr;
     QLabel *m_artistName = nullptr;
     QLabel *m_artistInfo = nullptr;
-    QLabel *m_artistAbout = nullptr;
+    QWidget *m_artistAbout = nullptr;
     QListWidget *m_artistSongs = nullptr;
     QListWidget *m_artistAlbums = nullptr;
     QListWidget *m_artistSingles = nullptr;

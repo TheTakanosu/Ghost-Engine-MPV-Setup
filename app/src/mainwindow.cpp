@@ -5200,6 +5200,7 @@ void MainWindow::openPlaylist(int index, bool keepView)
         m_recFor.clear();
     } else if (p.path != m_recFor) {
         m_recFor = p.path;
+        setRecommendedOpen(false);
         QTimer::singleShot(0, this, [this] { loadRecommended(true); });
     } else {
         QTimer::singleShot(0, this, [this] { showRecommended(false); });
@@ -7642,6 +7643,13 @@ QWidget *MainWindow::buildRecommended()
     auto *column = new QVBoxLayout(m_recBox);
     column->setContentsMargins(0, 6, 0, 0);
     column->setSpacing(4);
+    // A dark rule between the list and its recommendations, so they read as
+    // a section of their own and not more of the list (2026-11-12).
+    auto *rule = new QFrame;
+    rule->setFixedHeight(3);
+    theme::style(rule, "background: @base; border: none; border-radius: 1px;");
+    column->addWidget(rule);
+    column->addSpacing(4);
     auto *head = new QHBoxLayout;
     m_recToggle = new QPushButton;
     m_recToggle->setObjectName("columnButton");
@@ -7673,14 +7681,19 @@ QWidget *MainWindow::buildRecommended()
     m_recList->viewport()->installEventFilter(this);
     column->addWidget(m_recList);
 
-    const auto setOpen = [this](bool open) {
-        QSettings().setValue("recommended/open", open);
-        m_recToggle->setText(QStringLiteral("Recommended  %1").arg(open ? QStringLiteral("\u25BE") : QStringLiteral("\u25B8")));
-        m_recList->setVisible(open);
-        m_recRefresh->setVisible(open);
-    };
-    setOpen(QSettings().value("recommended/open", true).toBool());
-    connect(m_recToggle, &QPushButton::clicked, this, [this, setOpen] { setOpen(!m_recList->isVisible()); });
+    // Shut by default (it takes no room until asked for), opened with its
+    // header or by scrolling the list to its end (2026-11-12).
+    setRecommendedOpen(false);
+    connect(m_recToggle, &QPushButton::clicked, this, [this] { setRecommendedOpen(!m_recList->isVisible()); });
+    connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
+        QScrollBar *bar = m_songs->verticalScrollBar();
+        if (value < bar->maximum() || bar->maximum() <= 0 || m_recList->isVisible() || !m_recBox->isVisible()
+            || m_recShown.isEmpty())
+            return;
+        setRecommendedOpen(true);
+        // The list got shorter: keep its last songs in sight above the rule.
+        QTimer::singleShot(0, this, [this] { m_songs->scrollToBottom(); });
+    });
     connect(m_recRefresh, &QPushButton::clicked, this, [this] {
         if (m_recPool.size() < 5)
             loadRecommended(false, true);
@@ -7706,6 +7719,13 @@ QWidget *MainWindow::buildRecommended()
     });
     m_recBox->hide();
     return m_recBox;
+}
+
+void MainWindow::setRecommendedOpen(bool open)
+{
+    m_recToggle->setText(QStringLiteral("Recommended  %1").arg(open ? QStringLiteral("\u25BE") : QStringLiteral("\u25B8")));
+    m_recList->setVisible(open);
+    m_recRefresh->setVisible(open);
 }
 
 void MainWindow::loadRecommended(bool fresh, bool advance)

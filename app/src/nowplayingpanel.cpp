@@ -324,7 +324,7 @@ NowPlayingPanel::NowPlayingPanel(QWidget *parent) : QWidget(parent)
     m_title->installEventFilter(this);
     m_artist = new QLabel;
     theme::style(m_artist, "color: @dim; font-weight: 600;");
-    m_artist->setCursor(Qt::PointingHandCursor);
+    theme::hoverLink(m_artist);
     m_artist->setToolTip("Go to the artist");
     m_artist->installEventFilter(this);
     auto *about = new QPushButton(QString(QChar(0xE946)));   // an "i" in a circle

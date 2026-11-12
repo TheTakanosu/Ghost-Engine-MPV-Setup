@@ -119,6 +119,7 @@ private:
     int m_recSeed = 0;                  // how many songs from the end the next radio starts at
     int m_recSerial = 0;
     QWidget *buildRecommended();
+    void setRecommendedOpen(bool open);
     void loadRecommended(bool fresh, bool advance = false);   // advance: then show the next ones
     void showRecommended(bool refresh);   // refresh: the next ones, not the same
     void addRecommended(int row);
