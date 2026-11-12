@@ -399,6 +399,27 @@ const QList<QPair<QString, QStringList>> &allNotes()
             "A video whose picture stopped while the sound went on now asks for its picture again by itself.",
             "Lists and sliders in Settings no longer change when the page is scrolled over them.",
         }},
+        {QStringLiteral("1.5.0"), {
+            "Artist pages: the artist's photo, their most played songs, albums and singles, a Radio and an About card. Open one from the artist's name in the player bar or Now playing, or Go to artist in a song's menu.",
+            "Album pages: play an album in order or save it to your library. Search now shows Artists and Albums too.",
+            "Recommended under your song lists: songs that fit the list and aren't in it yet. + adds one, a double-click plays it with its radio. Pull the panel up by its grip, or scroll to the end of the list to open it.",
+            "Give a playlist a description: click under its name. It is kept in the list's file, so it goes with it when you share it.",
+            "Import from Spotify (Library + > Import from Spotify...): paste a playlist or album link, or a list of track links copied from Spotify. No account or key needed.",
+            "A ten-band equalizer with presets. Settings > Playback.",
+            "Sleep timer: right-click the play button to pause after 5 to 90 minutes or at the end of the song.",
+            "Private session: plays stay out of your history and top songs, and Discord shows nothing. Settings > Privacy or right-click your profile. It ends when the app closes.",
+            "Music and YouTube searches are kept apart: each side searches its own, with its own earlier searches.",
+            "The YouTube Home is built from what you search and watch, a few videos from each channel, instead of filling up with the last channel you watched.",
+            "The video page shows the channel's picture and name, with LIVE when it is on air. Click the picture to open the channel.",
+            "The floating island shows for songs too, on both the Music and the YouTube side.",
+            "Settings > Appearance: \"Use Ghost Engine for\" Music and YouTube, Music only or YouTube only, and a switch for the floating island.",
+            "Channel pages scroll smoothly: the header slides away and a one-row header with the picture, name and Follow takes its place.",
+            "Live streams stay marked LIVE while they play normally, and Go live no longer shows all the time.",
+            "Light theme: the cards have a soft shadow on all four sides.",
+            "Followed channels' pictures are kept, so they show at once when the app opens, even before the network is up.",
+            "Clicking an empty spot leaves the text box you were typing in.",
+            "Fixes: searching again after opening an artist shows the new results; songs no longer skip to the end one after another after a resume; the library highlights the list you opened from the player bar or the island; cleaner corners and a centred + on songs; artist names are underlined under the mouse.",
+        }},
     };
     return notes;
 }
