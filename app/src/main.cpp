@@ -140,7 +140,7 @@ int main(int argc, char *argv[])
     if (!atStartup)
         window.show();
     else if (!QSettings().value("tray/keepRunning", false).toBool())
-        window.showMinimized();
+        window.showMinimizedAtStartup();
     window.importFiles(files);
     return app.exec();
 }

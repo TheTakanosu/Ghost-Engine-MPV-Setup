@@ -1493,7 +1493,10 @@ void MainWindow::changeEvent(QEvent *event)
         m_maxButton->setText(QString(isMaximized() ? kIconRestore : kIconMax));
     if (event->type() == QEvent::WindowStateChange) {
         schedulePlace();   // the windows over the picture go and come with it
-        QTimer::singleShot(0, this, [this] { keepNormalPlaceOnScreen(); });
+        QTimer::singleShot(0, this, [this] {
+            keepNormalPlaceOnScreen();
+            keepFrameStyle();
+        });
     }
     // Brought up from the taskbar, Windows gives the keys back to the window
     // that last had them, which can be mpv's inside the picture: Space and
@@ -7349,6 +7352,41 @@ void MainWindow::bringToFront()
         ShowWindow(reinterpret_cast<HWND>(winId()), SW_RESTORE);
     raise();
     activateWindow();
+}
+
+void MainWindow::showMinimizedAtStartup()
+{
+    // Left maximised, opened minimised at sign-in: Qt called the window
+    // maximised but never told Windows, which brought it back from the
+    // taskbar at its normal size. The two disagreed from then on: a gap at
+    // the screen's edge, no snapping to the top, FancyZones not seeing it.
+    const bool maximized = isMaximized();
+    showMinimized();
+    HWND hwnd = reinterpret_cast<HWND>(winId());
+    WINDOWPLACEMENT wp{sizeof(wp)};
+    if (maximized && GetWindowPlacement(hwnd, &wp)) {
+        wp.flags |= WPF_RESTORETOMAXIMIZED;
+        wp.showCmd = SW_SHOWMINNOACTIVE;
+        SetWindowPlacement(hwnd, &wp);
+    }
+    keepFrameStyle();
+}
+
+void MainWindow::keepFrameStyle()
+{
+    // The frame bits make Windows treat the frameless window as a window:
+    // snapping, maximising by dragging to the top, FancyZones. Full screen
+    // goes without them on purpose.
+    if (windowState() & Qt::WindowFullScreen)
+        return;
+    HWND hwnd = reinterpret_cast<HWND>(winId());
+    const LONG want = WS_THICKFRAME | WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+    const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+    if ((style & want) != want) {
+        SetWindowLongW(hwnd, GWL_STYLE, style | want);
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 void MainWindow::addFolder()
