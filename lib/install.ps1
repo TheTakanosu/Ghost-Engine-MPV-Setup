@@ -85,6 +85,16 @@ function Find-Python {
 # way Windows checks it: a valid Authenticode signature from the Python
 # Software Foundation, or it is not run.
 function Install-Python([string]$Temp) {
+    # Optional like node: a download that fails is said, and setup finishes.
+    try {
+        return Install-PythonFrom $Temp
+    } catch {
+        Say "Python was not installed: $($_.Exception.Message)" "Yellow"
+        return $null
+    }
+}
+
+function Install-PythonFrom([string]$Temp) {
     $setup = Join-Path $Temp "python-setup.exe"
     Fetch $PYTHON_EXE $setup "Python $PYTHON_VERSION"
     $sig = Get-AuthenticodeSignature $setup
@@ -134,6 +144,18 @@ function Find-Node([string]$Dir) {
 # The newest LTS line rather than the newest release: LTS is the one node
 # itself calls stable. Checked against the SHA-256 node publishes with it.
 function Install-Node([string]$Target, [string]$Temp) {
+    # Optional, so a failure here is said and setup goes on: nodejs.org not
+    # resolving stopped the whole install before (Windows Sandbox, 1.5.0
+    # test), leaving mpv and yt-dlp without the Ghost layer or the app.
+    try {
+        Install-NodeFrom $Target $Temp
+    } catch {
+        Say "node was not installed: $($_.Exception.Message)" "Yellow"
+        Say "Everything else works without it; run install.bat again later to add it." "Yellow"
+    }
+}
+
+function Install-NodeFrom([string]$Target, [string]$Temp) {
     $index = Invoke-RestMethod -Uri $NODE_INDEX -UseBasicParsing
     $lts = @($index | Where-Object { $_.lts })[0].version
     $base = "https://nodejs.org/dist/$lts"
