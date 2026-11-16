@@ -2797,9 +2797,13 @@ void MainWindow::importStray(bool ask)
         if (settings.contains("library/autoImport"))
             return;   // asked once already
         const auto answer = QMessageBox::question(this, "Ghost Engine",
-            QStringLiteral("There are %1 playlists from the bot in your Downloads folder.\n\n"
-                           "Move them into your library (Music\\Ghost Engine)? New ones will then "
-                           "move in by themselves while Ghost Engine is open.").arg(stray.size()));
+            stray.size() == 1
+                ? QStringLiteral("There is a playlist from the bot in your Downloads folder.\n\n"
+                                 "Move it into your library (Music\\Ghost Engine)? New ones will then "
+                                 "move in by themselves while Ghost Engine is open.")
+                : QStringLiteral("There are %1 playlists from the bot in your Downloads folder.\n\n"
+                                 "Move them into your library (Music\\Ghost Engine)? New ones will then "
+                                 "move in by themselves while Ghost Engine is open.").arg(stray.size()));
         settings.setValue("library/autoImport", answer == QMessageBox::Yes);
         if (answer != QMessageBox::Yes)
             return;
