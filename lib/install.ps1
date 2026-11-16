@@ -185,6 +185,14 @@ function Get-Json([string]$Url) {
 # API. The usual link went 504 (Gateway Timeout) on every try for
 # GhostEngine-win64.zip on 2026-11-05 while the API handed out the same file.
 function Save-Asset($Asset, [string]$To) {
+    # node, Python and 7zr come by plain link, not as a GitHub release file:
+    # handed a string, $Asset.browser_download_url was empty and every one of
+    # those downloads failed ("Uri is null"), which stopped setup at node on
+    # a PC without it (1.4.0, found in Windows Sandbox for 1.5.0).
+    if ($Asset -is [string]) {
+        Invoke-WebRequest -Uri $Asset -OutFile $To -UseBasicParsing
+        return
+    }
     try {
         Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $To -UseBasicParsing
     } catch {
