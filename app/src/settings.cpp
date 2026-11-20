@@ -850,6 +850,24 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (!m_loading)
             QSettings().setValue("video/miniOnLeave", on);
     });
+    // Tabs (Batin, 2026-11-20).
+    m_instantPlay = new ToggleSwitch;
+    addRow(window, "Instant Play for tabs",
+           "On: clicking a tab plays its video at once. "
+           "Off: the tab opens with its cover and a play button, and plays when you press it.",
+           m_instantPlay);
+    connect(m_instantPlay, &QAbstractButton::toggled, this, [this](bool on) {
+        if (!m_loading)
+            QSettings().setValue("video/instantPlay", on);
+    });
+    m_rememberTabs = new ToggleSwitch;
+    addRow(window, "Remember last tabs",
+           "Your video tabs are kept when you close Ghost Engine, and are there the next time it starts.",
+           m_rememberTabs);
+    connect(m_rememberTabs, &QAbstractButton::toggled, this, [this](bool on) {
+        if (!m_loading)
+            QSettings().setValue("youtube/rememberTabs", on);
+    });
 
     QVBoxLayout *downloads;
     auto *downloadsCard = card("Downloads", downloads);
@@ -1444,6 +1462,8 @@ void SettingsPage::load()
     m_usage->setCurrentIndex(qMax(0, m_usage->findData(QSettings().value("look/usage", "both").toString())));
     m_island->setChecked(QSettings().value("look/island", true).toBool());
     m_miniOnLeave->setChecked(QSettings().value("video/miniOnLeave", false).toBool());
+    m_instantPlay->setChecked(QSettings().value("video/instantPlay", false).toBool());
+    m_rememberTabs->setChecked(QSettings().value("youtube/rememberTabs", true).toBool());
     m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));
     m_region->setCurrentIndex(qMax(0, m_region->findData(QSettings().value("search/region").toString().toUpper())));
     m_startup->setChecked(QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),

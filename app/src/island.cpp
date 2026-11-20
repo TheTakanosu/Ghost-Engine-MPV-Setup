@@ -94,7 +94,12 @@ NowIsland::NowIsland(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
     };
     m_play = new icons::IconButton(icons::Icon::Pause, 30, "Play / pause", this);
     m_play->hide();
-    connect(m_play, &QAbstractButton::clicked, this, [this] { m_mpv->command({"cycle", "pause"}); });
+    connect(m_play, &QAbstractButton::clicked, this, [this] {
+        if (onPlayPause)
+            onPlayPause();
+        else
+            m_mpv->command({"cycle", "pause"});
+    });
     m_openButton = textButton("Open", "Go to the video's page");
     connect(m_openButton, &QPushButton::clicked, this, [this] {
         closeNow();

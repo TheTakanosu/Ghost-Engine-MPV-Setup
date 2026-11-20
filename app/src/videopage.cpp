@@ -911,6 +911,16 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_backToVideo->setParent(m_screen);
     m_backToVideo->hide();
     connect(m_backToVideo, &QPushButton::clicked, this, [this] { if (onListenOnly) onListenOnly(false); });
+    m_coverPlay = new QPushButton(QString(QChar(0xF5B0)), m_screen);
+    m_coverPlay->setCursor(Qt::PointingHandCursor);
+    m_coverPlay->setToolTip(QStringLiteral("Play"));
+    m_coverPlay->setFixedSize(72, 72);
+    m_coverPlay->setStyleSheet(QStringLiteral(
+        "QPushButton { border: none; border-radius: 36px; background: rgba(0,0,0,150); color: white;"
+        " font-family: 'Segoe Fluent Icons'; font-size: 26px; padding-left: 4px; }"
+        "QPushButton:hover { background: rgba(0,0,0,200); }"));
+    m_coverPlay->hide();
+    connect(m_coverPlay, &QPushButton::clicked, this, [this] { if (onCoverPlay) onCoverPlay(); });
 
     // While mpv plays in its own window, this stands where the picture was.
     m_away = new QWidget(m_player);
@@ -1594,6 +1604,19 @@ void VideoPage::setRepeat(bool on)
     m_repeat->setToolTip(on ? QStringLiteral("Repeat this video: on") : QStringLiteral("Repeat this video"));
 }
 
+void VideoPage::setCover(bool on, const QPixmap &cover)
+{
+    if (on && !cover.isNull())
+        m_still = cover;
+    if (on == m_coverOn) {
+        m_screen->update();
+        return;
+    }
+    m_coverOn = on;
+    m_coverPlay->setVisible(on);
+    m_screen->update();
+}
+
 void VideoPage::setListenOnly(bool on)
 {
     if (on == m_listenOnly)
@@ -1867,6 +1890,35 @@ bool VideoPage::eventFilter(QObject *watched, QEvent *event)
     }
     if (watched == m_player && event->type() == QEvent::Resize)
         placeScreen();
+    if (watched == m_screen && event->type() == QEvent::Paint && m_coverOn) {
+        // The tab's cover, round as the picture, darkened a little under
+        // the play button in its middle.
+        QPainter p(m_screen);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.fillRect(m_screen->rect(), theme::panel());
+        QPainterPath card;
+        card.addRoundedRect(QRectF(m_screen->rect()), m_corner, m_corner);
+        p.setClipPath(card);
+        p.fillRect(m_screen->rect(), Qt::black);
+        if (!m_still.isNull()) {
+            const QSizeF box = m_screen->size();
+            const QSizeF from = m_still.size();
+            const qreal scale = qMax(box.width() / from.width(), box.height() / from.height());
+            const QSizeF cut(box.width() / scale, box.height() / scale);
+            p.drawPixmap(QRectF(QPointF(0, 0), box), m_still,
+                         QRectF(QPointF((from.width() - cut.width()) / 2, (from.height() - cut.height()) / 2), cut));
+        }
+        p.fillRect(m_screen->rect(), QColor(0, 0, 0, 60));
+        m_coverPlay->move((m_screen->width() - m_coverPlay->width()) / 2, (m_screen->height() - m_coverPlay->height()) / 2);
+        m_coverPlay->raise();
+        return true;
+    }
+    if (watched == m_screen && event->type() == QEvent::MouseButtonRelease && m_coverOn) {
+        if (onCoverPlay)
+            onCoverPlay();   // anywhere on the cover, as YouTube's
+        return true;
+    }
     if (watched == m_screen && event->type() == QEvent::Paint && m_listenOnly) {
         // No thumbnail: a line of text and the button under it, as YouTube
         // says what it hides (Batin, 2026-11-20).

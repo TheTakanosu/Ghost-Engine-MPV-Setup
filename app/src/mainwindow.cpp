@@ -581,7 +581,9 @@ MainWindow::MainWindow()
         }
         setVideoFullScreen(!m_videoFull);
     };
-    m_videoPage->onTogglePause = [this] { m_mpv.command({"cycle", "pause"}); };
+    m_videoPage->onTogglePause = [this] { togglePause(); };
+    // A tab's cover: Play starts what waits paused behind it.
+    m_videoPage->onCoverPlay = [this] { m_mpv.setProperty("pause", false); };
     // Stopped at the end (keep-open), the next or previous one plays,
     // not paused as the end left it.
     m_videoPage->onPrevious = [this] {
@@ -1078,7 +1080,8 @@ MainWindow::MainWindow()
         // the first on the right (Update, the profile).
         QWidget *leftmost = m_tabStrip->isVisible() ? static_cast<QWidget *>(m_tabStrip)
                           : m_search->isVisible() ? static_cast<QWidget *>(m_search) : m_searchButton;
-        QWidget *rightmost = m_updateButton->isVisible() ? m_updateButton : m_profileButton;
+        QWidget *rightmost = m_updateButton->isVisible() ? m_updateButton
+                           : m_profileButton->isVisible() ? m_profileButton : m_gearButton;
         const int left = leftmost->mapTo(this, QPoint(leftmost->width(), 0)).x();
         const int right = rightmost->mapTo(this, QPoint(0, 0)).x();
         return QPair<int, int>(left, right);
@@ -1090,6 +1093,7 @@ MainWindow::MainWindow()
         else
             openPlayingList();
     };
+    m_island->onPlayPause = [this] { togglePause(); };
     m_island->onMini = [this] {
         m_miniAsked = true;
         m_pictureAway = false;
@@ -1176,6 +1180,15 @@ MainWindow::MainWindow()
     m_visitSoon.setInterval(0);
     connect(&m_visitSoon, &QTimer::timeout, this, &MainWindow::noteVisit);
     connect(m_pages, &QStackedWidget::currentChanged, this, [this] { m_visitSoon.start(); });
+    // The YouTube menu's row (Home, History...) lit only while its page is
+    // what shows: on a video it read as still being on Home (Batin, 2026-11-20).
+    connect(m_pages, &QStackedWidget::currentChanged, this, [this] {
+        const bool there = m_pages->currentWidget() == m_searchPage;
+        for (int i = 0; i < m_ytNav.size(); ++i)
+            m_ytNav[i]->setChecked(there && i == m_ytMark);
+        if (m_ytSearchNav)
+            m_ytSearchNav->setChecked(there && m_ytMark == kYtSearch);
+    });
     m_searchPage->onViewChanged = [this] { m_visitSoon.start(); };
     if (settings.value("layout/youtube", false).toBool())
         QTimer::singleShot(0, this, [this] { setYouTubeLayout(true, false); });
@@ -1303,8 +1316,43 @@ MainWindow::MainWindow()
             m_panel->setPosition(m_mpv.property("time-pos").toDouble());
         if (name == "time-pos")
             trackListening();
+        // A tab's cover goes once it plays, or once another video comes.
+        if (m_videoPage->coverShown()) {
+            const QString path = m_mpv.property("path").toString();
+            bool off = name == "pause" && !m_mpv.property("pause").toBool() && m_mpv.connected();
+            if (name == "path" && !path.isEmpty()) {
+                if (path == m_coverTarget)
+                    m_coverArrived = true;
+                else if (m_coverArrived)
+                    off = true;
+            }
+            if (off) {
+                m_videoPage->setCover(false);
+                m_coverTarget.clear();
+                schedulePlace();
+            }
+        }
+        // Where each video was left, for Back to it.
+        // Not while a file changes: time-pos is gone for a moment then, and
+        // read as 0 it wrote over the second the video was left at.
+        const QVariant timePos = name == "time-pos" ? m_mpv.property("time-pos") : QVariant();
+        const bool timeKnown = timePos.isValid() && !timePos.isNull() && timePos.toDouble() > 0.5;
+        if (timeKnown && m_mpv.property("path").toString() == m_lastPath)
+            m_lastPos = timePos.toDouble();
+        if (name == "path") {
+            const QString path = m_mpv.property("path").toString();
+            if (!path.isEmpty() && path != m_lastPath) {
+                if (!m_lastPath.isEmpty())
+                    m_videoSeconds.insert(m_lastPath, m_lastPos);
+                m_lastPath = path;
+                m_lastPos = 0;
+                // Another video on the video page is another place.
+                if (m_pages->currentWidget() == m_videoPage)
+                    m_visitSoon.start();
+            }
+        }
         // The tab that plays keeps its second, for when it is left.
-        if (name == "time-pos" && m_tabStrip->current >= 0) {
+        if (timeKnown && m_tabStrip->current >= 0) {
             VideoTab &tab = m_tabStrip->tabs[m_tabStrip->current];
             if (tab.target == m_mpv.property("path").toString())
                 tab.seconds = m_mpv.property("time-pos").toDouble();
@@ -1683,6 +1731,7 @@ QWidget *MainWindow::buildTopBar()
     m_maxButton = glyphButton(kIconMax, "Maximize", "chrome");
     auto *close = glyphButton(kIconClose, "Close", "chromeClose");
     auto *gear = glyphButton(QChar(0xE713), "Settings", "pill");
+    m_gearButton = gear;
     connect(gear, &QPushButton::clicked, this, &MainWindow::showSettings);
     // Only there while something is behind, in the accent colour: noticed,
     // never in the way, and nothing opens by itself.
@@ -1724,16 +1773,23 @@ QWidget *MainWindow::buildTopBar()
     m_tabStrip->onPick = [this](int i) { pickTab(i); };
     m_tabStrip->onClose = [this](int i) { closeTab(i); };
     m_tabStrip->onMenu = [this](int i, const QPoint &at) { tabMenu(i, at); };
+    m_tabStrip->onMore = [this](const QPoint &at) { showAllTabs(at); };
     m_chromeButtons << m_tabStrip;   // clicked, not a place to drag the window by
-    connect(&m_covers, &ThumbnailCache::ready, m_tabStrip, [this] { m_tabStrip->update(); });
+    connect(&m_covers, &ThumbnailCache::ready, m_tabStrip, [this](const QString &id) {
+        m_tabStrip->update();
+        if (m_videoPage && m_videoPage->coverShown() && id == m_coverId)
+            m_videoPage->setCover(true, m_covers.get(id, ThumbnailCache::Size::Hero));
+    });
     // A moment after mpv's properties change, once they agree with each
     // other (the list's kind can come after the entry's path).
     m_tabsSoon.setSingleShot(true);
     m_tabsSoon.setInterval(400);
     connect(&m_tabsSoon, &QTimer::timeout, this, &MainWindow::syncTabs);
     {
-        // Kept from the last time, none of them loaded.
-        const QJsonArray saved = QJsonDocument::fromJson(QSettings().value("youtube/tabs").toByteArray()).array();
+        // Kept from the last time, none of them loaded (Settings > Remember
+        // last tabs, on unless turned off).
+        const QJsonArray saved = QSettings().value("youtube/rememberTabs", true).toBool()
+            ? QJsonDocument::fromJson(QSettings().value("youtube/tabs").toByteArray()).array() : QJsonArray();
         for (const QJsonValue &v : saved) {
             const QJsonObject o = v.toObject();
             VideoTab t{o.value("target").toString(), o.value("id").toString(), o.value("title").toString(),
@@ -1742,6 +1798,9 @@ QWidget *MainWindow::buildTopBar()
                 m_tabStrip->tabs << t;
         }
         m_tabStrip->changed();
+        // Shown once the layout is known (they were loaded and never shown,
+        // Batin, 2026-11-20).
+        QTimer::singleShot(0, this, [this] { tabsChanged(); });
     }
     row->addWidget(m_tabStrip, 3);
     row->addStretch(2);
@@ -3386,6 +3445,7 @@ void MainWindow::restoreLibraryWidth()
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
+    fitTabs();
     restoreLibraryWidth();
     // Narrowed until the library is squeezed below its full width, it goes
     // covers-only and covers wide: only a dragged edge did that before, so
@@ -4145,7 +4205,9 @@ void MainWindow::showShortcuts()
 void MainWindow::runShortcut(const QString &action)
 {
     const bool playing = m_mpv.connected();
-    if (action == QLatin1String("playPause") || action == QLatin1String("shuffle") || action == QLatin1String("repeat"))
+    if (action == QLatin1String("playPause") && playing && !m_mpv.property("user-data/ghost/audio").toBool())
+        togglePause();   // a video: at its end, from its start again
+    else if (action == QLatin1String("playPause") || action == QLatin1String("shuffle") || action == QLatin1String("repeat"))
         m_nowPlaying->press(action);
     else if (action == QLatin1String("next") && playing)
         m_mpv.command({"playlist-next"});
@@ -5474,6 +5536,10 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     if (m_rightSplit)
         m_rightSplit->refresh();
     tabsChanged();   // the tabs are the YouTube side's
+    // The YouTube menu has the profile at its foot: the top one only on the
+    // music side (Batin, 2026-11-20).
+    if (m_profileButton)
+        m_profileButton->setVisible(!youtube);
     SearchPopup::setYouTube(youtube);
     {
         const int wanted = QSettings().value(youtube ? "layout/ytWidth" : "layout/libraryWidth", -1).toInt();
@@ -6036,7 +6102,7 @@ void MainWindow::buildTray()
     // the app: opened on a right click (Context), a left click shows or hides.
     m_trayMenu = new TrayMenu(this);
     m_trayMenu->onPrevious = [this] { m_mpv.command({"playlist-prev"}); };
-    m_trayMenu->onPlayPause = [this] { m_mpv.command({"cycle", "pause"}); };
+    m_trayMenu->onPlayPause = [this] { togglePause(); };
     m_trayMenu->onNext = [this] { m_mpv.command({"playlist-next"}); };
     m_trayMenu->onOpen = [this] { bringToFront(); };
     m_trayMenu->onCheckUpdates = [this] { checkForUpdates(true); };
@@ -6533,10 +6599,15 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
             m_mpv.setProperty("start", "none");
         }
         m_startSeconds = 0;
+        const bool paused = m_loadPaused;
+        m_loadPaused = false;
+        if (paused)
+            m_mpv.setProperty("pause", true);   // before it loads: it never starts
         m_mpv.command({"loadfile", path, "replace", -1, QStringLiteral("playlist-start=%1").arg(startAt)});
         if (shuffle)
             QTimer::singleShot(400, this, [this] { m_mpv.command({"playlist-shuffle"}); });
-        m_mpv.setProperty("pause", false);
+        if (!paused)
+            m_mpv.setProperty("pause", false);
         if (!audio && m_mpvEmbedded)
             showVideoPage();
         return;
@@ -6555,6 +6626,9 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         args << QStringLiteral("--script-opts-append=ghost-window=no");
     if (shuffle)
         args << "--shuffle";
+    if (m_loadPaused)
+        args << "--pause";
+    m_loadPaused = false;
     if (startAt > 0)
         args << QStringLiteral("--playlist-start=%1").arg(startAt);
     if (m_startSeconds > 1) {
@@ -6817,7 +6891,9 @@ void MainWindow::placeSurface()
         !QSettings().value("video/miniOnLeave", false).toBool())
         m_pictureAway = true;
     // Listening only: no picture to show, on the page or in the corner.
-    const bool listen = m_videoPage->listenOnly() && !m_mpv.property("user-data/ghost/audio").toBool();
+    // A tab's cover too: its picture is the cover until Play.
+    const bool listen = (m_videoPage->listenOnly() && !m_mpv.property("user-data/ghost/audio").toBool()) ||
+                        m_videoPage->coverShown();
     const bool mini = video && !onPage && !inPanel && !m_miniClosed && !m_pictureAway && !listen;
     QWidget *miniWindow = m_videoPage->miniWindow();
     if ((m_surfaceDrag || m_surfaceHeld) && (onPage || inPanel)) {
@@ -7910,6 +7986,16 @@ void MainWindow::pickTab(int index)
     m_tabPending = tab.target;
     QTimer::singleShot(20000, this, [this, t = tab.target] { if (m_tabPending == t) m_tabPending.clear(); });
     m_startSeconds = tab.seconds > 5 ? tab.seconds - 2 : 0;   // a little before, as YouTube resumes
+    // Instant Play off (the default): the tab opens with its cover and a
+    // play button, mpv paused behind it (Batin, 2026-11-20).
+    if (!QSettings().value("video/instantPlay", false).toBool()) {
+        m_loadPaused = true;
+        m_coverTarget = tab.target;
+        m_coverId = tab.id.isEmpty() ? youtube::videoId(tab.target) : tab.id;
+        m_coverArrived = false;
+        m_videoPage->setCover(true, m_covers.get(m_coverId, ThumbnailCache::Size::Hero));
+        schedulePlace();
+    }
     if (!tab.list.isEmpty() && QFileInfo::exists(tab.list)) {
         const QVector<PlaylistEntry> entries = Playlist::peek(tab.list).readEntries();
         for (int i = 0; i < entries.size(); ++i)
@@ -8027,9 +8113,10 @@ void MainWindow::tabsChanged()
         if (m_island)
             QTimer::singleShot(0, m_island, [this] { m_island->refresh(); });
     }
+    fitTabs();
     // Kept for the next start; the one that plays too, at its second.
     QJsonArray saved;
-    if (waiting)
+    if (waiting && QSettings().value("youtube/rememberTabs", true).toBool())
         for (const VideoTab &t : std::as_const(m_tabStrip->tabs))
             saved.append(QJsonObject{{"target", t.target}, {"id", t.id}, {"title", t.title},
                                      {"channel", t.channel}, {"list", t.list}, {"seconds", qRound(t.seconds)}});
@@ -8062,6 +8149,114 @@ void MainWindow::tabMenu(int index, const QPoint &global)
         tabsChanged();
     });
     menu.exec(global);
+}
+
+void MainWindow::showAllTabs(const QPoint &belowRight)
+{
+    // Every tab as a list under the chip, the cover, the name and the
+    // channel; a click plays it, its X closes it.
+    auto *popup = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    popup->setAttribute(Qt::WA_TranslucentBackground);
+    auto *body = new QFrame(popup);
+    body->setObjectName("tabsPopup");
+    const theme::Palette &c = theme::c();
+    body->setStyleSheet(QStringLiteral("QFrame#tabsPopup { background: %1; border: 1px solid %2; border-radius: 12px; }"
+                                       "QLabel { color: %3; background: transparent; }"
+                                       "QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }")
+                            .arg(c.popup.name(), c.line.name(), c.muted.name()));
+    auto *outer = new QVBoxLayout(popup);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(body);
+    auto *box = new QVBoxLayout(body);
+    box->setContentsMargins(8, 10, 8, 8);
+    box->setSpacing(4);
+    auto *head = new QLabel(QStringLiteral("Tabs  ·  %1").arg(m_tabStrip->tabs.size()));
+    head->setContentsMargins(8, 0, 0, 2);
+    box->addWidget(head);
+    auto *list = new TabStrip(true);
+    list->cover = m_tabStrip->cover;
+    const auto refill = [this, list, head] {
+        list->tabs = m_tabStrip->tabs;
+        list->current = m_tabStrip->current;
+        list->changed();
+        head->setText(QStringLiteral("Tabs  ·  %1").arg(m_tabStrip->tabs.size()));
+    };
+    refill();
+    auto *scroll = new QScrollArea;
+    scroll->setWidget(list);
+    scroll->setWidgetResizable(false);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setFixedWidth(list->width() + 12);
+    const auto fit = [scroll, list, popup] {
+        scroll->setFixedHeight(qMin(list->height(), 9 * qRound(58 * theme::chromeZoom()) + 8));
+        popup->adjustSize();
+    };
+    fit();
+    box->addWidget(scroll);
+    connect(&m_covers, &ThumbnailCache::ready, list, [list] { list->update(); });
+    list->onPick = [this, popup](int i) {
+        popup->close();
+        pickTab(i);
+    };
+    list->onClose = [this, popup, refill, fit](int i) {
+        const bool playing = i == m_tabStrip->current;
+        closeTab(i);
+        if (m_tabStrip->tabs.size() < 2 || playing) {
+            popup->close();
+            return;
+        }
+        refill();
+        fit();
+    };
+    list->onMenu = [this, popup](int i, const QPoint &at) {
+        popup->close();
+        tabMenu(i, at);
+    };
+    popup->adjustSize();
+    QPoint at(belowRight.x() - popup->width(), belowRight.y());
+    if (const QScreen *screen = QGuiApplication::screenAt(belowRight)) {
+        const QRect area = screen->availableGeometry();
+        at.setX(qBound(area.left(), at.x(), area.right() - popup->width()));
+        at.setY(qMin(at.y(), area.bottom() - popup->height()));
+    }
+    popup->move(at);
+    popup->show();
+}
+
+void MainWindow::fitTabs()
+{
+    // From the search to the first button on the right, less the island's
+    // room: past that the tabs go behind the "+N" chip (Batin, 2026-11-20:
+    // a full strip squeezed the island, then ran under it).
+    if (!m_tabStrip || !m_topBar || !m_tabStrip->isVisible())
+        return;
+    QWidget *leftmost = m_search->isVisible() ? static_cast<QWidget *>(m_search) : m_searchButton;
+    QWidget *rightmost = m_updateButton->isVisible() ? m_updateButton
+                       : m_profileButton->isVisible() ? m_profileButton : m_gearButton;
+    const int left = leftmost->mapTo(m_topBar, QPoint(leftmost->width(), 0)).x() + 8;
+    const int right = rightmost->mapTo(m_topBar, QPoint(0, 0)).x();
+    const int reserve = qRound(470 * theme::chromeZoom());
+    const int room = qMax(m_tabStrip->smallest(), right - left - reserve - 16);
+    if (m_tabStrip->maximumWidth() != room) {
+        m_tabStrip->setMaximumWidth(room);
+        if (m_island)
+            QTimer::singleShot(0, m_island, [this] { m_island->refresh(); });
+    }
+}
+
+void MainWindow::togglePause()
+{
+    // A video stopped at its end (keep-open): Play starts it again, as
+    // YouTube's does (Batin, 2026-11-20: the button did nothing there).
+    if (m_mpv.property("eof-reached").toBool()) {
+        m_videoPage->hideUpNext();
+        m_mpv.command({"seek", 0, "absolute"});
+        m_mpv.setProperty("pause", false);
+        return;
+    }
+    m_mpv.command({"cycle", "pause"});
 }
 
 void MainWindow::fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip, bool videos)
@@ -8366,11 +8561,45 @@ MainWindow::Place MainWindow::herePlace()
     p.youtube = m_youtubeLayout;
     QWidget *now = m_pages->currentWidget();
     if (now == m_videoPage) {
-        p.key = QStringLiteral("video");
-        p.go = [this] {
-            // Only while a video is still what plays.
-            if (m_mpv.connected() && !m_mpv.property("user-data/ghost/audio").toBool())
-                showVideoPage();
+        // Each video its own place: Back from one opened on the page goes
+        // to the one before, at its second (Batin, 2026-11-20).
+        const QString path = m_mpv.connected() ? m_mpv.property("path").toString() : QString();
+        const QString list = playingListPath();
+        QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+        if (id.isEmpty())
+            id = youtube::videoId(path);
+        const QString title = m_mpv.property("media-title").toString();
+        p.key = QStringLiteral("video:") + path;
+        p.go = [this, path, list, id, title] {
+            if (!m_mpv.connected() || path.isEmpty())
+                return;
+            if (m_mpv.property("path").toString() == path) {
+                if (!m_mpv.property("user-data/ghost/audio").toBool())
+                    showVideoPage();
+                return;
+            }
+            const double at = m_videoSeconds.value(path);
+            m_startSeconds = at > 5 ? at - 2 : 0;
+            m_videoArrival = path;
+            QTimer::singleShot(20000, this, [this, path] { if (m_videoArrival == path) m_videoArrival.clear(); });
+            if (!list.isEmpty() && QFileInfo::exists(list)) {
+                const QVector<PlaylistEntry> entries = Playlist::peek(list).readEntries();
+                for (int i = 0; i < entries.size(); ++i)
+                    if (entries[i].target == path) {
+                        play(list, false, i);
+                        return;
+                    }
+            }
+            if (id.isEmpty()) {
+                m_startSeconds = 0;
+                m_videoArrival.clear();
+                return;
+            }
+            ytmusic::Item item;
+            item.kind = ytmusic::Kind::Video;
+            item.id = id;
+            item.title = title;
+            playFound({item}, title, 0, false, false);
         };
     } else if (now == m_lyricsView) {
         p.key = QStringLiteral("lyrics");
@@ -8433,6 +8662,12 @@ MainWindow::Place MainWindow::herePlace()
 
 void MainWindow::noteVisit()
 {
+    // Back went to a video mpv has not opened yet: noted once it has.
+    if (!m_videoArrival.isEmpty()) {
+        if (m_mpv.property("path").toString() != m_videoArrival)
+            return;
+        m_videoArrival.clear();
+    }
     const Place now = herePlace();
     if (m_navigating) {
         // Arrived by Back or Forward: no new step.

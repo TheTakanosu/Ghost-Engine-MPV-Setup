@@ -24,6 +24,7 @@ public:
     std::function<bool()> shouldShow;   // a video playing whose page is not open
     std::function<void()> onOpen;       // to the video's page
     std::function<void()> onMini;       // the corner player instead
+    std::function<void()> onPlayPause;  // when set, instead of cycling mpv's pause
     // The free stretch of the top bar, left and right x in the window: the
     // pill sits in its middle and no wider (it lay over the search box in a
     // narrow window, Impeccable review B1, 2026-11-10).

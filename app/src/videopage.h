@@ -167,6 +167,11 @@ public:
     // and holds a way back to the video.
     void setListenOnly(bool on);
     bool listenOnly() const { return m_listenOnly; }
+    // A tab opened, not yet played (Batin, 2026-11-20): its cover in the
+    // picture's place with a play button; mpv waits paused behind it.
+    void setCover(bool on, const QPixmap &cover = {});
+    bool coverShown() const { return m_coverOn; }
+    std::function<void()> onCoverPlay;
     std::function<void()> onBringBack;
     std::function<void()> onFullScreen;
     std::function<void()> onTogglePause;
@@ -258,7 +263,9 @@ private:
     QWidget *m_upNext = nullptr;
     bool m_upNextOn = false;
     QPushButton *m_listen;
-    QPushButton *m_backToVideo;   // on the picture's place while listening only
+    QPushButton *m_backToVideo;
+    QPushButton *m_coverPlay = nullptr;
+    bool m_coverOn = false;   // on the picture's place while listening only
     bool m_listenOnly = false;
     int m_corner = 12;            // the picture's, for what stands in its place
     QPushButton *m_quality;

@@ -219,6 +219,18 @@ private:
     void syncTabs();                 // the tab that plays follows what mpv plays
     void tabsChanged();              // shown or not, saved
     void tabMenu(int index, const QPoint &global);
+    void showAllTabs(const QPoint &belowRight);   // the "+N" chip's list
+    void fitTabs();                  // the strip leaves the island its room
+    bool m_loadPaused = false;       // the next play() opens paused (a tab, Instant Play off)
+    QString m_coverTarget;           // the tab whose cover stands in for its picture
+    QString m_coverId;
+    bool m_coverArrived = false;     // mpv has the tab's entry (a later one ends the cover)
+    void togglePause();              // at a video's end: from its start again
+    // Back and Forward between videos on the video page (Batin, 2026-11-20).
+    QHash<QString, double> m_videoSeconds;   // where each video was left
+    QString m_lastPath;
+    double m_lastPos = 0;
+    QString m_videoArrival;          // a video Back went to, until mpv has it
     class NowIsland *m_island = nullptr;   // "Now playing" in the top bar while a video plays off its page
     void applyLayoutColors();
     bool m_pictureAway = false;   // left the video's page: sound only, no corner player
@@ -459,6 +471,7 @@ private:
     QTimer m_searchTimer;
     QListWidget *m_topLists = nullptr;
     class QPushButton *m_profileButton = nullptr;
+    class QPushButton *m_gearButton = nullptr;
     QTimer m_profileSoon;
     QTimer m_resumeSave;
     QTimer m_markSoon;   // the rows' playing mark once mpv's values have settled
