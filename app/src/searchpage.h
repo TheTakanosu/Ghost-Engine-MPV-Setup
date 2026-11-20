@@ -74,6 +74,10 @@ public:
     void showVideos(const QString &title, const QVector<ytmusic::Item> &items);
     // A channel's own videos, all of them page by page, under its name.
     void showChannel(const QString &channelId, const QString &name);
+    // "Show less from this channel": its cards on the home put away (Undo on
+    // each), and it is left out of the home from then on (youtube/showLess).
+    void showLess(const QString &channelId);
+    void undoShowLess(const QString &channelId);
     std::function<void(const QString &channelId, const QString &name)> onChannelShown;
     // The channel page's Follow: asked and told through the app.
     std::function<bool(const QString &channelId)> isFollowed;
@@ -171,6 +175,7 @@ private:
     QStringList m_homeQueries;    // recent YouTube searches still to show a few of
     QHash<QString, int> m_homeByChannel;   // on the home so far, per channel
     int m_homeTurn = 0;
+    void markHidden(const QString &channelId, bool hidden);
     QStringList m_homeFollow;       // followed channels not yet asked for their newest
     QSet<QString> m_homeFollowAll;  // every followed channel
     QStringList m_homeSeeds;      // videos whose side lists are still to ask for

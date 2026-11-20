@@ -7668,7 +7668,8 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
         menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
     if (items.size() == 1 && !videos && !items.first().artist.isEmpty())
         menu.addAction("Go to artist", this, [this, artist = items.first().artist] { goToArtist(artist); });
-    if (!videos) {
+    {
+        // Videos too (Batin, 2026-11-20): after what plays, as a song.
         QVector<PlaylistEntry> picked;
         for (const ytmusic::Item &it : items)
             picked << PlaylistEntry{it.lineTitle(), it.target(), {}};
@@ -7703,6 +7704,9 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
         const bool on = follows(it.channelId);
         menu.addAction(on ? QStringLiteral("Unfollow %1").arg(it.artist) : QStringLiteral("Follow %1").arg(it.artist), this,
                        [this, it, on] { setFollowing(it.channelId, it.artist, !on); });
+        if (!on)
+            menu.addAction(QStringLiteral("Show less from %1").arg(it.artist), this,
+                           [this, it] { m_searchPage->showLess(it.channelId); });
     }
     QMenu *to = menu.addMenu(items.size() > 1 ? QStringLiteral("Add %1 songs to playlist").arg(items.size()) : QStringLiteral("Add to playlist"));
     QVector<PlaylistEntry> entries;
@@ -7838,9 +7842,9 @@ void MainWindow::queueSongs(const QVector<PlaylistEntry> &songs, bool next)
         m_queueTitles.insert(e.target, e.title);
     }
     if (next)
-        toast(songs.size() == 1 ? QStringLiteral("Plays next") : QStringLiteral("%1 songs play next").arg(songs.size()));
+        toast(songs.size() == 1 ? QStringLiteral("Plays next") : QStringLiteral("%1 play next").arg(songs.size()));
     else
-        toast(songs.size() == 1 ? QStringLiteral("Added to queue") : QStringLiteral("%1 songs added to queue").arg(songs.size()));
+        toast(songs.size() == 1 ? QStringLiteral("Added to queue") : QStringLiteral("%1 added to queue").arg(songs.size()));
 }
 
 void MainWindow::syncQueue()

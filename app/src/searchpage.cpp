@@ -483,6 +483,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
         return m_covers.get(index.data(Qt::UserRole).toString(), ThumbnailCache::Size::Card);
     }, m_homeGrid);
     m_homeCards->channelFor = [](const QModelIndex &index) { return index.data(tiles::kSubtitleRole).toString(); };
+    m_homeCards->menuDots = true;
     // Channel pictures: one small image per channel from YouTube's picture
     // server, once a session, as a browser fetches them on youtube.com.
     m_avatars = new RemotePictures(this);
@@ -530,6 +531,8 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     homeColumn->addWidget(channelPair, 1);
     m_views->addWidget(homePage);
     connect(m_homeGrid, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        if (item->data(tiles::kHiddenRole).toBool())
+            return;   // put away: only its Undo
         if (onPlay)
             onPlay(m_home, m_homeChannel.isEmpty() ? QStringLiteral("YouTube") : m_homeChannel,
                    item->data(tiles::kEntryRole).toInt(), false, false);
@@ -537,7 +540,7 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     m_homeGrid->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_homeGrid, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         QListWidgetItem *item = m_homeGrid->itemAt(pos);
-        if (!item)
+        if (!item || item->data(tiles::kHiddenRole).toBool())
             return;
         if (!item->isSelected()) {
             m_homeGrid->clearSelection();
@@ -923,6 +926,9 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
         const QString channel = it.channelId.isEmpty() ? it.artist : it.channelId;
         if (mixed && !channel.isEmpty() && m_homeByChannel.value(channel) >= 3)
             continue;
+        if (mixed && !it.channelId.isEmpty() &&
+            QSettings().value("youtube/showLess").toStringList().contains(it.channelId))
+            continue;   // "Show less from this channel"
         m_homeSeen.insert(it.id);
         if (!channel.isEmpty())
             ++m_homeByChannel[channel];
@@ -1219,6 +1225,39 @@ void SearchPage::homeMore()
     });
 }
 
+void SearchPage::showLess(const QString &channelId)
+{
+    if (channelId.isEmpty())
+        return;
+    QStringList less = QSettings().value("youtube/showLess").toStringList();
+    if (!less.contains(channelId)) {
+        less << channelId;
+        QSettings().setValue("youtube/showLess", less);
+    }
+    markHidden(channelId, true);
+}
+
+void SearchPage::undoShowLess(const QString &channelId)
+{
+    QStringList less = QSettings().value("youtube/showLess").toStringList();
+    less.removeAll(channelId);
+    QSettings().setValue("youtube/showLess", less);
+    markHidden(channelId, false);
+}
+
+void SearchPage::markHidden(const QString &channelId, bool hidden)
+{
+    for (int i = 0; i < m_homeGrid->count(); ++i) {
+        QListWidgetItem *row = m_homeGrid->item(i);
+        if (m_home.value(row->data(tiles::kEntryRole).toInt()).channelId == channelId) {
+            row->setData(tiles::kHiddenRole, hidden);
+            if (hidden)
+                row->setSelected(false);
+        }
+    }
+    m_homeGrid->viewport()->update();
+}
+
 void SearchPage::fitHomeGrid()
 {
     // As many columns as fit at 360 px or more (YouTube's own: 4 across a
@@ -1417,7 +1456,22 @@ bool SearchPage::eventFilter(QObject *watched, QEvent *event)
         static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
         const QPoint at = static_cast<QMouseEvent *>(event)->position().toPoint();
         if (QListWidgetItem *item = m_homeGrid->itemAt(at)) {
-            const QRectF card = QRectF(m_homeGrid->visualItemRect(item)).adjusted(8, 8, -8, -4);
+            const QRectF rect(m_homeGrid->visualItemRect(item));
+            const ytmusic::Item hit = m_home.value(item->data(tiles::kEntryRole).toInt());
+            if (item->data(tiles::kHiddenRole).toBool()) {
+                if (tiles::VideoCardDelegate::undoRect(rect).contains(at))
+                    undoShowLess(hit.channelId);
+                return true;
+            }
+            // The ⋯ right of the title: the card's menu, as a right-click.
+            if (tiles::VideoCardDelegate::dotsRect(rect).contains(at)) {
+                m_homeGrid->clearSelection();
+                item->setSelected(true);
+                if (onMenu)
+                    onMenu(picked(m_homeGrid, m_home), m_homeGrid->viewport()->mapToGlobal(at));
+                return true;
+            }
+            const QRectF card = rect.adjusted(8, 8, -8, -4);
             const qreal size = qRound(34 * theme::zoom());
             const QRectF circle(card.left() + 2, card.top() + card.width() * 9 / 16 + 10, size, size);
             const ytmusic::Item it = m_home.value(item->data(tiles::kEntryRole).toInt());

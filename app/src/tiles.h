@@ -126,6 +126,7 @@ constexpr int kPinnedRole = Qt::UserRole + 13;
 constexpr int kOfflineRole = Qt::UserRole + 14;  // a song kept on disk
 constexpr int kLikedRole = Qt::UserRole + 17;    // a song in Liked songs
 constexpr int kAvatarRole = Qt::UserRole + 16;   // a YouTube card: its channel's picture URL
+constexpr int kHiddenRole = Qt::UserRole + 18;   // a YouTube card put away: "Show less" of its channel
 
 // Widths of the right-hand columns, shared by the rows and their header.
 constexpr int kAddedColumn = 150;
@@ -161,6 +162,12 @@ public:
     std::function<QPixmap(const QModelIndex &)> avatarFor;
     void setCardWidth(int width) { m_width = width; }
     QSize cardSize() const;
+    // A ⋯ right of the title on hover, opening the card's menu (YouTube's).
+    bool menuDots = false;
+    // Where those are in a card's item rectangle: the ⋯, and on a card put
+    // away (kHiddenRole) its Undo.
+    static QRectF dotsRect(const QRectF &item);
+    static QRectF undoRect(const QRectF &item);
 
     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
     void paint(QPainter *painter, const QStyleOptionViewItem &option,

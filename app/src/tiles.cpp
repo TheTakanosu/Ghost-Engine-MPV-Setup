@@ -7,6 +7,8 @@
 #include <QPixmapCache>
 #include <QPainter>
 #include <QPainterPath>
+#include <QCursor>
+#include <QWidget>
 
 namespace tiles {
 
@@ -510,12 +512,52 @@ QSize VideoCardDelegate::sizeHint(const QStyleOptionViewItem &, const QModelInde
     return cardSize();
 }
 
+QRectF VideoCardDelegate::dotsRect(const QRectF &item)
+{
+    const QRectF card = item.adjusted(8, 8, -8, -4);
+    const qreal side = qRound(28 * theme::zoom());
+    return QRectF(card.right() - side, card.top() + card.width() * 9 / 16 + 6, side, side);
+}
+
+QRectF VideoCardDelegate::undoRect(const QRectF &item)
+{
+    const QRectF card = item.adjusted(8, 8, -8, -4);
+    const qreal w = qRound(84 * theme::zoom()), h = qRound(30 * theme::zoom());
+    return QRectF(card.center().x() - w / 2, card.top() + card.width() * 9 / 32 + 10, w, h);
+}
+
 void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                               const QModelIndex &index) const
 {
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);
     const QRectF card = QRectF(option.rect).adjusted(8, 8, -8, -4);
+    if (index.data(kHiddenRole).toBool()) {
+        // Put away: where its picture was, a line saying so and Undo, as
+        // YouTube leaves it (Batin, 2026-11-20).
+        const QRectF thumb(card.left(), card.top(), card.width(), card.width() * 9 / 16);
+        QPainterPath box;
+        box.addRoundedRect(thumb, 12, 12);
+        painter->fillPath(box, theme::c().raised);
+        QFont f = option.font;
+        painter->setFont(f);
+        painter->setPen(theme::c().muted);
+        painter->drawText(QRectF(thumb.left() + 12, thumb.center().y() - 30, thumb.width() - 24, 28),
+                          Qt::AlignCenter, QStringLiteral("You'll see less from this channel."));
+        const QRectF undo = undoRect(option.rect);
+        QPainterPath pill;
+        pill.addRoundedRect(undo, undo.height() / 2, undo.height() / 2);
+        const bool over = (option.state & QStyle::State_MouseOver) && option.widget &&
+                          undo.contains(option.widget->mapFromGlobal(QCursor::pos()));
+        // A button seen at once on the card's grey, lit under the mouse.
+        painter->fillPath(pill, over ? theme::cardSelected().lighter(135) : theme::cardSelected());
+        f.setWeight(QFont::DemiBold);
+        painter->setFont(f);
+        painter->setPen(theme::text());
+        painter->drawText(undo, Qt::AlignCenter, QStringLiteral("Undo"));
+        painter->restore();
+        return;
+    }
     const bool selected = option.state & QStyle::State_Selected;
     const bool hover = option.state & QStyle::State_MouseOver;
     const bool playing = index.data(kPlayingRole).toBool();
@@ -581,7 +623,23 @@ void VideoCardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opt
         }
         indent = size + 10;
     }
-    const QRectF titleBox(card.left() + 2 + indent, thumb.bottom() + 8, card.width() - 4 - indent, tm.lineSpacing() * 2);
+    const qreal dotsRoom = menuDots ? dotsRect(option.rect).width() + 2 : 0;
+    const QRectF titleBox(card.left() + 2 + indent, thumb.bottom() + 8, card.width() - 4 - indent - dotsRoom, tm.lineSpacing() * 2);
+    if (menuDots && (hover || selected)) {
+        const QRectF dots = dotsRect(option.rect);
+        const bool over = option.widget && dots.contains(option.widget->mapFromGlobal(QCursor::pos()));
+        if (over) {
+            QPainterPath round;
+            round.addEllipse(dots);
+            painter->fillPath(round, theme::cardSelected());
+        }
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(theme::text());
+        const qreal r = 1.8 * theme::zoom();
+        for (int i = -1; i <= 1; ++i)
+            painter->drawEllipse(QPointF(dots.center().x(), dots.center().y() + i * 5 * theme::zoom()), r, r);
+        painter->setBrush(Qt::NoBrush);
+    }
     painter->setFont(title);
     painter->setPen(playing ? theme::accentText() : live ? QColor(0xFF, 0x4D, 0x4D) : theme::text());
     // Two lines at most, the second cut with an ellipsis.
