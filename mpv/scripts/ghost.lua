@@ -104,6 +104,15 @@ mp.add_hook("on_load", 9, function()
             mp.set_property("file-local-options/ytdl-format", format)
         end
     end
+    -- The app's "Listen only audio" on a video (not a song list's, which
+    -- is sound already): no picture track and a sound-only format, for this
+    -- and the next videos until it is switched off. File-local, so nothing
+    -- outlives the entry it was set for.
+    if not on and mp.get_property_native("user-data/ghost/listen-only") == true
+            and mp.get_property_native("user-data/ghost/audio") ~= true then
+        mp.set_property("file-local-options/vid", "no")
+        mp.set_property("file-local-options/ytdl-format", "bestaudio/best")
+    end
     -- Before video-on: the app reads both when video-on changes.
     mp.set_property_native("user-data/ghost/video-panel", on and single and not mode)
     mp.set_property_native("user-data/ghost/video-on", on)

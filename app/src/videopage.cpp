@@ -859,6 +859,11 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_screen->setObjectName("videoScreen");
     m_screen->setAttribute(Qt::WA_StyledBackground);
     m_screen->installEventFilter(this);
+    // Listening only: the picture's place says so, with the way back.
+    m_backToVideo = action(QString(QChar(0xE714)), "Back to video");
+    m_backToVideo->setParent(m_screen);
+    m_backToVideo->hide();
+    connect(m_backToVideo, &QPushButton::clicked, this, [this] { if (onListenOnly) onListenOnly(false); });
 
     // While mpv plays in its own window, this stands where the picture was.
     m_away = new QWidget(m_player);
@@ -1288,6 +1293,13 @@ QWidget *VideoPage::buildControls()
     row->addSpacing(8);
     row->addWidget(m_live);
     row->addStretch();
+    // Repeat and listen only, beside the mini player (Batin, 2026-11-20).
+    m_repeat = glyphButton(QString(QChar(0xE8EE)), "Repeat this video");
+    connect(m_repeat, &QPushButton::clicked, this, [this] { if (onRepeat) onRepeat(); });
+    m_listen = glyphButton(QString(QChar(0xE7F6)), "Listen only audio");
+    connect(m_listen, &QPushButton::clicked, this, [this] { if (onListenOnly) onListenOnly(!m_listenOnly); });
+    row->addWidget(m_repeat);
+    row->addWidget(m_listen);
     auto *miniplayer = glyphButton(QString(), "Mini player (I)");
     static_cast<FlatButton *>(miniplayer)->setPip(true);
     connect(miniplayer, &QPushButton::clicked, this, [this] { if (onMinimize) onMinimize(); });
@@ -1296,7 +1308,7 @@ QWidget *VideoPage::buildControls()
     row->addWidget(m_quality);
     row->addWidget(m_speed);
     row->addWidget(full);
-    m_wideOnly = {back10, fwd10, m_volume, miniplayer, m_subs, m_quality, m_speed};
+    m_wideOnly = {back10, fwd10, m_volume, m_repeat, m_listen, miniplayer, m_subs, m_quality, m_speed};
     m_seekTip = new QLabel(bar);
     m_seekTip->setObjectName("seekTip");
     m_seekTip->setAlignment(Qt::AlignCenter);
@@ -1433,6 +1445,27 @@ void VideoPage::setSongVideo(bool song)
 {
     m_toAudio->setVisible(song);
     m_popOut->setVisible(!song);
+    // A song's video has "Switch to audio" for that.
+    m_listen->setVisible(!song);
+}
+
+void VideoPage::setRepeat(bool on)
+{
+    static_cast<FlatButton *>(m_repeat)->setOn(on);
+    m_repeat->setToolTip(on ? QStringLiteral("Repeat this video: on") : QStringLiteral("Repeat this video"));
+}
+
+void VideoPage::setListenOnly(bool on)
+{
+    if (on == m_listenOnly)
+        return;
+    m_listenOnly = on;
+    static_cast<FlatButton *>(m_listen)->setOn(on);
+    m_listen->setToolTip(on ? QStringLiteral("Back to video") : QStringLiteral("Listen only audio"));
+    m_backToVideo->setVisible(on);
+    m_quality->setEnabled(!on);
+    setQualityCap(m_cap);
+    m_screen->update();
 }
 
 void VideoPage::setDescription(const QString &text, const QString &meta)
@@ -1530,7 +1563,11 @@ void VideoPage::setTracks(const QVariantList &tracks)
 void VideoPage::setQualityCap(int height)
 {
     m_cap = height;
-    m_quality->setText(height > 0 ? QStringLiteral("%1p").arg(height) : QStringLiteral("Best"));
+    // Listening only, the format is sound's: no picture to have a size.
+    if (m_listenOnly)
+        m_quality->setText(QStringLiteral("Audio"));
+    else
+        m_quality->setText(height > 0 ? QStringLiteral("%1p").arg(height) : QStringLiteral("Best"));
 }
 
 void VideoPage::setSpeed(double speed)
@@ -1691,6 +1728,30 @@ bool VideoPage::eventFilter(QObject *watched, QEvent *event)
     }
     if (watched == m_player && event->type() == QEvent::Resize)
         placeScreen();
+    if (watched == m_screen && event->type() == QEvent::Paint && m_listenOnly) {
+        // No thumbnail: a line of text and the button under it, as YouTube
+        // says what it hides (Batin, 2026-11-20).
+        QPainter p(m_screen);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.fillRect(m_screen->rect(), theme::panelRaised());
+        QFont f = m_screen->font();
+        f.setPointSizeF(13);
+        f.setWeight(QFont::DemiBold);
+        p.setFont(f);
+        p.setPen(theme::text());
+        const int mid = m_screen->height() / 2;
+        p.drawText(QRect(0, mid - 52, m_screen->width(), 30), Qt::AlignCenter, QStringLiteral("Listening to audio only"));
+        f.setPointSizeF(10);
+        f.setWeight(QFont::Normal);
+        p.setFont(f);
+        p.setPen(theme::muted());
+        p.drawText(QRect(0, mid - 22, m_screen->width(), 22), Qt::AlignCenter,
+                   QStringLiteral("The picture is not downloaded. The next videos play as sound too."));
+        m_backToVideo->ensurePolished();
+        const QSize b = m_backToVideo->sizeHint().expandedTo(QSize(0, 34));
+        m_backToVideo->setGeometry((m_screen->width() - b.width()) / 2, mid + 14, b.width(), b.height());
+        return true;
+    }
     if (watched == m_screen && event->type() == QEvent::Paint && !m_still.isNull()) {
         // The thumbnail filling the picture's place, cut to its shape.
         QPainter p(m_screen);

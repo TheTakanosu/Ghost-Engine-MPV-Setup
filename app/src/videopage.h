@@ -151,6 +151,12 @@ public:
     std::function<void()> onFollow;
     // A song list's song shown as its video: "Switch to audio" instead of the pop out.
     void setSongVideo(bool song);
+    // Repeat this video (mpv's loop-file), lit while on.
+    void setRepeat(bool on);
+    // Listen only audio: no picture is fetched; the picture's place says so
+    // and holds a way back to the video.
+    void setListenOnly(bool on);
+    bool listenOnly() const { return m_listenOnly; }
     std::function<void()> onBringBack;
     std::function<void()> onFullScreen;
     std::function<void()> onTogglePause;
@@ -161,6 +167,8 @@ public:
     std::function<void(double seconds)> onScrub;     // to here, quickly, while the handle is dragged
     std::function<void(const QVariant &sid)> onSubtitle;   // a track id, or "no"
     std::function<void(int height)> onQuality;       // 0: best
+    std::function<void()> onRepeat;                  // repeat this video on or off
+    std::function<void(bool on)> onListenOnly;       // sound only, or the video again
     std::function<void(double speed)> onSpeed;
     std::function<void(int volume)> onVolume;
     std::function<void()> onToggleMute;
@@ -233,6 +241,10 @@ private:
     QPushButton *m_mute;
     QSlider *m_volume;
     QPushButton *m_subs;
+    QPushButton *m_repeat;
+    QPushButton *m_listen;
+    QPushButton *m_backToVideo;   // on the picture's place while listening only
+    bool m_listenOnly = false;
     QPushButton *m_quality;
     QPushButton *m_speed;
     QVariantList m_tracks;

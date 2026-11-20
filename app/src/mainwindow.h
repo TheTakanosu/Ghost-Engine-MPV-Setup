@@ -130,6 +130,7 @@ private:
     int m_recWanted = 0;          // the height it was left at, 0 for all its songs
     int m_recDragHeight = -1;     // while its top edge is pulled
     bool m_recAutoArmed = true;   // the end of the list may open it
+    QElapsedTimer m_recUserScroll;   // since the user last scrolled the song list
     int listPageOverhead() const;
     int recShutHeight() const;
     int recNaturalHeight() const;
@@ -507,6 +508,7 @@ private:
     bool m_placeWithPage = false;
     void schedulePlace();
     void watchVideoMouse();
+    bool searchOpen() const;   // the search box over the window
     bool videoShowing() const;
     QTimer *m_placeTimer = nullptr;
     QTimer *m_videoMouse = nullptr;

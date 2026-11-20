@@ -21,6 +21,8 @@ public:
     // Over the owner, the box holding `text`, selected.
     void open(const QString &text, const QString &placeholder);
     std::function<void(const QString &)> onSearch;
+    // Shown or hidden: what floats over a playing video steps aside for it.
+    std::function<void(bool)> onShown;
 
     // What was searched, newest first (search/recent, at most 12).
     static void remember(const QString &query);

@@ -326,5 +326,7 @@ bool SearchPopup::event(QEvent *event)
         hide();
     if (event->type() == QEvent::Resize)
         layoutCard();
+    if ((event->type() == QEvent::Show || event->type() == QEvent::Hide) && onShown)
+        onShown(event->type() == QEvent::Show);
     return QWidget::event(event);
 }

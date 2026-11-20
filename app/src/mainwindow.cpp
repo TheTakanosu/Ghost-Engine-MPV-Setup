@@ -185,6 +185,12 @@ constexpr double kLiveGoTo = 12;
 // A followed channel's name, kept apart from the row's text (empty when folded).
 constexpr int kChannelNameRole = Qt::UserRole + 41;
 
+// mpv reports a loop as "inf", a count, or false (JSON) when off.
+static bool mpvLooping(const QVariant &v)
+{
+    return v.isValid() && v.toString() != QLatin1String("no") && v.toString() != QLatin1String("false");
+}
+
 // Recommended under a list (Kaptan, 2026-11-12): a sheet rising from the
 // page's bottom, on the page itself with no gap, a step lighter than it, its
 // top corners round and a small grip on its top edge. Its bottom corners are
@@ -632,6 +638,22 @@ MainWindow::MainWindow()
         m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
         armStartReset(m_mpv.property("playlist-pos").toInt());
         m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+    };
+    m_videoPage->onRepeat = [this] {
+        m_mpv.setProperty("loop-file", mpvLooping(m_mpv.property("loop-file")) ? "no" : "inf");
+    };
+    m_videoPage->onListenOnly = [this](bool on) {
+        // ghost.lua opens this and the next videos with no picture and a
+        // sound-only format while it is set; this one reopens at the same
+        // second, as a quality change does.
+        m_videoPage->setListenOnly(on);
+        m_mpv.setProperty("user-data/ghost/listen-only", on);
+        if (m_mpv.connected()) {
+            m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
+            armStartReset(m_mpv.property("playlist-pos").toInt());
+            m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+        }
+        schedulePlace();
     };
     // The video page's keys (arrows, F, I) are shortcuts now: see
     // runShortcut and Settings > Keyboard shortcuts.
@@ -1188,6 +1210,8 @@ MainWindow::MainWindow()
             m_markSoon.start();
         if (name == "playlist" || name == "playlist-pos")
             syncQueue();
+        if (name == "loop-file")
+            m_videoPage->setRepeat(mpvLooping(m_mpv.property("loop-file")));
         if (name == "playlist-pos" || name == "playlist-count" || name == "loop-playlist" || name == "loop-file")
             maybeAutoplay();
         if (name == "playlist-count" || name == "playlist-path" || name == "path")
@@ -2912,6 +2936,14 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // The user scrolling the song list (see Recommended's opening at its end).
+    if (m_songs && (watched == m_songs->viewport() || watched == m_songs || watched == m_songs->verticalScrollBar())) {
+        const QEvent::Type t = event->type();
+        if (t == QEvent::Wheel || t == QEvent::KeyPress || (t == QEvent::MouseButtonPress && watched == m_songs->verticalScrollBar()) ||
+            (t == QEvent::MouseMove && watched == m_songs->verticalScrollBar() &&
+             (static_cast<QMouseEvent *>(event)->buttons() & Qt::LeftButton)))
+            m_recUserScroll.start();
+    }
     // The page shorter or taller (Recommended pulled, the window resized):
     // the header's tall height follows; the card resized: so does the sheet.
     if (watched == m_pages && event->type() == QEvent::Resize && m_playlistCover)
@@ -6659,7 +6691,9 @@ void MainWindow::placeSurface()
     if (video && !onPage && !inPanel && m_surfaceOnPage && !m_miniAsked &&
         !QSettings().value("video/miniOnLeave", false).toBool())
         m_pictureAway = true;
-    const bool mini = video && !onPage && !inPanel && !m_miniClosed && !m_pictureAway;
+    // Listening only: no picture to show, on the page or in the corner.
+    const bool listen = m_videoPage->listenOnly() && !m_mpv.property("user-data/ghost/audio").toBool();
+    const bool mini = video && !onPage && !inPanel && !m_miniClosed && !m_pictureAway && !listen;
     QWidget *miniWindow = m_videoPage->miniWindow();
     if ((m_surfaceDrag || m_surfaceHeld) && (onPage || inPanel)) {
         // Put away until the edge is let go; the thumbnail stands in.
@@ -6718,7 +6752,7 @@ void MainWindow::placeSurface()
     } else {
         m_videoPage->hideMini();
     }
-    surface->setVisible(onPage || (mini && !m_videoPage->miniSizing()) || (inPanel && !visible.isEmpty()));
+    surface->setVisible((onPage && !listen) || (mini && !m_videoPage->miniSizing()) || (inPanel && !visible.isEmpty()));
     m_surfaceOnPage = onPage || inPanel;   // the controls come over it on hover
 
     // mpv fills its window when the window already has the video's shape,
@@ -6735,7 +6769,9 @@ void MainWindow::placeSurface()
     const QRect global(host->mapToGlobal(surface->geometry().topLeft()), surface->geometry().size());
     m_videoArea = onPage || inPanel ? QRect(host->mapToGlobal(visible.topLeft()), visible.size()) : QRect();
     m_videoPage->setControlsCompact(inPanel);
-    if (onPage)
+    if (searchOpen() || (onPage && listen))   // "Back to video" takes the clicks there
+        m_videoPage->corners()->hide();
+    else if (onPage)
         m_videoPage->placeOverPicture(global, m_videoArea);
     else if (inPanel)   // click to pause, double-click for full screen there too
         m_videoPage->placeOverPicture(global, m_videoArea);
@@ -6748,7 +6784,9 @@ void MainWindow::placeSurface()
     if (m_barFits) {
         const int h = controls->sizeHint().height();
         controls->setGeometry(global.left(), global.bottom() + 1 - h, global.width(), h);
-        if (controls->isVisible())
+        if (searchOpen())
+            controls->hide();
+        else if (controls->isVisible())
             controls->raise();
     } else {
         controls->hide();
@@ -6756,6 +6794,11 @@ void MainWindow::placeSurface()
     // The song bar is for songs: on the video page the controls over the
     // picture stand in for it.
     m_nowPlaying->setVisible(!m_videoFull && !(m_pages->currentWidget() == m_videoPage && !m_videoPoppedOut));
+}
+
+bool MainWindow::searchOpen() const
+{
+    return m_searchPopup && m_searchPopup->isVisible();
 }
 
 void MainWindow::watchVideoMouse()
@@ -6767,7 +6810,7 @@ void MainWindow::watchVideoMouse()
     if (m_videoPage->surface())
         m_videoPage->surface()->keepOnTop();
     QWidget *controls = m_videoPage->controls();
-    if (!m_surfaceOnPage || !m_barFits) {
+    if (!m_surfaceOnPage || !m_barFits || searchOpen()) {
         controls->hide();
         return;
     }
@@ -7460,6 +7503,17 @@ void MainWindow::openSearchPopup()
             m_searchTimer.stop();
             runSearch();
         };
+        // The video's controls and click catcher are windows of their own
+        // over the picture, raised as the mouse moves there; while the box
+        // is open they would come up over it, so they wait until it closes.
+        m_searchPopup->onShown = [this](bool shown) {
+            if (shown) {
+                m_videoPage->controls()->hide();
+                m_videoPage->corners()->hide();
+            } else {
+                placeSurface();
+            }
+        };
     }
     m_searchPopup->open(m_search->text(), m_youtubeLayout ? QStringLiteral("Search YouTube")
                                                           : QStringLiteral("What do you want to play?"));
@@ -8080,8 +8134,17 @@ QWidget *MainWindow::buildRecommended()
         m_recAutoArmed = false;
         setRecommendedOpen(!m_recOpen);
     });
+    // Only the user's own scrolling counts (the wheel, the bar, keys): the
+    // sheet shutting and the header unfolding as the page grows move the bar
+    // too, over a few turns of the loop, and with the list at its end that
+    // opened the sheet again as soon as it was pulled down to the song bar
+    // (Batin, 2026-11-20).
+    m_songs->verticalScrollBar()->installEventFilter(this);
+    m_songs->installEventFilter(this);
     connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         QScrollBar *bar = m_songs->verticalScrollBar();
+        if (!m_recUserScroll.isValid() || m_recUserScroll.elapsed() > 1200)
+            return;
         // Only on reaching the end by scrolling: shutting it makes the list
         // longer and its bar lands on the end again, which reopened it at
         // once (Batin, 2026-11-12: pulled down past the window's edge, it
