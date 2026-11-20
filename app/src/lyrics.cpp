@@ -150,6 +150,13 @@ Lyrics LyricsSource::pick(const QByteArray &json, double duration, const QString
     auto belongs = [&](const QJsonObject &o) {
         const QString a = plain(o.value("artistName").toString());
         const QString t = plain(o.value("trackName").toString());
+        // The title must be this song's too: the free search also finds the
+        // artist's other songs by their album's name, and juqii's "Palavra"
+        // showed "ASABI" from the album Palavra, the same length (Batin,
+        // 2026-11-20). One holding the other leaves room for "(Remix)" and
+        // the like on either side.
+        if (!track.isEmpty() && (t.isEmpty() || !(t.contains(track) || track.contains(t))))
+            return false;
         if (!artist.isEmpty())
             return a.contains(artist) || artist.contains(a) || t.contains(artist);
         // No artist known: only the very same title.

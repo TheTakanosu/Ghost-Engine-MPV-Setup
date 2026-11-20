@@ -2936,14 +2936,6 @@ void MainWindow::reopenAfter(const QString &path)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
-    // The user scrolling the song list (see Recommended's opening at its end).
-    if (m_songs && (watched == m_songs->viewport() || watched == m_songs || watched == m_songs->verticalScrollBar())) {
-        const QEvent::Type t = event->type();
-        if (t == QEvent::Wheel || t == QEvent::KeyPress || (t == QEvent::MouseButtonPress && watched == m_songs->verticalScrollBar()) ||
-            (t == QEvent::MouseMove && watched == m_songs->verticalScrollBar() &&
-             (static_cast<QMouseEvent *>(event)->buttons() & Qt::LeftButton)))
-            m_recUserScroll.start();
-    }
     // The page shorter or taller (Recommended pulled, the window resized):
     // the header's tall height follows; the card resized: so does the sheet.
     if (watched == m_pages && event->type() == QEvent::Resize && m_playlistCover)
@@ -5361,6 +5353,9 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
         QSettings().setValue(m_youtubeLayout ? "layout/ytWidth" : "layout/libraryWidth", m_split->sizes().value(0));
     m_youtubeLayout = youtube;
     QSettings().setValue("layout/youtube", youtube);
+    if (m_nowPlaying && m_pages && m_videoPage)
+        m_nowPlaying->setVisible(!youtube && !m_videoFull && !(m_pages->currentWidget() == m_videoPage && !m_videoPoppedOut));
+    updatePanelVisibility();
     SearchPopup::setYouTube(youtube);
     {
         const int wanted = QSettings().value(youtube ? "layout/ytWidth" : "layout/libraryWidth", -1).toInt();
@@ -6793,7 +6788,10 @@ void MainWindow::placeSurface()
     }
     // The song bar is for songs: on the video page the controls over the
     // picture stand in for it.
-    m_nowPlaying->setVisible(!m_videoFull && !(m_pages->currentWidget() == m_videoPage && !m_videoPoppedOut));
+    // Nor on the YouTube side at all: the video's own controls and the
+    // floating island do its work there, and the song bar made it look like
+    // the music side (Batin, 2026-11-20).
+    m_nowPlaying->setVisible(!m_youtubeLayout && !m_videoFull && !(m_pages->currentWidget() == m_videoPage && !m_videoPoppedOut));
 }
 
 bool MainWindow::searchOpen() const
@@ -6853,6 +6851,8 @@ void MainWindow::updateVideoPage()
         for (const PlaylistEntry &e : p.readEntries())
             entries.append({e.title, e.target});
         m_videoPage->setList(p.name, entries);
+        if (entries.size() == 1)
+            extendSingleVideo(list, youtube::videoId(entries.first().target));
     }
     const QString path = m_mpv.property("path").toString();
     QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
@@ -6864,6 +6864,39 @@ void MainWindow::updateVideoPage()
     m_videoPage->setAvailableHeight(0);   // until this video's sizes are known
     if (!id.isEmpty())
         describeVideo(id);
+}
+
+void MainWindow::extendSingleVideo(const QString &list, const QString &id)
+{
+    // One video played on its own (its menu's Play, or picked up again
+    // later) had a side list of itself alone (Batin, 2026-11-20). As on
+    // YouTube, what it suggests next comes after it: added to the end of the
+    // list's file, which is one of the app's own (never a library list), and
+    // of mpv's list, so nothing that plays is reloaded.
+    if (id.isEmpty() || m_extendedLists.contains(list) ||
+        !QFileInfo(list).absolutePath().startsWith(QFileInfo(foundFolder()).absoluteFilePath(), Qt::CaseInsensitive))
+        return;
+    m_extendedLists.insert(list);
+    m_ytClient.related(id, [this, list, id](QVector<ytmusic::Item> items) {
+        if (playingListPath() != list)
+            return;
+        QVector<PlaylistEntry> add;
+        QSet<QString> seen{id};
+        for (const ytmusic::Item &it : items) {
+            if (it.id.isEmpty() || seen.contains(it.id))
+                continue;
+            seen.insert(it.id);
+            add << PlaylistEntry{it.lineTitle(), it.target(), {}};
+            if (add.size() >= 20)
+                break;
+        }
+        if (add.isEmpty() || !Playlist::append(list, add))
+            return;
+        for (const PlaylistEntry &e : add)
+            m_mpv.command({"loadfile", e.target, "append"});
+        m_videoListPath.clear();   // read again, with them
+        updateVideoPage();
+    });
 }
 
 void MainWindow::describeVideo(const QString &id)
@@ -7004,7 +7037,9 @@ void MainWindow::updatePanelVisibility()
     const bool playing = m_mpv.connected() && !m_mpv.property("path").toString().isEmpty();
     // Not over a video: its page has the list at its side already.
     const bool was = m_panel->isVisible();
-    m_panel->setVisible(m_panelOpen && playing && m_pages->currentWidget() != m_videoPage && !m_videoFull && panelFits());
+    // The music side's: on the YouTube side the island leads back to what
+    // plays (Batin, 2026-11-20).
+    m_panel->setVisible(m_panelOpen && playing && !m_youtubeLayout && m_pages->currentWidget() != m_videoPage && !m_videoFull && panelFits());
     m_nowPlaying->setPanelOpen(m_panelOpen);
     if (m_panel->isVisible() && !was)
         m_panelSoon.start();   // filled again once it is back
@@ -8110,7 +8145,10 @@ QWidget *MainWindow::buildRecommended()
         setRecommendedOpen(!m_recOpen);
     };
     sheet->onDrag = [this](int height) {
-        m_recDragHeight = height;
+        // Pulled past shut (below the song bar) the height goes under 0,
+        // and -1 is "no drag": the sheet was drawn open until let go
+        // (Batin, 2026-11-20).
+        m_recDragHeight = qMax(0, height);
         fitRecSheet();
     };
     sheet->onDragEnd = [this](int height) {
@@ -8134,17 +8172,8 @@ QWidget *MainWindow::buildRecommended()
         m_recAutoArmed = false;
         setRecommendedOpen(!m_recOpen);
     });
-    // Only the user's own scrolling counts (the wheel, the bar, keys): the
-    // sheet shutting and the header unfolding as the page grows move the bar
-    // too, over a few turns of the loop, and with the list at its end that
-    // opened the sheet again as soon as it was pulled down to the song bar
-    // (Batin, 2026-11-20).
-    m_songs->verticalScrollBar()->installEventFilter(this);
-    m_songs->installEventFilter(this);
     connect(m_songs->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         QScrollBar *bar = m_songs->verticalScrollBar();
-        if (!m_recUserScroll.isValid() || m_recUserScroll.elapsed() > 1200)
-            return;
         // Only on reaching the end by scrolling: shutting it makes the list
         // longer and its bar lands on the end again, which reopened it at
         // once (Batin, 2026-11-12: pulled down past the window's edge, it
