@@ -160,6 +160,10 @@ public:
     void setChannel(const QString &channelId, bool following);
     void setChannelFace(const QPixmap &face);   // null: none
     void setChannelName(const QString &name);   // when the player had none
+    void setSubscribers(qlonglong count);       // under the name; below 0: none known
+    // Like (1), dislike (-1) or neither (0), for this app only.
+    void setRating(int rating);
+    std::function<void(int rating)> onRate;
     std::function<void()> onOpenChannel;
     std::function<void()> onFollow;
     // A song list's song shown as its video: "Switch to audio" instead of the pop out.
@@ -237,6 +241,10 @@ private:
     QLabel *m_title;
     QLabel *m_channel;
     QLabel *m_channelFace = nullptr;
+    QLabel *m_subscribers = nullptr;
+    QPushButton *m_like = nullptr;
+    QPushButton *m_dislike = nullptr;
+    int m_rating = 0;
     QLabel *m_listName;
     QPushButton *m_youtube;
     QPushButton *m_popOut = nullptr;

@@ -355,6 +355,63 @@ void ListeningStats::clearHistory()
     save();
 }
 
+int ListeningStats::forget(const QString &id, const QString &title, const QString &artist)
+{
+    const auto same = [&](const QJsonObject &o) {
+        return id.isEmpty() ? o.value("id").toString().isEmpty() && o.value("title").toString() == title &&
+                                  o.value("artist").toString() == artist
+                            : o.value("id").toString() == id;
+    };
+    QJsonArray kept;
+    int removed = 0, songPlays = 0;
+    for (const QJsonValue &v : m_data.value("history").toArray()) {
+        if (same(v.toObject())) {
+            ++removed;
+            songPlays += !v.toObject().value("video").toBool();
+        } else {
+            kept.append(v);
+        }
+    }
+    if (!removed)
+        return 0;
+    m_data["history"] = kept;
+    // The counts lose as many plays (a count kept longer than the history
+    // keeps at most what the history held of it).
+    const QString key = (artist + QStringLiteral(" - ") + title).toLower();
+    for (const char *kind : {"songs", "videos"}) {
+        QJsonObject all = m_data.value(QLatin1String(kind)).toObject();
+        for (const QString &k : all.keys()) {
+            QJsonObject s = all.value(k).toObject();
+            if (id.isEmpty() ? k != key : s.value("id").toString() != id)
+                continue;
+            const int plays = s.value("plays").toInt() - removed;
+            if (plays <= 0) {
+                all.remove(k);
+            } else {
+                s["plays"] = plays;
+                all[k] = s;
+            }
+        }
+        m_data[QLatin1String(kind)] = all;
+    }
+    if (songPlays && !artist.isEmpty()) {
+        QJsonObject artists = m_data.value("artists").toObject();
+        QJsonObject one = artists.value(artist.toLower()).toObject();
+        if (!one.isEmpty()) {
+            const int plays = one.value("plays").toInt() - songPlays;
+            if (plays <= 0) {
+                artists.remove(artist.toLower());
+            } else {
+                one["plays"] = plays;
+                artists[artist.toLower()] = one;
+            }
+            m_data["artists"] = artists;
+        }
+    }
+    save();
+    return removed;
+}
+
 QList<ListeningStats::Entry> ListeningStats::history() const
 {
     QList<Entry> out;
@@ -673,7 +730,8 @@ void ProfilePage::setHistory(const QList<Played> &plays, bool more, bool keeping
 {
     clearLayout(m_history);
     const qreal dpr = devicePixelRatioF();
-    for (const Played &p : plays) {
+    for (int i = 0; i < plays.size(); ++i) {
+        const Played &p = plays[i];
         auto *row = new QWidget;
         auto *cover = new QLabel;
         cover->setFixedSize(40, 40);
@@ -698,6 +756,17 @@ void ProfilePage::setHistory(const QList<Played> &plays, bool more, bool keeping
             line->addWidget(kind);
         }
         line->addWidget(when);
+        // Remove from history (Batin, 2026-11-21): every play of it.
+        auto *forget = new QPushButton(QChar(0xE711));
+        forget->setCursor(Qt::PointingHandCursor);
+        forget->setFixedSize(26, 26);
+        forget->setToolTip(QStringLiteral("Remove from history"));
+        forget->setStyleSheet(theme::css(QStringLiteral(
+            "QPushButton { font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 8pt; color: %1;"
+            " background: transparent; border: none; border-radius: 13px; padding: 0; min-width: 0; min-height: 0; }"
+            "QPushButton:hover { background: @raised; color: %2; }").arg(theme::c().muted.name(), theme::c().textBright.name())));
+        connect(forget, &QPushButton::clicked, this, [this, i] { if (onForget) onForget(i); });
+        line->addWidget(forget);
         m_history->addWidget(row);
     }
     m_historyNote->setText(keeping ? (plays.isEmpty() ? QStringLiteral("What you play shows up here.") : QString())

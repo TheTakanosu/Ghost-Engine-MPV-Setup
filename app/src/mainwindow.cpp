@@ -427,6 +427,12 @@ MainWindow::MainWindow()
         m_historyShown += 50;
         refreshProfile();
     };
+    // A row's X: the rows are the history's first ones, in its order.
+    m_profilePage->onForget = [this](int i) {
+        const QList<ListeningStats::Entry> history = m_stats.history();
+        if (i >= 0 && i < history.size())
+            forgetPlay(history[i].id, history[i].title, history[i].artist);
+    };
     m_topLists = makeShelf();
     m_profilePage->setListsShelf(m_topLists);
     m_profilePage->onOpenPlaying = [this] { if (m_mpv.connected()) openPlayingList(); };
@@ -469,11 +475,16 @@ MainWindow::MainWindow()
     // Newest first, but the newest of each channel before a second of any:
     // the home asks beside a spread of what was watched, not ten videos of
     // the one channel watched last (Batın, 2026-11-12).
+    // Liked videos first, newest liked first; disliked ones are no seed
+    // (Batin, 2026-11-21: like / dislike, for this app only).
     m_searchPage->watchedVideos = [this] {
         QStringList first, rest;
         QSet<QString> channels;
+        const QStringList disliked = QSettings().value("youtube/disliked").toStringList();
+        for (const QString &id : QSettings().value("youtube/liked").toStringList().mid(0, 6))
+            first << id;
         for (const ListeningStats::Entry &e : m_stats.history()) {
-            if (!e.video || e.id.isEmpty() || first.contains(e.id) || rest.contains(e.id))
+            if (!e.video || e.id.isEmpty() || first.contains(e.id) || rest.contains(e.id) || disliked.contains(e.id))
                 continue;
             const QString channel = e.artist.trimmed().toLower();
             if (channel.isEmpty() || !channels.contains(channel)) {
@@ -687,6 +698,24 @@ MainWindow::MainWindow()
     // Autoplay (Batin, 2026-11-20): off, a video stops at its end with the
     // next one offered; on, the next one plays after a count of 8.
     m_videoPage->setAutoplay(QSettings().value("video/autoplay", false).toBool());
+    m_videoPage->onRate = [this](int r) {
+        if (m_ratedId.isEmpty())
+            return;
+        QSettings settings;
+        QStringList liked = settings.value("youtube/liked").toStringList();
+        QStringList disliked = settings.value("youtube/disliked").toStringList();
+        liked.removeAll(m_ratedId);
+        disliked.removeAll(m_ratedId);
+        if (r == 1)
+            liked.prepend(m_ratedId);
+        else if (r == -1)
+            disliked.prepend(m_ratedId);
+        settings.setValue("youtube/liked", liked.mid(0, 500));
+        settings.setValue("youtube/disliked", disliked.mid(0, 2000));
+        m_videoPage->setRating(r);
+        toast(r == 1 ? QStringLiteral("Liked: more like this on your home")
+                     : r == -1 ? QStringLiteral("Disliked: it won't be on your home") : QStringLiteral("Rating removed"));
+    };
     // Cinema or the normal view (Batin, 2026-11-21): the bar's button and T,
     // kept for the next video.
     m_videoPage->setCinema(QSettings().value("video/cinema", false).toBool());
@@ -3237,6 +3266,39 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (shown)
             shade->raise();
     }
+    // The YouTube menu's card leaves its last 8 px for its shadow, the dark
+    // gap's left half: the splitter's handle is only its right half, and
+    // the gap could not be taken from its left (Batin, 2026-11-21). That
+    // strip hands the mouse on to the handle.
+    if (watched == m_ytSidebar && m_split) {
+        const QEvent::Type t = event->type();
+        if (t == QEvent::MouseMove || t == QEvent::MouseButtonPress || t == QEvent::MouseButtonRelease ||
+            t == QEvent::MouseButtonDblClick || t == QEvent::Leave) {
+            QWidget *handle = m_split->handle(1);
+            const int strip = 8;   // FloatingCard::kShadow - 2, what its card leaves bare
+            if (t == QEvent::Leave) {
+                if (!m_stripDrag)
+                    m_ytSidebar->unsetCursor();
+            } else {
+                auto *mouse = static_cast<QMouseEvent *>(event);
+                const bool over = mouse->position().x() >= m_ytSidebar->width() - strip;
+                if (t == QEvent::MouseButtonPress && over && mouse->button() == Qt::LeftButton)
+                    m_stripDrag = true;
+                if (m_stripDrag || over) {
+                    m_ytSidebar->setCursor(Qt::SplitHCursor);
+                    QMouseEvent copy(t, handle->mapFromGlobal(mouse->globalPosition()), mouse->scenePosition(),
+                                     mouse->globalPosition(), mouse->button(), mouse->buttons(), mouse->modifiers());
+                    QApplication::sendEvent(handle, &copy);
+                    if (t == QEvent::MouseButtonRelease)
+                        m_stripDrag = false;
+                    if (t != QEvent::MouseMove || m_stripDrag)
+                        return true;
+                } else if (t == QEvent::MouseMove) {
+                    m_ytSidebar->unsetCursor();
+                }
+            }
+        }
+    }
     // A click on a place that takes no focus (the page's empty space, a
     // header, a label) leaves the box being typed in, as in a browser; before,
     // only Esc or Enter did (Batin, 2026-11-12). The boxes that edit
@@ -4218,17 +4280,45 @@ QString MainWindow::memoryUsage() const
         CloseHandle(h);
         return mb;
     };
+    // A process's command line (ntdll's ProcessCommandLineInformation, 60).
+    const auto commandLine = [](DWORD pid) -> QString {
+        using Query = LONG(WINAPI *)(HANDLE, int, PVOID, ULONG, PULONG);
+        static const auto query = reinterpret_cast<Query>(
+            reinterpret_cast<void *>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess")));
+        HANDLE h = query ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) : nullptr;
+        if (!h)
+            return {};
+        QString out;
+        ULONG size = 0;
+        query(h, 60, nullptr, 0, &size);
+        if (size > 0 && size < 65536) {
+            QByteArray buffer(int(size), 0);
+            if (query(h, 60, buffer.data(), size, &size) >= 0) {
+                struct Text { USHORT length, maximum; PWSTR text; };
+                const auto *t = reinterpret_cast<const Text *>(buffer.constData());
+                out = QString::fromWCharArray(t->text, t->length / 2);
+            }
+        }
+        CloseHandle(h);
+        return out;
+    };
     const double app = privateMb(GetCurrentProcessId());
     const DWORD mpv = m_mpv.connected() ? DWORD(m_mpv.property("pid").toLongLong()) : 0;
     double player = mpv ? privateMb(mpv) : 0, helpers = 0;
-    if (mpv) {
-        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        PROCESSENTRY32W entry{sizeof(entry)};
-        for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
-            if (entry.th32ParentProcessID == mpv)
-                helpers += privateMb(entry.th32ProcessID);
-        CloseHandle(snapshot);
+    // What mpv started (yt-dlp), and Ghost RPC wherever it came from: one
+    // copy runs for every mpv after the one that started it, which may be
+    // gone, so it was no child of this one and was left out (Batin, 2026-11-21).
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    PROCESSENTRY32W entry{sizeof(entry)};
+    for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry)) {
+        const QString name = QString::fromWCharArray(entry.szExeFile).toLower();
+        const bool child = mpv && entry.th32ParentProcessID == mpv;
+        const bool rpc = !child && name.startsWith(QStringLiteral("python")) &&
+                         commandLine(entry.th32ProcessID).contains(QStringLiteral("ghost_rpc.py"), Qt::CaseInsensitive);
+        if (child || rpc)
+            helpers += privateMb(entry.th32ProcessID);
     }
+    CloseHandle(snapshot);
     QString text = QStringLiteral("About %1 MB: the app %2 MB").arg(qRound(app + player + helpers)).arg(qRound(app));
     if (mpv)
         text += QStringLiteral(", the player %1 MB").arg(qRound(player));
@@ -4773,6 +4863,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
     auto *panel = new FloatingCard;
     m_ytSidebar = panel;
     panel->installEventFilter(this);   // wide or icons only, by its width
+    panel->setMouseTracking(true);     // its shadow strip shows the splitter's cursor
     panel->setMinimumWidth(qRound(76 * theme::zoom()));
     theme::whenChanged(panel, [panel] { panel->update(); });
     auto *box = new QVBoxLayout(panel);
@@ -4980,7 +5071,10 @@ void MainWindow::padYtChannels()
 {
     if (!m_ytChannels)
         return;
-    const int left = m_ytCompact ? qMax(0, (m_ytChannels->viewport()->width() - 26) / 2 - 2) : 12;
+    // In the sheet's own units: theme::style multiplies every px by the zoom,
+    // and worked out in screen pixels the pictures went right as the zoom
+    // grew (Batin, 2026-11-21). The pictures themselves are 26 px at any zoom.
+    const int left = m_ytCompact ? qMax(0, qRound(((m_ytChannels->viewport()->width() - 26) / 2.0 - 2) / theme::zoom())) : 12;
     if (left == m_ytChannelPad)
         return;
     m_ytChannelPad = left;
@@ -7210,6 +7304,36 @@ void MainWindow::offerNextVideo()
     }
     const QVariantList entries = m_mpv.property("playlist").toList();
     const int pos = m_mpv.property("playlist-pos").toInt();
+    // "Ended" long before its end: YouTube's connection dropped and mpv took
+    // that for the end, the seek line left at 2:05 of 3:12 (Batin, 2026-11-21,
+    // twice; streamheal.lua only heals the picture while the sound goes on,
+    // and nothing when listening only). Opened again at that second, at most
+    // three times a video.
+    {
+        const QString path = m_mpv.property("path").toString();
+        const double duration = m_mpv.property("duration").toDouble();
+        const double at = m_mpv.property("time-pos").toDouble();
+        if (path != m_healPath) {
+            m_healPath = path;
+            m_heals = 0;
+        }
+        if (pos >= 0 && duration > 30 && at > 1 && at < duration - 5 && m_heals < 3 &&
+            (path.startsWith(QLatin1String("http")) || path.startsWith(QLatin1String("ytdl")))) {
+            ++m_heals;
+            m_videoPage->hideUpNext();
+            playLog(QStringLiteral("stream ended early at %1 of %2: opened again there (%3)")
+                        .arg(at, 0, 'f', 1).arg(duration, 0, 'f', 1).arg(m_heals));
+            m_mpv.setProperty("start", QString::number(qMax(0.0, at - 1), 'f', 1));
+            armStartReset(pos);
+            m_mpv.setProperty("pause", false);
+            m_mpv.command({"playlist-play-index", pos});
+            const int s = int(at);
+            const QString clock = s >= 3600 ? QStringLiteral("%1:%2:%3").arg(s / 3600).arg(s / 60 % 60, 2, 10, QLatin1Char('0')).arg(s % 60, 2, 10, QLatin1Char('0'))
+                                            : QStringLiteral("%1:%2").arg(s / 60).arg(s % 60, 2, 10, QLatin1Char('0'));
+            toast(QStringLiteral("The video's connection dropped at %1; picking it up again").arg(clock));
+            return;
+        }
+    }
     if (pos < 0 || pos + 1 >= entries.size()) {
         m_videoPage->hideUpNext();   // the last: nothing comes next
         return;
@@ -7372,10 +7496,15 @@ void MainWindow::describeVideo(const QString &id)
         m_videoPage->setAvailableHeight(tallest);
         m_videoChannelId = facts.value(2).trimmed().startsWith(QLatin1String("UC")) ? facts.value(2).trimmed() : QString();
         m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
+        bool known = false;
+        const qlonglong subscribers = facts.value(4).trimmed().toLongLong(&known);
+        m_videoPage->setSubscribers(known ? subscribers : -1);
         // Its name, when mpv had none for it (a live stream has no uploader).
-        const QString name = facts.mid(4).join(QLatin1Char('|')).trimmed();
+        const QString name = facts.mid(5).join(QLatin1Char('|')).trimmed();
         if (!name.isEmpty() && name != QLatin1String("NA"))
             m_videoPage->setChannelName(name);
+        m_ratedId = id;
+        m_videoPage->setRating(rating(id));
         showVideoChannel();
     };
     if (m_descriptions.contains(id)) {
@@ -7408,7 +7537,8 @@ void MainWindow::describeVideo(const QString &id)
                 {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
                  // First line: the first formats, where the storyboards are.
                  "--print", "%(formats.0:6)j",
-                 "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s|%(formats.:.height)l|%(channel)s", "--print", "description",
+                 "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s|%(formats.:.height)l|%(channel_follower_count)s|%(channel)s",
+                 "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
 }
 
@@ -8127,7 +8257,35 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
     for (const ytmusic::Item &it : items)
         entries << PlaylistEntry{it.lineTitle(), it.target(), {}};
     fillAddTo(to, entries, QString(), videos);
+    // On the History page (Batin, 2026-11-21): as the profile's X.
+    if (items.size() == 1 && videos && !items.first().id.isEmpty() && m_searchPage->showingVideos(QStringLiteral("History"))) {
+        const ytmusic::Item it = items.first();
+        menu.addSeparator();
+        menu.addAction("Remove from history", this, [this, it] { forgetPlay(it.id, it.title, it.artist); });
+    }
     menu.exec(global);
+}
+
+int MainWindow::rating(const QString &id)
+{
+    QSettings settings;
+    return settings.value("youtube/liked").toStringList().contains(id) ? 1
+         : settings.value("youtube/disliked").toStringList().contains(id) ? -1 : 0;
+}
+
+void MainWindow::forgetPlay(const QString &id, const QString &title, const QString &artist)
+{
+    const int removed = m_stats.forget(id, title, artist);
+    if (!removed)
+        return;
+    refreshProfile();
+    if (m_searchPage->showingVideos(QStringLiteral("History"))) {
+        const int at = m_searchPage->homeScroll();
+        showVideoHistory();
+        m_searchPage->setHomeScroll(at);
+    }
+    toast(removed == 1 ? QStringLiteral("Removed from history: %1").arg(title)
+                       : QStringLiteral("Removed from history: %1 (%2 plays)").arg(title).arg(removed));
 }
 
 

@@ -261,6 +261,11 @@ private:
     QString m_panelChannelId;        // the playing video's channel, for Follow
     QString m_panelChannelName;
     QString m_videoChannelId;        // the video page's channel, from its description
+    QString m_ratedId;               // the video its Like / Dislike are for
+    QString m_healPath;              // the video last opened again after its stream ended early
+    int m_heals = 0;                 // how often, for that one
+    bool m_stripDrag = false;        // the splitter dragged from the YouTube menu's shadow strip
+    static int rating(const QString &id);   // 1 liked, -1 disliked, 0 neither
     void showProfile();
     void showSettings();
     void showShortcuts();
@@ -353,6 +358,7 @@ private:
     void playFound(const QVector<ytmusic::Item> &items, const QString &name, int start, bool shuffle, bool audio);
     void saveFound(const QString &name, const QVector<ytmusic::Item> &items);
     void foundMenu(const QVector<ytmusic::Item> &items, const QPoint &global);
+    void forgetPlay(const QString &id, const QString &title, const QString &artist);   // out of the history
     // `videos`: only video lists (the YouTube side's), else only song lists.
     void fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip = QString(), bool videos = false);
     bool likedHas(const QString &target);

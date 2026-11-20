@@ -72,6 +72,12 @@ public:
     // These videos in the home's grid under a title (the History), until a
     // chip or the home is picked again.
     void showVideos(const QString &title, const QVector<ytmusic::Item> &items);
+    // Whether the videos shown are the list showVideos gave this title (the
+    // History page, for "Remove from history"); its scroll, to shown again
+    // where it was.
+    bool showingVideos(const QString &title) const;
+    int homeScroll() const;
+    void setHomeScroll(int value);
     // A channel's own videos, all of them page by page, under its name.
     void showChannel(const QString &channelId, const QString &name);
     // "Show less from this channel": its cards on the home put away (Undo on

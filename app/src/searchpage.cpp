@@ -926,6 +926,22 @@ void SearchPage::showVideos(const QString &title, const QVector<ytmusic::Item> &
              [this, title, items] { showVideos(title, items); });
 }
 
+bool SearchPage::showingVideos(const QString &title) const
+{
+    return m_homeFixed && m_homeGrid->isVisible() && m_homeStatus->text() == title;
+}
+
+int SearchPage::homeScroll() const
+{
+    return m_homeGrid->verticalScrollBar()->value();
+}
+
+void SearchPage::setHomeScroll(int value)
+{
+    // After the grid has laid its items out, or the bar is still short.
+    QTimer::singleShot(0, this, [this, value] { m_homeGrid->verticalScrollBar()->setValue(value); });
+}
+
 int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
 {
     int added = 0;
@@ -933,8 +949,10 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
     // channel watched lately does not fill it as the Following page would
     // (Batın, 2026-11-12).
     const bool mixed = m_homeChannel.isEmpty() && m_homeChannelId.isEmpty() && !m_homeSearch && !m_homeFixed;
+    // Disliked here (the video page's Dislike): never on the home again.
+    const QStringList disliked = mixed ? QSettings().value("youtube/disliked").toStringList() : QStringList();
     for (const ytmusic::Item &it : items) {
-        if (m_homeSeen.contains(it.id))
+        if (m_homeSeen.contains(it.id) || disliked.contains(it.id))
             continue;
         const QString channel = it.channelId.isEmpty() ? it.artist : it.channelId;
         if (mixed && !channel.isEmpty() && m_homeByChannel.value(channel) >= 3)

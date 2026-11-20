@@ -34,6 +34,43 @@ function Ask([string]$Question, [bool]$Default) {
     if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
     return $answer -match '^(y|e|yes|evet)$'
 }
+# The setup zip carries this script in its mpv folder, the payload install.bat
+# copies. Run from there (Downloads), it took that folder for an install: the
+# same version, so "Already current", then "The Ghost Engine app isn't
+# installed here. Install it now?" and a second copy went into Downloads
+# (Batin's laptop, 2026-11-21). It updates installs only: here it points at
+# the installed one, found by the Start menu shortcut install.bat made.
+$setupRoot = Split-Path $PSScriptRoot -Parent
+# A folder with mpv.exe in it is an install, wherever it is (someone may have
+# installed into the unpacked setup itself).
+if ((Test-Path (Join-Path $setupRoot "install.bat")) -and (Test-Path (Join-Path $setupRoot "lib\install.ps1")) -and
+    -not (Test-Path (Join-Path $PSScriptRoot "mpv.exe"))) {
+    if ($Check) { exit 1 }
+    Write-Host ""
+    Say "This is the setup folder you downloaded, not Ghost Engine itself." "Yellow"
+    Say "Updates are made where it is installed; nothing here was changed." "Yellow"
+    $installed = $null
+    $menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Ghost Engine.lnk"
+    if (Test-Path $menu) {
+        $dir = Split-Path ((New-Object -ComObject WScript.Shell).CreateShortcut($menu).TargetPath) -Parent
+        if ($dir -and $dir -ne $PSScriptRoot -and (Test-Path (Join-Path $dir "update.ps1"))) { $installed = $dir }
+    }
+    $code = 1
+    if ($installed) {
+        Say "Ghost Engine is installed in $installed" "Gray"
+        if (Ask "Update that one instead?" $true) {
+            $passOn = @{}
+            foreach ($key in $PSBoundParameters.Keys) { $passOn[$key] = $PSBoundParameters[$key] }
+            & (Join-Path $installed "update.ps1") @passOn
+            exit $LASTEXITCODE
+        }
+    } else {
+        Say "To install it, run install.bat in the folder above this one." "Gray"
+    }
+    if (-not $Unattended) { Read-Host "  Press Enter to close" | Out-Null }
+    exit $code
+}
+
 function Get-Json([string]$Url) {
     Invoke-RestMethod -Uri $Url -Headers @{
         "Accept" = "application/vnd.github+json"; "User-Agent" = "Ghost-Engine-MPV-Setup"

@@ -98,6 +98,11 @@ public:
     void setKeepHistory(bool on);
     void clearHistory();
     QList<Entry> history() const;
+    // Removes every play of one song or video from the history and its plays
+    // from the counts, as YouTube's "Remove from watch history" (Batin,
+    // 2026-11-21: plays from testing filled the home). By id, or by title and
+    // artist for what has none. Returns how many plays went.
+    int forget(const QString &id, const QString &title, const QString &artist);
 
     // Plays counted as songs before videos were counted apart, moved over
     // once: those whose video is in a video list.
@@ -134,6 +139,7 @@ public:
     struct Played { QString title, subtitle, when; QPixmap cover; bool video = false; };
     void setHistory(const QList<Played> &plays, bool more, bool keeping);
     std::function<void()> onMoreHistory;
+    std::function<void(int index)> onForget;   // a row's X: its play's index in what was given
     void setListsShelf(QListWidget *shelf);
     void setListsVisible(bool visible);
     void setSince(const QDateTime &since, bool empty);

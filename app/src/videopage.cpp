@@ -36,6 +36,7 @@
 #include <QWindow>
 
 #include <cmath>
+#include <QLocale>
 
 #include <windows.h>
 #include <dwmapi.h>
@@ -1097,13 +1098,34 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
         if (!m_link.isEmpty())
             QDesktopServices::openUrl(QUrl(m_link));
     });
+    // The channel's subscribers under its name, as on YouTube (Batin, 2026-11-21).
+    m_subscribers = new QLabel;
+    m_subscribers->setObjectName("statLabel");
+    m_subscribers->hide();
+    auto *names = new QVBoxLayout;
+    names->setSpacing(0);
+    names->addWidget(m_channel);
+    names->addWidget(m_subscribers);
+    // Like and dislike, for this app only (Batin, 2026-11-21): what the home
+    // is made from, nothing sent to YouTube.
+    m_like = action(QString(QChar(0xE8E1)), "Like");
+    m_like->setCheckable(true);
+    m_like->setToolTip("More like this on your home (only in this app)");
+    m_dislike = action(QString(QChar(0xE8E0)), QString());
+    m_dislike->setText(QString(QChar(0xE8E0)));
+    m_dislike->setCheckable(true);
+    m_dislike->setToolTip("Not on your home again (only in this app)");
+    connect(m_like, &QPushButton::clicked, this, [this] { if (onRate) onRate(m_rating == 1 ? 0 : 1); });
+    connect(m_dislike, &QPushButton::clicked, this, [this] { if (onRate) onRate(m_rating == -1 ? 0 : -1); });
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(8);
     buttons->addWidget(m_channelFace);
-    buttons->addWidget(m_channel);
+    buttons->addLayout(names);
     buttons->addSpacing(6);
     buttons->addWidget(m_follow);
     buttons->addStretch(1);
+    buttons->addWidget(m_like);
+    buttons->addWidget(m_dislike);
     buttons->addWidget(m_toAudio);
     buttons->addWidget(popOut);
     buttons->addWidget(m_youtube);
@@ -1637,6 +1659,8 @@ void VideoPage::setPlaying(const QString &target, const QString &title, const QS
     if (link != m_link) {
         setChannel(QString(), false);
         setChannelFace(QPixmap());
+        setSubscribers(-1);
+        setRating(0);
     }
     m_link = link;
     m_youtube->setVisible(!link.isEmpty());
@@ -2003,6 +2027,44 @@ void VideoPage::setChannelName(const QString &name)
 {
     if (m_channel->text().isEmpty())
         m_channel->setText(name);
+}
+
+void VideoPage::setSubscribers(qlonglong count)
+{
+    if (count < 0) {
+        m_subscribers->hide();
+        return;
+    }
+    // YouTube's way: three figures at most, 1.23K, 12.3K, 123K, 1.23M.
+    const QLocale english(QLocale::English);
+    QString figure;
+    if (count < 1000) {
+        figure = QString::number(count);
+    } else {
+        const char *units[] = {"K", "M", "B"};
+        double value = double(count);
+        int unit = -1;
+        while (value >= 1000 && unit < 2) {
+            value /= 1000;
+            ++unit;
+        }
+        const int decimals = value < 10 ? 2 : value < 100 ? 1 : 0;
+        // Cut, not rounded: 999.9K is not yet 1M.
+        const double scale = std::pow(10.0, decimals);
+        figure = english.toString(std::floor(value * scale) / scale, 'f', decimals);
+        while (figure.contains(QLatin1Char('.')) && (figure.endsWith(QLatin1Char('0')) || figure.endsWith(QLatin1Char('.'))))
+            figure.chop(1);
+        figure += QLatin1String(units[unit]);
+    }
+    m_subscribers->setText(figure + (count == 1 ? QStringLiteral(" subscriber") : QStringLiteral(" subscribers")));
+    m_subscribers->show();
+}
+
+void VideoPage::setRating(int rating)
+{
+    m_rating = rating;
+    m_like->setChecked(rating == 1);
+    m_dislike->setChecked(rating == -1);
 }
 
 void VideoPage::setChannel(const QString &channelId, bool following)

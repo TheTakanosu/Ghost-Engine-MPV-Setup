@@ -469,6 +469,7 @@ void apply(QApplication &app)
         QPushButton#videoAction { background: @raised; border: none; border-radius: 16px; padding: 0 14px;
                                   min-height: 32px; max-height: 32px; color: @text; font-family: "Segoe UI", "Segoe Fluent Icons"; }
         QPushButton#videoAction:hover { background: @pressed; }
+        QPushButton#videoAction:checked { background: @text; color: @window; }
         QPushButton#videoControl { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; background: transparent; border: none;
                                    color: rgb(236,236,241); font-size: 9.5pt; min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; border-radius: 14px; }
         QPushButton#videoControl:hover, QPushButton#videoTextControl:hover { background: rgba(255,255,255,26); color: white; }
