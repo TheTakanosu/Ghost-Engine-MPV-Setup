@@ -149,6 +149,7 @@ public:
     std::function<QString(const QString &target)> lengthFor;
     std::function<QString(const QString &target)> channelFor;
     std::function<void(const QString &target)> onPick;
+    std::function<void(const QString &target, const QString &title, const QPoint &global)> onListMenu;   // right-clicked in the list
     std::function<void()> onPopOut;
     std::function<void()> onSwitchToAudio;
     // The channel under the title: a click opens its page; Follow beside it,

@@ -11,6 +11,7 @@
 #include "resolver.h"
 #include "searchpage.h"
 #include "shortcuts.h"
+#include "tabs.h"
 #include "thumbnails.h"
 #include "youtube.h"
 
@@ -207,6 +208,17 @@ private:
     QWidget *m_mainPanel = nullptr;   // the page's card, darker in the YouTube layout
     QWidget *m_shadows = nullptr;     // the cards' shadows on the grey ground
     bool m_liveBehind = false;   // a live stream paused or wound back
+    // Videos kept for later in tabs (Batin, 2026-11-20): one mpv, a tab
+    // loads nothing until it is clicked, then opens at its second.
+    TabStrip *m_tabStrip = nullptr;
+    QString m_tabPending;            // a picked tab's entry, until mpv has it
+    QTimer m_tabsSoon;               // what plays, settled, told to the tabs
+    void openInTab(const VideoTab &tab);
+    void pickTab(int index);
+    void closeTab(int index);
+    void syncTabs();                 // the tab that plays follows what mpv plays
+    void tabsChanged();              // shown or not, saved
+    void tabMenu(int index, const QPoint &global);
     class NowIsland *m_island = nullptr;   // "Now playing" in the top bar while a video plays off its page
     void applyLayoutColors();
     bool m_pictureAway = false;   // left the video's page: sound only, no corner player

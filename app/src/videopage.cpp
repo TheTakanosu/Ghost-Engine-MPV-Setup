@@ -1092,6 +1092,13 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
         if (onPick)
             onPick(item->data(kTargetRole).toString());
     });
+    // Right-clicked: its menu, with Open in new tab (Batin, 2026-11-20).
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_list, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QListWidgetItem *item = m_list->itemAt(pos);
+        if (item && onListMenu)
+            onListMenu(item->data(kTargetRole).toString(), item->text(), m_list->viewport()->mapToGlobal(pos));
+    });
     m_side = new QWidget;
     m_side->setFixedWidth(kSideWidth);
     auto *side = new QVBoxLayout(m_side);

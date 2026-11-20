@@ -42,6 +42,7 @@ qt_add_executable(GhostEngine WIN32
     src/updates.h src/updates.cpp
     src/traymenu.h src/traymenu.cpp
     src/island.h src/island.cpp
+    src/tabs.h src/tabs.cpp
     ghostengine.rc
 )
 qt_add_resources(GhostEngine "assets" PREFIX "/" FILES assets/chevron-down.png)

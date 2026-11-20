@@ -545,6 +545,19 @@ MainWindow::MainWindow()
                 return;
             }
     };
+    m_videoPage->onListMenu = [this](const QString &target, const QString &title, const QPoint &at) {
+        const QString id = idForTarget(target);
+        QMenu menu(this);
+        menu.addAction("Play", this, [this, target] { m_videoPage->onPick(target); });
+        // Kept with the list it is in, so its tab goes on from there.
+        menu.addAction("Open in new tab", this, [this, target, title, id] {
+            const QString channel = m_videoPage->channelFor ? m_videoPage->channelFor(target) : QString();
+            openInTab(VideoTab{target, id, title, channel, playingListPath(), 0});
+        });
+        if (!id.isEmpty())
+            menu.addAction("Copy video link", this, [this, id] { copyLink(id, false); });
+        menu.exec(at);
+    };
     m_videoPage->onPopOut = [this] {
         m_videoPoppedOut = true;
         m_videoPage->setPoppedOut(true);
@@ -1063,7 +1076,8 @@ MainWindow::MainWindow()
     m_island->freeSpan = [this] {
         // From the last thing on the left (the search box, or its button) to
         // the first on the right (Update, the profile).
-        QWidget *leftmost = m_search->isVisible() ? static_cast<QWidget *>(m_search) : m_searchButton;
+        QWidget *leftmost = m_tabStrip->isVisible() ? static_cast<QWidget *>(m_tabStrip)
+                          : m_search->isVisible() ? static_cast<QWidget *>(m_search) : m_searchButton;
         QWidget *rightmost = m_updateButton->isVisible() ? m_updateButton : m_profileButton;
         const int left = leftmost->mapTo(this, QPoint(leftmost->width(), 0)).x();
         const int right = rightmost->mapTo(this, QPoint(0, 0)).x();
@@ -1289,6 +1303,15 @@ MainWindow::MainWindow()
             m_panel->setPosition(m_mpv.property("time-pos").toDouble());
         if (name == "time-pos")
             trackListening();
+        // The tab that plays keeps its second, for when it is left.
+        if (name == "time-pos" && m_tabStrip->current >= 0) {
+            VideoTab &tab = m_tabStrip->tabs[m_tabStrip->current];
+            if (tab.target == m_mpv.property("path").toString())
+                tab.seconds = m_mpv.property("time-pos").toDouble();
+        }
+        if (name == "path" || name == "user-data/ghost/audio" || name == "media-title" ||
+            name == "user-data/ghost/source" || name == "metadata/by-key/uploader")
+            m_tabsSoon.start();
         if (m_pages->currentWidget() == m_profileScroll) {
             if (name == "path" || name == "user-data/ghost/source" || name == "media-title" || name == "pause" ||
                 name == "playlist-pos" || name == "playlist-path")
@@ -1694,7 +1717,34 @@ QWidget *MainWindow::buildTopBar()
     m_chromeButtons << m_searchButton;   // clicked, not a place to drag the window by
     row->addWidget(m_searchButton);
     row->addWidget(m_search);
-    row->addStretch();
+    // The tabs after the search, the island centred in what is left.
+    m_tabStrip = new TabStrip;
+    m_tabStrip->hide();
+    m_tabStrip->cover = [this](const QString &id) { return m_covers.get(id, ThumbnailCache::Size::Card); };
+    m_tabStrip->onPick = [this](int i) { pickTab(i); };
+    m_tabStrip->onClose = [this](int i) { closeTab(i); };
+    m_tabStrip->onMenu = [this](int i, const QPoint &at) { tabMenu(i, at); };
+    m_chromeButtons << m_tabStrip;   // clicked, not a place to drag the window by
+    connect(&m_covers, &ThumbnailCache::ready, m_tabStrip, [this] { m_tabStrip->update(); });
+    // A moment after mpv's properties change, once they agree with each
+    // other (the list's kind can come after the entry's path).
+    m_tabsSoon.setSingleShot(true);
+    m_tabsSoon.setInterval(400);
+    connect(&m_tabsSoon, &QTimer::timeout, this, &MainWindow::syncTabs);
+    {
+        // Kept from the last time, none of them loaded.
+        const QJsonArray saved = QJsonDocument::fromJson(QSettings().value("youtube/tabs").toByteArray()).array();
+        for (const QJsonValue &v : saved) {
+            const QJsonObject o = v.toObject();
+            VideoTab t{o.value("target").toString(), o.value("id").toString(), o.value("title").toString(),
+                       o.value("channel").toString(), o.value("list").toString(), o.value("seconds").toDouble()};
+            if (!t.target.isEmpty())
+                m_tabStrip->tabs << t;
+        }
+        m_tabStrip->changed();
+    }
+    row->addWidget(m_tabStrip, 3);
+    row->addStretch(2);
     row->addWidget(m_updateButton);
     row->addWidget(m_profileButton);
     row->addWidget(gear);
@@ -3524,7 +3574,7 @@ void MainWindow::syncSearchWidth()
         const auto *row = m_topBar->layout();
         int others = row->contentsMargins().left() + row->contentsMargins().right() + 10;
         for (QWidget *w : std::as_const(m_chromeButtons))
-            if (w != m_search && w->isVisible())
+            if (w != m_search && w != m_tabStrip && w->isVisible())
                 others += w->sizeHint().width() + row->spacing();
         width = qMin(width, m_topBar->width() - others - 8);
     }
@@ -5423,6 +5473,7 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     // view's place showed empty through the intro (Batin, 2026-11-20).
     if (m_rightSplit)
         m_rightSplit->refresh();
+    tabsChanged();   // the tabs are the YouTube side's
     SearchPopup::setYouTube(youtube);
     {
         const int wanted = QSettings().value(youtube ? "layout/ytWidth" : "layout/libraryWidth", -1).toInt();
@@ -6472,9 +6523,16 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
             restartPlayer(QueuedPlay{path, shuffle, startAt, order}, 0);
             return;
         }
-        // A list chosen now starts at 0, whatever a reload left set.
+        // A list chosen now starts at 0, whatever a reload left set; a tab
+        // (or a resume) at its second, for that entry only.
         m_resetStart = false;
-        m_mpv.setProperty("start", "none");
+        if (m_startSeconds > 1) {
+            m_mpv.setProperty("start", QString::number(m_startSeconds, 'f', 1));
+            armStartReset(startAt);
+        } else {
+            m_mpv.setProperty("start", "none");
+        }
+        m_startSeconds = 0;
         m_mpv.command({"loadfile", path, "replace", -1, QStringLiteral("playlist-start=%1").arg(startAt)});
         if (shuffle)
             QTimer::singleShot(400, this, [this] { m_mpv.command({"playlist-shuffle"}); });
@@ -7747,6 +7805,12 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
     QMenu menu(this);
     menu.addAction(items.size() > 1 ? QStringLiteral("Play these %1").arg(items.size()) : QStringLiteral("Play"), this,
                    [this, items, videos] { playFound(items, items.size() > 1 ? QStringLiteral("Search: %1").arg(m_searchPage->query()) : items.first().title, 0, false, !videos); });
+    if (items.size() == 1 && videos && !items.first().id.isEmpty()) {
+        const ytmusic::Item it = items.first();
+        menu.addAction("Open in new tab", this, [this, it] {
+            openInTab(VideoTab{it.target(), it.id, it.title, it.artist, QString(), 0});
+        });
+    }
     if (items.size() == 1 && !videos)
         menu.addAction("Play with its radio", this, [this, items] { m_searchPage->playRadio(items.first()); });
     if (items.size() == 1 && !videos && !items.first().artist.isEmpty())
@@ -7801,6 +7865,205 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
 
 
 // "New playlist...", then every list of the library these can be added to.
+void MainWindow::openInTab(const VideoTab &tab)
+{
+    // Kept, not opened: the tab waits with its name and cover. What plays
+    // becomes a tab beside it, so the two can be gone between.
+    if (tab.target.isEmpty())
+        return;
+    syncTabs();
+    for (int i = 0; i < m_tabStrip->tabs.size(); ++i)
+        if (m_tabStrip->tabs[i].target == tab.target) {
+            toast(i == m_tabStrip->current ? QStringLiteral("That's what plays") : QStringLiteral("Already in a tab"));
+            return;
+        }
+    const bool video = m_mpv.connected() && !m_mpv.property("path").toString().isEmpty() &&
+                       !m_mpv.property("user-data/ghost/audio").toBool();
+    if (m_tabStrip->tabs.isEmpty() && video) {
+        m_tabStrip->tabs << VideoTab{};
+        m_tabStrip->current = 0;
+        syncTabs();   // fills it from what plays
+    }
+    m_tabStrip->tabs << tab;
+    tabsChanged();
+    toast(QStringLiteral("Opened in a new tab"));
+}
+
+void MainWindow::pickTab(int index)
+{
+    if (index < 0 || index >= m_tabStrip->tabs.size())
+        return;
+    if (index == m_tabStrip->current) {
+        // Already what plays: its page.
+        if (!m_youtubeLayout)
+            setYouTubeLayout(true, true, [this] { showVideoPage(); });
+        else
+            showVideoPage();
+        return;
+    }
+    // The one left keeps the second it was at (time-pos keeps it); the one
+    // picked opens at its own, from its list when it came from one.
+    const VideoTab tab = m_tabStrip->tabs[index];
+    m_tabStrip->current = index;
+    tabsChanged();
+    // Until mpv has it, what still plays is the one left, not this tab's.
+    m_tabPending = tab.target;
+    QTimer::singleShot(20000, this, [this, t = tab.target] { if (m_tabPending == t) m_tabPending.clear(); });
+    m_startSeconds = tab.seconds > 5 ? tab.seconds - 2 : 0;   // a little before, as YouTube resumes
+    if (!tab.list.isEmpty() && QFileInfo::exists(tab.list)) {
+        const QVector<PlaylistEntry> entries = Playlist::peek(tab.list).readEntries();
+        for (int i = 0; i < entries.size(); ++i)
+            if (entries[i].target == tab.target) {
+                play(tab.list, false, i);
+                return;
+            }
+    }
+    ytmusic::Item item;
+    item.kind = ytmusic::Kind::Video;
+    item.id = tab.id.isEmpty() ? youtube::videoId(tab.target) : tab.id;
+    item.title = tab.title;
+    item.artist = tab.channel;
+    if (item.id.isEmpty()) {
+        m_startSeconds = 0;
+        toast(QStringLiteral("This tab's video couldn't be found."));
+        return;
+    }
+    playFound({item}, tab.title, 0, false, false);
+}
+
+void MainWindow::closeTab(int index)
+{
+    if (index < 0 || index >= m_tabStrip->tabs.size())
+        return;
+    const bool playing = index == m_tabStrip->current;
+    m_tabStrip->tabs.removeAt(index);
+    if (m_tabStrip->current > index)
+        --m_tabStrip->current;
+    else if (playing)
+        m_tabStrip->current = -1;
+    // What plays closed while others wait: the next one opens, as a
+    // browser's does. The last one left plays on, without a strip.
+    if (playing && !m_tabStrip->tabs.isEmpty()) {
+        pickTab(qMin(index, int(m_tabStrip->tabs.size()) - 1));
+        return;
+    }
+    tabsChanged();
+}
+
+void MainWindow::syncTabs()
+{
+    if (!m_tabStrip || m_tabStrip->tabs.isEmpty() || !m_mpv.connected())
+        return;
+    const QString path = m_mpv.property("path").toString();
+    if (path.isEmpty())
+        return;
+    if (!m_tabPending.isEmpty()) {
+        if (path != m_tabPending)
+            return;
+        m_tabPending.clear();
+    }
+    QVector<VideoTab> &tabs = m_tabStrip->tabs;
+    int &current = m_tabStrip->current;
+    // A song is not a tab's: the tab that played is left where it was.
+    if (m_mpv.property("user-data/ghost/audio").toBool()) {
+        if (current >= 0) {
+            current = -1;
+            tabsChanged();
+        }
+        return;
+    }
+    if (current < 0) {
+        // A video opened another way while tabs wait: it is a tab of its own,
+        // unless one is this very video.
+        for (int i = 0; i < tabs.size() && current < 0; ++i)
+            if (tabs[i].target == path)
+                current = i;
+        if (current < 0) {
+            tabs << VideoTab{};
+            current = int(tabs.size()) - 1;
+        }
+    }
+    VideoTab &tab = tabs[current];
+    if (tab.target != path) {
+        // Gone on in its tab (the next of its list, a pick from the right):
+        // the tab is that one now, from its start.
+        tab.target = path;
+        tab.seconds = 0;
+        tab.list = playingListPath();
+        tab.title.clear();
+        tab.channel.clear();
+        tab.id.clear();
+    }
+    if (tab.list.isEmpty())
+        tab.list = playingListPath();
+    QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+    if (id.isEmpty())
+        id = youtube::videoId(path);
+    if (!id.isEmpty())
+        tab.id = id;
+    const QString title = m_mpv.property("media-title").toString();
+    if (!title.isEmpty() && !title.startsWith(QStringLiteral("http")) && !title.startsWith(QStringLiteral("ytdl")))
+        tab.title = title;
+    if (tab.title.isEmpty())
+        tab.title = m_suggestedTitles.value(path, m_queueTitles.value(path));
+    const QString uploader = m_mpv.property("metadata/by-key/uploader").toString();
+    if (!uploader.isEmpty())
+        tab.channel = uploader;
+    tabsChanged();
+}
+
+void MainWindow::tabsChanged()
+{
+    if (!m_tabStrip)
+        return;
+    m_tabStrip->changed();
+    // Shown on the YouTube side while a tab waits beside what plays.
+    bool waiting = false;
+    for (int i = 0; i < m_tabStrip->tabs.size(); ++i)
+        waiting = waiting || i != m_tabStrip->current;
+    const bool show = m_youtubeLayout && waiting;
+    if (show != m_tabStrip->isVisible()) {
+        m_tabStrip->setVisible(show);
+        if (m_island)
+            QTimer::singleShot(0, m_island, [this] { m_island->refresh(); });
+    }
+    // Kept for the next start; the one that plays too, at its second.
+    QJsonArray saved;
+    if (waiting)
+        for (const VideoTab &t : std::as_const(m_tabStrip->tabs))
+            saved.append(QJsonObject{{"target", t.target}, {"id", t.id}, {"title", t.title},
+                                     {"channel", t.channel}, {"list", t.list}, {"seconds", qRound(t.seconds)}});
+    QSettings().setValue("youtube/tabs", QJsonDocument(saved).toJson(QJsonDocument::Compact));
+}
+
+void MainWindow::tabMenu(int index, const QPoint &global)
+{
+    if (index < 0 || index >= m_tabStrip->tabs.size())
+        return;
+    const VideoTab tab = m_tabStrip->tabs[index];
+    QMenu menu(this);
+    menu.addAction(index == m_tabStrip->current ? QStringLiteral("Go to video") : QStringLiteral("Play"), this,
+                   [this, index] { pickTab(index); });
+    if (!tab.id.isEmpty())
+        menu.addAction("Copy video link", this, [this, id = tab.id] { copyLink(id, false); });
+    menu.addSeparator();
+    menu.addAction("Close tab", this, [this, index] { closeTab(index); });
+    if (m_tabStrip->tabs.size() > 1)
+        menu.addAction("Close other tabs", this, [this, index] {
+            const VideoTab keep = m_tabStrip->tabs[index];
+            const bool wasPlaying = index == m_tabStrip->current;
+            m_tabStrip->tabs = {keep};
+            m_tabStrip->current = wasPlaying ? 0 : -1;
+            tabsChanged();
+        });
+    menu.addAction("Close all tabs", this, [this] {
+        m_tabStrip->tabs.clear();
+        m_tabStrip->current = -1;
+        tabsChanged();
+    });
+    menu.exec(global);
+}
+
 void MainWindow::fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip, bool videos)
 {
     const auto addTo = [this, entries](const QString &path) {
