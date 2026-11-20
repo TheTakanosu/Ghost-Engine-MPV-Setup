@@ -78,6 +78,37 @@ jobs:
             Set-Content dist/SHA256SUMS -Encoding ascii
           Get-Content dist/SHA256SUMS
 
+      # Update safety (1.6): what is built must install from nothing and must
+      # be reachable from the last release's own update.ps1, or no draft is
+      # made. A broken update.ps1 can never be fixed for the people who have
+      # it, and no update may ever ask anyone for a fresh install.
+      - name: Fetch the last release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $current = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "v" + (Get-Content mpv/VERSION -Raw).Trim() }
+          $list = gh release list --repo "${{ github.repository }}" --exclude-drafts --limit 30 --json tagName,isPrerelease | ConvertFrom-Json
+          $last = @($list | Where-Object { -not $_.isPrerelease -and $_.tagName -ne $current })[0]
+          if (-not $last) { Write-Host "::error::no earlier release to update from"; exit 1 }
+          gh release download $last.tagName --repo "${{ github.repository }}" -D last -p Ghost-Engine-MPV-Setup.zip -p GhostEngine-win64.zip
+          if ($LASTEXITCODE) { exit 1 }
+          Write-Host "updating from $($last.tagName) to $current"
+          "LAST_TAG=$($last.tagName)" >> $env:GITHUB_ENV
+          "NEW_TAG=$current" >> $env:GITHUB_ENV
+
+      - name: Update from the last release (Windows PowerShell 5.1)
+        shell: pwsh
+        run: ./.github/scripts/try-update.ps1 -OldDir last -OldTag $env:LAST_TAG -NewDir dist -NewTag $env:NEW_TAG -Shell powershell
+
+      - name: Update from the last release (PowerShell 7)
+        shell: pwsh
+        run: ./.github/scripts/try-update.ps1 -OldDir last -OldTag $env:LAST_TAG -NewDir dist -NewTag $env:NEW_TAG -Shell pwsh
+
+      - name: Install from nothing
+        shell: pwsh
+        run: ./.github/scripts/try-install.ps1 -NewDir dist
+
       - name: Keep the files with the run
         uses: actions/upload-artifact@v4
         with:
