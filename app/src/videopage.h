@@ -172,6 +172,10 @@ public:
     void setCover(bool on, const QPixmap &cover = {});
     bool coverShown() const { return m_coverOn; }
     std::function<void()> onCoverPlay;
+    // The timeline's picture for a second (Batin, 2026-11-20): shown over
+    // the seek line under the mouse, and while the handle is dragged.
+    std::function<QPixmap(double seconds)> previewAt;
+    void refreshSeekPreview();   // a sheet of pictures came
     std::function<void()> onBringBack;
     std::function<void()> onFullScreen;
     std::function<void()> onTogglePause;
@@ -251,6 +255,10 @@ private:
     QLabel *m_seekTip = nullptr;   // the time the handle is at, over it while dragged
     QElapsedTimer m_scrubClock;
     void showSeekTip(int value);
+    void showSeekPreview(int value);   // the picture and the time over this point
+    void hideSeekPreview();
+    QWidget *m_seekPreview = nullptr;
+    int m_previewValue = -1;
     QList<QWidget *> m_wideOnly;   // left out over the small picture in the now playing view
     QLabel *m_time;
     QPushButton *m_live = nullptr;

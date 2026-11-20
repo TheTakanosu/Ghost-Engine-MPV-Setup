@@ -588,6 +588,16 @@ MainWindow::MainWindow()
         setVideoFullScreen(!m_videoFull);
     };
     m_videoPage->onTogglePause = [this] { togglePause(); };
+    // The timeline's pictures: the playing video's storyboard (not a tab
+    // page's: there the controls are the other video's and are hidden).
+    m_videoPage->previewAt = [this](double seconds) {
+        const QString path = m_mpv.property("path").toString();
+        QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
+        if (id.isEmpty())
+            id = youtube::videoId(path);
+        return !id.isEmpty() && id == m_storyboard.video() ? m_storyboard.frameAt(seconds) : QPixmap();
+    };
+    m_storyboard.onReady = [this] { m_videoPage->refreshSeekPreview(); };
     // A tab's cover: Play starts what waits paused behind it.
     m_videoPage->onCoverPlay = [this] {
         if (m_preview)
@@ -7313,7 +7323,16 @@ void MainWindow::describeVideo(const QString &id)
     // nothing, after the video has started, so it never delays playing.
     // The first line yt-dlp prints is "views|upload date", the rest is the
     // description.
-    auto show = [this](const QString &printed) {
+    auto show = [this, id](const QString &whole) {
+        // The storyboard's formats come first (a JSON line), when asked for.
+        QString printed = whole;
+        if (printed.startsWith(QLatin1Char('['))) {
+            const qsizetype end = printed.indexOf(QLatin1Char('\n'));
+            const QString formats = printed.left(end < 0 ? printed.size() : end);
+            printed = end < 0 ? QString() : printed.mid(end + 1);
+            if (!m_preview || m_previewTab.id != id)
+                m_storyboard.setVideo(id, formats.toUtf8());
+        }
         const qsizetype newline = printed.indexOf('\n');
         const QStringList facts = printed.left(newline < 0 ? printed.size() : newline).split('|');
         const QString text = newline < 0 ? QString() : printed.mid(newline + 1);
@@ -7368,6 +7387,8 @@ void MainWindow::describeVideo(const QString &id)
     });
     proc->start(QFileInfo(findMpv()).absoluteDir().filePath("yt-dlp.exe"),
                 {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
+                 // First line: the first formats, where the storyboards are.
+                 "--print", "%(formats.0:6)j",
                  "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s|%(formats.:.height)l|%(channel)s", "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
 }

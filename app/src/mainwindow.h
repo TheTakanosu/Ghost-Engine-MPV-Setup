@@ -11,6 +11,7 @@
 #include "resolver.h"
 #include "searchpage.h"
 #include "shortcuts.h"
+#include "storyboard.h"
 #include "tabs.h"
 #include "thumbnails.h"
 #include "youtube.h"
@@ -293,6 +294,7 @@ private:
     // A new video's first frame awaited: its thumbnail shows meanwhile, not
     // the last frame of the one before (Batin, 2026-11-20).
     QString m_frameWaitPath;
+    Storyboard m_storyboard;         // the playing video's timeline pictures
     QElapsedTimer m_resumeClock;     // a video opened at a kept second...
     QString m_resumePath;            // ...this one; ended at once, it starts over   // what this mpv played last was a video (volumes per side)
     qreal m_zoomTarget = 1.0;

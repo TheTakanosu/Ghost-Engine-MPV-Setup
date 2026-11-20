@@ -127,6 +127,46 @@ protected:
     }
 };
 
+// The timeline's picture over the seek line, with the time under it, as
+// YouTube shows while the mouse is on its timeline.
+class SeekPreview : public Floating {
+public:
+    QPixmap picture;
+    QString time;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        const QRectF frame(1, 1, width() - 2, height() - 26);
+        QPainterPath round;
+        round.addRoundedRect(frame, 8, 8);
+        p.fillPath(round, QColor(0, 0, 0, 200));
+        if (!picture.isNull()) {
+            p.save();
+            p.setClipPath(round);
+            p.drawPixmap(frame, picture, QRectF(picture.rect()));
+            p.restore();
+        }
+        p.setPen(QPen(QColor(255, 255, 255, 220), 1.5));
+        p.drawPath(round);
+        QFont f = font();
+        f.setPointSizeF(9.5);
+        f.setWeight(QFont::DemiBold);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        const int tw = fm.horizontalAdvance(time) + 16;
+        const QRectF pill((width() - tw) / 2.0, height() - 22, tw, 20);
+        QPainterPath back;
+        back.addRoundedRect(pill, 10, 10);
+        p.fillPath(back, QColor(0, 0, 0, 190));
+        p.setPen(Qt::white);
+        p.drawText(pill, Qt::AlignCenter, time);
+    }
+};
+
 // The play button on a tab's cover: a dark disc, smaller than the glyph
 // button was, and a triangle drawn in its optical middle (Batin,
 // 2026-11-20: the disc too big, the glyph off centre).
@@ -1250,7 +1290,7 @@ void VideoPage::placeOverPicture(const QRect &picture, const QRect &visible)
 void VideoPage::setOwner(QWidget *window)
 {
     m_owner = window;
-    for (QWidget *w : {m_controls, m_corners, m_miniWindow, m_upNext})
+    for (QWidget *w : {m_controls, m_corners, m_miniWindow, m_upNext, m_seekPreview})
         w->setParent(window, w->windowFlags());
     auto *catcher = static_cast<CornerMask *>(m_corners);
     catcher->clicked = [this] { if (onTogglePause) onTogglePause(); };
@@ -1303,6 +1343,9 @@ QWidget *VideoPage::buildControls()
     m_seek->setObjectName("seek");
     m_seek->setRange(0, kSeekSteps);
     m_seek->setCursor(Qt::PointingHandCursor);
+    m_seek->setMouseTracking(true);
+    m_seek->installEventFilter(this);
+    m_seekPreview = new SeekPreview;
     connect(m_seek, &QSlider::sliderPressed, this, [this] {
         m_dragging = true;
         m_scrubClock.invalidate();
@@ -1313,6 +1356,7 @@ QWidget *VideoPage::buildControls()
     // one where it is let go.
     connect(m_seek, &QSlider::sliderMoved, this, [this](int value) {
         showSeekTip(value);
+        showSeekPreview(value);
         if (m_duration <= 0 || !onScrub)
             return;
         if (!m_scrubClock.isValid() || m_scrubClock.elapsed() > 120) {
@@ -1323,6 +1367,7 @@ QWidget *VideoPage::buildControls()
     connect(m_seek, &QSlider::sliderReleased, this, [this] {
         m_dragging = false;
         m_seekTip->hide();
+        hideSeekPreview();
         if (onSeek && m_duration > 0)
             onSeek(m_duration * m_seek->value() / kSeekSteps);
     });
@@ -1841,6 +1886,49 @@ void VideoPage::setControlsCompact(bool compact)
     m_controls->layout()->activate();
 }
 
+void VideoPage::showSeekPreview(int value)
+{
+    // Only with a picture: the time alone is the tip's (while dragging).
+    QPixmap picture = previewAt && m_duration > 0 ? previewAt(m_duration * value / kSeekSteps) : QPixmap();
+    m_previewValue = value;
+    auto *card = static_cast<SeekPreview *>(m_seekPreview);
+    if (picture.isNull() || !m_controls->isVisible()) {
+        card->hide();
+        if (!m_dragging)
+            m_seekTip->hide();
+        return;
+    }
+    // 176 px wide (YouTube's), the frame's shape kept.
+    const int w = 176;
+    const int h = qMax(40, int(w * double(picture.height()) / qMax(1, picture.width())));
+    card->picture = picture;
+    card->time = clock(m_duration * value / kSeekSteps);
+    card->resize(w + 2, h + 2 + 24);
+    const int handle = 12;
+    const int at = m_seek->x() + handle / 2 + QStyle::sliderPositionFromValue(0, kSeekSteps, value, m_seek->width() - handle);
+    const QPoint barTop = m_controls->mapToGlobal(QPoint(0, m_seek->y()));
+    const int left = m_controls->mapToGlobal(QPoint(0, 0)).x();
+    const int x = qBound(left + 4, m_controls->mapToGlobal(QPoint(at, 0)).x() - card->width() / 2,
+                         left + m_controls->width() - card->width() - 4);
+    card->move(x, barTop.y() - card->height() - 6);
+    card->update();
+    card->show();
+    card->raise();
+    m_seekTip->hide();   // the card says the time
+}
+
+void VideoPage::hideSeekPreview()
+{
+    m_previewValue = -1;
+    m_seekPreview->hide();
+}
+
+void VideoPage::refreshSeekPreview()
+{
+    if (m_previewValue >= 0 && (m_seekPreview->isVisible() || m_seek->underMouse() || m_dragging))
+        showSeekPreview(m_previewValue);
+}
+
 void VideoPage::showSeekTip(int value)
 {
     // Over the handle, in the room the bar leaves above the seek line.
@@ -1891,6 +1979,16 @@ void VideoPage::setChannel(const QString &channelId, bool following)
 
 bool VideoPage::eventFilter(QObject *watched, QEvent *event)
 {
+    // The timeline's picture under the mouse on the seek line.
+    if (watched == m_seek && m_seek) {
+        if (event->type() == QEvent::MouseMove && !m_dragging) {
+            const int handle = 12;
+            const int x = static_cast<QMouseEvent *>(event)->position().toPoint().x() - handle / 2;
+            showSeekPreview(QStyle::sliderValueFromPosition(0, kSeekSteps, x, m_seek->width() - handle));
+        } else if (event->type() == QEvent::Leave && !m_dragging) {
+            hideSeekPreview();
+        }
+    }
     if ((watched == m_channel || watched == m_channelFace) && event->type() == QEvent::MouseButtonRelease &&
         !m_channelId.isEmpty()) {
         if (onOpenChannel)
