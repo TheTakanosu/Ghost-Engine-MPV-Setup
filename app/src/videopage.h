@@ -245,6 +245,7 @@ private:
     QPushButton *m_listen;
     QPushButton *m_backToVideo;   // on the picture's place while listening only
     bool m_listenOnly = false;
+    int m_corner = 12;            // the picture's, for what stands in its place
     QPushButton *m_quality;
     QPushButton *m_speed;
     QVariantList m_tracks;

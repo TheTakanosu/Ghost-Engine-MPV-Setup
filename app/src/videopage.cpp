@@ -1077,6 +1077,11 @@ void VideoPage::attachSurface(QWidget *host)
 
 void VideoPage::setSurfaceCorner(int radius)
 {
+    if (radius != m_corner) {
+        m_corner = radius;
+        if (m_listenOnly)
+            m_screen->update();
+    }
     m_surface->setCorner(radius);
     static_cast<Floating *>(m_controls)->corner = radius;
     m_controls->update();
@@ -1733,7 +1738,11 @@ bool VideoPage::eventFilter(QObject *watched, QEvent *event)
         // says what it hides (Batin, 2026-11-20).
         QPainter p(m_screen);
         p.setRenderHint(QPainter::Antialiasing);
-        p.fillRect(m_screen->rect(), theme::panelRaised());
+        // Round as the picture is (Batin, 2026-11-20: it was square).
+        p.fillRect(m_screen->rect(), theme::panel());
+        QPainterPath card;
+        card.addRoundedRect(QRectF(m_screen->rect()), m_corner, m_corner);
+        p.fillPath(card, theme::panelRaised());
         QFont f = m_screen->font();
         f.setPointSizeF(13);
         f.setWeight(QFont::DemiBold);

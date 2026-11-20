@@ -5080,7 +5080,7 @@ namespace {
 // sees that window black), and only this app: Windows draws the window for
 // us (PrintWindow, full content), so a window lying over it (Discord, a
 // browser) is not in the picture as it was with a screen grab.
-QPixmap grabWithVideo(QWidget *widget)
+QPixmap grabWithVideo(QWidget *widget, QRect part = {})
 {
 #ifndef PW_RENDERFULLCONTENT
 #define PW_RENDERFULLCONTENT 0x00000002
@@ -5104,10 +5104,12 @@ QPixmap grabWithVideo(QWidget *widget)
     if (whole.isNull())
         return {};
     const qreal dpr = top->devicePixelRatioF();
-    const QPoint at = (widget->mapToGlobal(QPoint(0, 0)) * dpr) - QPoint(r.left, r.top);
-    QPixmap part = QPixmap::fromImage(whole.copy(QRect(at, widget->size() * dpr)));
-    part.setDevicePixelRatio(dpr);
-    return part;
+    if (part.isNull())
+        part = widget->rect();   // all of it, or `part` of it in its own coordinates
+    const QPoint at = (widget->mapToGlobal(part.topLeft()) * dpr) - QPoint(r.left, r.top);
+    QPixmap out = QPixmap::fromImage(whole.copy(QRect(at, part.size() * dpr)));
+    out.setDevicePixelRatio(dpr);
+    return out;
 }
 
 // The app's ghost (assets/make_icon.py's shape, on its 256 grid) as a path:
@@ -5256,7 +5258,10 @@ void MainWindow::applyLayoutColors()
     // cards against the strip and the bar.
     if (m_bodyBox) {
         const int edge = theme::c().light ? 8 : 0;
-        m_bodyBox->setContentsMargins(8, edge, 8, edge);
+        // The YouTube side has no song bar under the cards: they stand off
+        // the window's bottom edge as off each other, floating (Batin,
+        // 2026-11-20: flush with the edge they looked cut off).
+        m_bodyBox->setContentsMargins(8, edge, 8, m_youtubeLayout ? 8 : edge);
     }
     if (menu) {
         menu->raisedLook = true;
@@ -5336,15 +5341,26 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     // sees black) the page is taken from the screen, and the cover is made a
     // window of its own so it can lie over mpv's (Batın, 2026-11-08: the
     // intro did not show while a video was open).
+    // What changes runs from the cards' top to the window's bottom: the song
+    // bar shows on one side only, so the cards are taller on the other. Only
+    // the cards were taken before, and the strip where the bar had been
+    // showed the new side through the old one (Batin, 2026-11-20).
+    const auto changing = [this] {
+        const QPoint at = m_split->mapTo(this, QPoint(0, 0));
+        const QWidget *ground = centralWidget();
+        return QRect(ground->mapTo(this, QPoint(0, 0)).x(), at.y(), ground->width(),
+                     ground->mapTo(this, QPoint(0, ground->height())).y() - at.y());
+    };
+    const QRect area = changing();
     QPixmap before;
     const bool overVideo = videoShowing();
     if (animate && style != QLatin1String("instant") && isVisible() && !isMinimized()) {
         if (overVideo) {
-            before = grabWithVideo(m_split);
+            before = grabWithVideo(this, area);
             if (before.isNull())
-                before = m_split->grab();
+                before = grab(area);
         } else {
-            before = m_split->grab();
+            before = grab(area);
         }
     }
     // Each layout keeps its own left width: the library's covers and the
@@ -5386,14 +5402,14 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     if (before.isNull())
         return;
     QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-    const QPixmap after = m_split->grab();
+    const QPixmap after = grab(area);
     if (!slideStyle) {
         // A child of the window itself, as mpv's picture is: only a sibling
         // can be raised over it.
         auto *intro = new GhostIntro(this, before, after, youtube ? "YouTube" : "Music");
         if (overVideo)
             holdSurfaceWhile(intro);
-        intro->setGeometry(QRect(m_split->mapTo(this, QPoint(0, 0)), m_split->size()));
+        intro->setGeometry(area);
         intro->show();
         intro->raise();
         return;
@@ -5401,16 +5417,16 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     auto *cover = new QWidget(this);
     if (overVideo)
         holdSurfaceWhile(cover);
-    cover->setGeometry(QRect(m_split->mapTo(this, QPoint(0, 0)), m_split->size()));
+    cover->setGeometry(area);
     cover->setAttribute(Qt::WA_TransparentForMouseEvents);
-    const int w = m_split->width();
+    const int w = area.width();
     const int dir = youtube ? 1 : -1;   // YouTube comes in from the right, music from the left
     auto *old = new QLabel(cover);
     old->setPixmap(before);
-    old->setGeometry(0, 0, w, m_split->height());
+    old->setGeometry(0, 0, w, area.height());
     auto *fresh = new QLabel(cover);
     fresh->setPixmap(after);
-    fresh->setGeometry(dir * w, 0, w, m_split->height());
+    fresh->setGeometry(dir * w, 0, w, area.height());
     cover->show();
     cover->raise();
     auto *group = new QParallelAnimationGroup(cover);
