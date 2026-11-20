@@ -337,6 +337,7 @@ private:
     void applyNormalize();   // Settings > Playback > Normalize volume, into mpv's audio filters
     QString m_autoplayFor;                   // the song whose radio was asked for
     QHash<QString, QString> m_autoplayTitles;
+    QHash<QString, QString> m_suggestedTitles;   // a lone video's suggestions, added to its list
     static QString foundFolder();
 
     Library m_library;
@@ -509,7 +510,8 @@ private:
     void watchVideoMouse();
     void extendSingleVideo(const QString &list, const QString &id);   // a lone video's side list: what YouTube suggests next
     QSet<QString> m_extendedLists;
-    bool searchOpen() const;   // the search box over the window
+    bool searchOpen() const;
+    bool openPlayingChannel(bool always = false);   // a playing YouTube video's channel, on the YouTube side   // the search box over the window
     bool videoShowing() const;
     QTimer *m_placeTimer = nullptr;
     QTimer *m_videoMouse = nullptr;

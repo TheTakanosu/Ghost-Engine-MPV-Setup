@@ -768,8 +768,20 @@ void Client::artist(const QString &id, std::function<void(ArtistPage)> done)
 void Client::findArtist(const QString &name, std::function<void(QString)> done)
 {
     post("search", {{"query", name}, {"params", filterFor(Kind::Artist)}}, [name, done](const QJsonObject &answer) {
-        // The one whose name is the name asked, else the first.
-        QString firstId;
+        // The one whose name is the name asked, else the first whose name
+        // holds it or is held by it (letters and digits only, case and
+        // accents aside). Any first one opened cakal's page for the YouTube
+        // channel "YusufTe 2" (Batin, 2026-11-20): none at all is better.
+        const auto plain = [](QString s) {
+            s = s.toLower().replace(QChar(0x0131), 'i').normalized(QString::NormalizationForm_D);
+            QString out;
+            for (const QChar c : s)
+                if (c.isLetterOrNumber())
+                    out += c;
+            return out;
+        };
+        const QString wanted = plain(name);
+        QString closeId;
         for (const QJsonObject &row : all(answer, "musicResponsiveListItemRenderer")) {
             const Item item = fromListItem(row, Kind::Artist);
             if (!item.id.startsWith(QLatin1String("UC")))
@@ -778,10 +790,11 @@ void Client::findArtist(const QString &name, std::function<void(QString)> done)
                 done(item.id);
                 return;
             }
-            if (firstId.isEmpty())
-                firstId = item.id;
+            const QString got = plain(item.title);
+            if (closeId.isEmpty() && !got.isEmpty() && !wanted.isEmpty() && (got.contains(wanted) || wanted.contains(got)))
+                closeId = item.id;
         }
-        done(firstId);
+        done(closeId);
     });
 }
 

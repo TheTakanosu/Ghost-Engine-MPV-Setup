@@ -713,6 +713,8 @@ MainWindow::MainWindow()
             toggleLyrics();
     };
     m_panel->onArtist = [this] {
+        if (openPlayingChannel())
+            return;
         const QString artist = playingSong().first;
         goToArtist(artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist);
     };
@@ -746,15 +748,7 @@ MainWindow::MainWindow()
         const QString name = m_mpv.property("metadata/by-key/uploader").toString();
         setFollowing(m_videoChannelId, name, !follows(m_videoChannelId));
     };
-    m_videoPage->onOpenChannel = [this] {
-        const QString id = m_videoChannelId;
-        const QString name = m_mpv.property("metadata/by-key/uploader").toString();
-        if (!m_youtubeLayout)
-            setYouTubeLayout(true, false);
-        showYouTube();
-        markYouTubeMenu(-1, -1, id);
-        m_searchPage->showChannel(id, name);
-    };
+    m_videoPage->onOpenChannel = [this] { openPlayingChannel(true); };
 
     m_split = new QSplitter(Qt::Horizontal);
     m_leftStack = new QStackedWidget;
@@ -968,6 +962,8 @@ MainWindow::MainWindow()
             goToArtist(QSettings().value("resume/artist").toString());
             return;
         }
+        if (openPlayingChannel())
+            return;
         const QString artist = playingSong().first;
         goToArtist(artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist);
     };
@@ -5372,6 +5368,11 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     if (m_nowPlaying && m_pages && m_videoPage)
         m_nowPlaying->setVisible(!youtube && !m_videoFull && !(m_pages->currentWidget() == m_videoPage && !m_videoPoppedOut));
     updatePanelVisibility();
+    // The splitter gives the now playing view's room back on its next turn;
+    // the switch takes its picture of the new side before that, and the
+    // view's place showed empty through the intro (Batin, 2026-11-20).
+    if (m_rightSplit)
+        m_rightSplit->refresh();
     SearchPopup::setYouTube(youtube);
     {
         const int wanted = QSettings().value(youtube ? "layout/ytWidth" : "layout/libraryWidth", -1).toInt();
@@ -6810,6 +6811,24 @@ void MainWindow::placeSurface()
     m_nowPlaying->setVisible(!m_youtubeLayout && !m_videoFull && !(m_pages->currentWidget() == m_videoPage && !m_videoPoppedOut));
 }
 
+bool MainWindow::openPlayingChannel(bool always)
+{
+    // A YouTube video (not a song of a song list): its name leads to its
+    // channel on the YouTube side, not to a YouTube Music artist of a
+    // similar name (Batin, 2026-11-20: "YusufTe 2" opened cakal).
+    const QString id = !m_videoChannelId.isEmpty() ? m_videoChannelId : m_panelChannelId;
+    // A song (or a song's video) has its artist's page instead.
+    if (id.isEmpty() || (!always && m_mpv.property("user-data/ghost/audio").toBool()))
+        return false;
+    const QString name = m_mpv.property("metadata/by-key/uploader").toString();
+    if (!m_youtubeLayout)
+        setYouTubeLayout(true, !always);
+    showYouTube();
+    markYouTubeMenu(-1, -1, id);
+    m_searchPage->showChannel(id, name);
+    return true;
+}
+
 bool MainWindow::searchOpen() const
 {
     return m_searchPopup && m_searchPopup->isVisible();
@@ -6908,8 +6927,13 @@ void MainWindow::extendSingleVideo(const QString &list, const QString &id)
         }
         if (add.isEmpty() || !Playlist::append(list, add))
             return;
-        for (const PlaylistEntry &e : add)
+        // mpv names them only from a list file: the panel's "Next in queue"
+        // showed their address, so their names are kept here. They are the
+        // list's own now (in its file), not Autoplay's, and count as such.
+        for (const PlaylistEntry &e : add) {
             m_mpv.command({"loadfile", e.target, "append"});
+            m_suggestedTitles.insert(e.target, e.title);
+        }
         m_videoListPath.clear();   // read again, with them
         updateVideoPage();
     });
@@ -7136,7 +7160,7 @@ void MainWindow::refreshPanel()
         const QString target = next.value("filename").toString();
         QString nextTitle = next.value("title").toString();
         if (nextTitle.isEmpty())
-            nextTitle = m_queueTitles.value(target, m_autoplayTitles.value(target));   // queue, Autoplay
+            nextTitle = m_queueTitles.value(target, m_autoplayTitles.value(target, m_suggestedTitles.value(target)));   // queue, Autoplay, a lone video's suggestions
         auto [nextTrack, nextArtist] = splitTitle(nextTitle);
         if (nextTrack.isEmpty())
             nextTrack = target;
