@@ -16,6 +16,8 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QFile>
+#include <QDir>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
@@ -1925,7 +1927,10 @@ void VideoPage::hideSeekPreview()
 
 void VideoPage::refreshSeekPreview()
 {
-    if (m_previewValue >= 0 && (m_seekPreview->isVisible() || m_seek->underMouse() || m_dragging))
+    // The mouse still on the seek line (underMouse is not to be trusted on
+    // this floating window), or the handle held.
+    const bool over = QRect(m_seek->mapToGlobal(QPoint(0, 0)), m_seek->size()).adjusted(0, -6, 0, 6).contains(QCursor::pos());
+    if (m_previewValue >= 0 && (over || m_dragging))
         showSeekPreview(m_previewValue);
 }
 

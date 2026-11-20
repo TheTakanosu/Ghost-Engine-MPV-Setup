@@ -595,7 +595,8 @@ MainWindow::MainWindow()
         QString id = youtube::videoId(m_mpv.property("user-data/ghost/source").toString());
         if (id.isEmpty())
             id = youtube::videoId(path);
-        return !id.isEmpty() && id == m_storyboard.video() ? m_storyboard.frameAt(seconds) : QPixmap();
+        const QPixmap got = !id.isEmpty() && id == m_storyboard.video() ? m_storyboard.frameAt(seconds) : QPixmap();
+        return got;
     };
     m_storyboard.onReady = [this] { m_videoPage->refreshSeekPreview(); };
     // A tab's cover: Play starts what waits paused behind it.

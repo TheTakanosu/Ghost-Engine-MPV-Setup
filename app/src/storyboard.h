@@ -22,6 +22,7 @@ public:
     void setVideo(const QString &id, const QByteArray &formats);
     void clear();
     QString video() const { return m_id; }
+    int loaded() const { return int(m_images.size()) * 1000 + int(m_sheets.size()); }
 
     // The frame for this second; null until its sheet has come (then
     // onReady is called).
@@ -33,6 +34,7 @@ private:
         QString url;
         double duration = 0;
     };
+    void fetch(int sheet);
     QString m_id;
     QVector<Sheet> m_sheets;
     int m_width = 0, m_height = 0, m_rows = 0, m_columns = 0;
