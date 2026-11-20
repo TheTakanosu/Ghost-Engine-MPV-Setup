@@ -569,8 +569,16 @@ MainWindow::MainWindow()
         setVideoFullScreen(!m_videoFull);
     };
     m_videoPage->onTogglePause = [this] { m_mpv.command({"cycle", "pause"}); };
-    m_videoPage->onPrevious = [this] { m_mpv.command({"playlist-prev"}); };
-    m_videoPage->onNext = [this] { m_mpv.command({"playlist-next"}); };
+    // Stopped at the end (keep-open), the next or previous one plays,
+    // not paused as the end left it.
+    m_videoPage->onPrevious = [this] {
+        m_playNextUnpaused = m_mpv.property("eof-reached").toBool();
+        m_mpv.command({"playlist-prev"});
+    };
+    m_videoPage->onNext = [this] {
+        m_playNextUnpaused = m_mpv.property("eof-reached").toBool();
+        m_mpv.command({"playlist-next"});
+    };
     m_videoPage->onVolume = [this](int v) { m_mpv.setProperty("volume", v); };
     m_videoPage->onToggleMute = [this] { m_mpv.command({"cycle", "mute"}); };
     // At once, not after the next turn of the event loop: the page has
@@ -638,6 +646,24 @@ MainWindow::MainWindow()
         m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
         armStartReset(m_mpv.property("playlist-pos").toInt());
         m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+    };
+    // Autoplay (Batin, 2026-11-20): off, a video stops at its end with the
+    // next one offered; on, the next one plays after a count of 8.
+    m_videoPage->setAutoplay(QSettings().value("video/autoplay", false).toBool());
+    m_videoPage->onAutoplay = [this] {
+        const bool on = !QSettings().value("video/autoplay", false).toBool();
+        QSettings().setValue("video/autoplay", on);
+        m_videoPage->setAutoplay(on);
+        if (m_videoPage->upNextShown())
+            offerNextVideo();   // the card shown again the new way
+    };
+    m_videoPage->onUpNextPlay = [this] {
+        m_videoPage->hideUpNext();
+        // At its end mpv paused it (keep-open), and unpaused there it paused
+        // again at once, still at the end: the next one is unpaused once it
+        // has begun (seen, 2026-11-20).
+        m_playNextUnpaused = true;
+        m_mpv.command({"playlist-next"});
     };
     m_videoPage->onRepeat = [this] {
         m_mpv.setProperty("loop-file", mpvLooping(m_mpv.property("loop-file")) ? "no" : "inf");
@@ -1208,6 +1234,29 @@ MainWindow::MainWindow()
             syncQueue();
         if (name == "loop-file")
             m_videoPage->setRepeat(mpvLooping(m_mpv.property("loop-file")));
+        // A video stops at its end rather than going on by itself; songs go
+        // on as ever. Only inside the app (mpv's own window keeps mpv's ways).
+        if (name == "pid")
+            m_keepOpen.clear();   // a new mpv: told again
+        if (name == "user-data/ghost/audio" || name == "path" || name == "pid") {
+            const bool video = m_mpvEmbedded && !m_mpv.property("user-data/ghost/audio").toBool();
+            const QString want = video ? QStringLiteral("always") : QStringLiteral("no");
+            if (want != m_keepOpen) {
+                m_keepOpen = want;
+                m_mpv.setProperty("keep-open", want);
+            }
+        }
+        if (name == "path" && m_playNextUnpaused && !m_mpv.property("path").toString().isEmpty()) {
+            m_playNextUnpaused = false;
+            m_mpv.setProperty("pause", false);
+        }
+        if (name == "eof-reached" || name == "path" || name == "playlist-pos") {
+            if (name == "eof-reached" && m_mpv.property("eof-reached").toBool())
+                offerNextVideo();
+            else if (m_videoPage->upNextShown())
+                m_videoPage->hideUpNext();
+            schedulePlace();
+        }
         if (name == "playlist-pos" || name == "playlist-count" || name == "loop-playlist" || name == "loop-file")
             maybeAutoplay();
         if (name == "playlist-count" || name == "playlist-path" || name == "path")
@@ -6356,7 +6405,12 @@ QString MainWindow::playingListPath() const
 {
     const QString mpvSays = m_mpv.property("playlist-path").toString();
     if (mpvSays.isEmpty())
-        return m_mpv.connected() && playingAdded() ? m_lastListPath : QString();
+        // Queued, Autoplay's, or a lone video's suggestions (added to its
+        // file and to mpv's list by hand, so mpv names no list for them):
+        // the list they came after. Without it the video page stayed on the
+        // first video while the next played (seen, 2026-11-20).
+        return m_mpv.connected() && (playingAdded() || m_suggestedTitles.contains(m_mpv.property("path").toString()))
+                   ? m_lastListPath : QString();
     const QFileInfo info(mpvSays);
     QString path = info.absoluteFilePath();
     if (!info.exists())
@@ -6804,6 +6858,8 @@ void MainWindow::placeSurface()
     } else {
         controls->hide();
     }
+    // The Up next card over the middle of what shows of the picture.
+    m_videoPage->placeUpNext(onPage && !searchOpen() && !listen ? m_videoArea : QRect());
     // The song bar is for songs: on the video page the controls over the
     // picture stand in for it.
     // Nor on the YouTube side at all: the video's own controls and the
@@ -6828,6 +6884,33 @@ bool MainWindow::openPlayingChannel(bool always)
     markYouTubeMenu(-1, -1, id);
     m_searchPage->showChannel(id, name);
     return true;
+}
+
+void MainWindow::offerNextVideo()
+{
+    // A YouTube video ended (keep-open stopped it): the next entry offered
+    // on the Up next card, counted down when Autoplay is on.
+    if (!m_mpvEmbedded || m_mpv.property("user-data/ghost/audio").toBool() ||
+        !m_mpv.property("eof-reached").toBool()) {
+        m_videoPage->hideUpNext();
+        return;
+    }
+    const QVariantList entries = m_mpv.property("playlist").toList();
+    const int pos = m_mpv.property("playlist-pos").toInt();
+    if (pos < 0 || pos + 1 >= entries.size()) {
+        m_videoPage->hideUpNext();   // the last: nothing comes next
+        return;
+    }
+    const QVariantMap next = entries[pos + 1].toMap();
+    const QString target = next.value("filename").toString();
+    QString title = next.value("title").toString();
+    if (title.isEmpty())
+        title = m_queueTitles.value(target, m_autoplayTitles.value(target, m_suggestedTitles.value(target)));
+    if (title.isEmpty())
+        title = target;
+    const bool autoplay = QSettings().value("video/autoplay", false).toBool();
+    m_videoPage->showUpNext(title, autoplay ? 8 : 0);
+    schedulePlace();
 }
 
 bool MainWindow::searchOpen() const

@@ -13,6 +13,7 @@ const char *const kObserved[] = {
     "metadata/by-key/uploader", "playlist-path", "loop-playlist", "loop-file", "user-data/ghost/audio", "mute", "pid", "playlist", "track-list", "speed", "ytdl-format", "video-params/aspect", "user-data/ghost/video-on", "user-data/ghost/video-panel",
     "user-data/ghost/live",   // livesync.lua: a stream on air
     "current-ao",             // "null" while no sound device could be opened
+    "eof-reached",            // a video at its end (keep-open): the Up next card
 };
 
 } // namespace

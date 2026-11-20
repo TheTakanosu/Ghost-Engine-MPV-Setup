@@ -127,6 +127,53 @@ protected:
     }
 };
 
+// Over the middle of the picture when a video has ended: "Up next", the
+// next video's name, the count, and its two buttons (children placed by
+// hand). Painted here: a style sheet does not hold on these floating windows.
+class UpNextCard : public Floating {
+public:
+    QString title;
+    int left = 0;            // seconds still to count; 0: no count
+    QPushButton *play = nullptr;
+    QPushButton *cancel = nullptr;
+    QTimer tick;
+
+    void lay()
+    {
+        const int h = play->sizeHint().height();
+        const int pw = play->sizeHint().width();
+        const int cw = cancel->isVisibleTo(this) ? cancel->sizeHint().width() : 0;
+        const int gap = cw > 0 ? 8 : 0;
+        const int x = (width() - pw - cw - gap) / 2;
+        play->setGeometry(x, height() - h - 16, pw, h);
+        cancel->setGeometry(x + pw + gap, height() - h - 16, cw, h);
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *) override { lay(); }
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath box;
+        box.addRoundedRect(QRectF(rect()), 14, 14);
+        p.fillPath(box, QColor(12, 12, 16, 225));
+        QFont f = font();
+        f.setPointSizeF(9);
+        f.setWeight(QFont::DemiBold);
+        p.setFont(f);
+        p.setPen(QColor(200, 200, 210));
+        p.drawText(QRect(16, 14, width() - 32, 20), Qt::AlignHCenter | Qt::AlignVCenter,
+                   left > 0 ? QStringLiteral("Up next in %1").arg(left) : QStringLiteral("Up next"));
+        f.setPointSizeF(12);
+        p.setFont(f);
+        p.setPen(Qt::white);
+        const QFontMetrics fm(f);
+        p.drawText(QRect(16, 38, width() - 32, fm.height() * 2 + 4), Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+                   fm.elidedText(title, Qt::ElideRight, (width() - 32) * 2 - 20));
+    }
+};
+
 // Laid over the visible part of the picture. Its corners are the page's
 // colour, cut round with antialiasing (the window region under it can only
 // cut in whole pixels, which left a stair of black dots). The rest is all
@@ -885,6 +932,40 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     awayBox->addStretch();
 
     m_controls = buildControls();
+    {
+        auto *card = new UpNextCard;
+        card->play = textButton(QStringLiteral("Play now"), "Play the next video");
+        card->cancel = textButton(QStringLiteral("Cancel"), "Stay on this video");
+        card->play->setParent(card);
+        card->cancel->setParent(card);
+        static_cast<FlatButton *>(card->play)->setOn(true);   // lit: the one to press
+        card->resize(380, 160);
+        card->tick.setInterval(1000);
+        connect(&card->tick, &QTimer::timeout, this, [this, card] {
+            if (--card->left <= 0) {
+                card->tick.stop();
+                if (onUpNextPlay)
+                    onUpNextPlay();
+                return;
+            }
+            card->update();
+        });
+        connect(card->play, &QPushButton::clicked, this, [this, card] {
+            card->tick.stop();
+            if (onUpNextPlay)
+                onUpNextPlay();
+        });
+        connect(card->cancel, &QPushButton::clicked, this, [card] {
+            // Stays, without its count: Play is still there.
+            card->tick.stop();
+            card->left = 0;
+            card->cancel->hide();
+            card->play->setText(QStringLiteral("Play"));
+            card->lay();
+            card->update();
+        });
+        m_upNext = card;
+    }
     m_mini = buildMini();
     m_corners = new CornerMask;
 
@@ -1125,7 +1206,7 @@ void VideoPage::placeOverPicture(const QRect &picture, const QRect &visible)
 void VideoPage::setOwner(QWidget *window)
 {
     m_owner = window;
-    for (QWidget *w : {m_controls, m_corners, m_miniWindow})
+    for (QWidget *w : {m_controls, m_corners, m_miniWindow, m_upNext})
         w->setParent(window, w->windowFlags());
     auto *catcher = static_cast<CornerMask *>(m_corners);
     catcher->clicked = [this] { if (onTogglePause) onTogglePause(); };
@@ -1303,6 +1384,9 @@ QWidget *VideoPage::buildControls()
     connect(m_repeat, &QPushButton::clicked, this, [this] { if (onRepeat) onRepeat(); });
     m_listen = glyphButton(QString(QChar(0xE7F6)), "Listen only audio");
     connect(m_listen, &QPushButton::clicked, this, [this] { if (onListenOnly) onListenOnly(!m_listenOnly); });
+    m_autoplay = textButton(QStringLiteral("Autoplay"), "Play the next video when this one ends");
+    connect(m_autoplay, &QPushButton::clicked, this, [this] { if (onAutoplay) onAutoplay(); });
+    row->addWidget(m_autoplay);
     row->addWidget(m_repeat);
     row->addWidget(m_listen);
     auto *miniplayer = glyphButton(QString(), "Mini player (I)");
@@ -1313,7 +1397,7 @@ QWidget *VideoPage::buildControls()
     row->addWidget(m_quality);
     row->addWidget(m_speed);
     row->addWidget(full);
-    m_wideOnly = {back10, fwd10, m_volume, m_repeat, m_listen, miniplayer, m_subs, m_quality, m_speed};
+    m_wideOnly = {back10, fwd10, m_volume, m_autoplay, m_repeat, m_listen, miniplayer, m_subs, m_quality, m_speed};
     m_seekTip = new QLabel(bar);
     m_seekTip->setObjectName("seekTip");
     m_seekTip->setAlignment(Qt::AlignCenter);
@@ -1452,6 +1536,49 @@ void VideoPage::setSongVideo(bool song)
     m_popOut->setVisible(!song);
     // A song's video has "Switch to audio" for that.
     m_listen->setVisible(!song);
+}
+
+void VideoPage::setAutoplay(bool on)
+{
+    static_cast<FlatButton *>(m_autoplay)->setOn(on);
+    m_autoplay->setToolTip(on ? QStringLiteral("Autoplay is on: the next video plays when this one ends")
+                              : QStringLiteral("Autoplay is off: the video stops at its end"));
+}
+
+void VideoPage::showUpNext(const QString &title, int seconds)
+{
+    auto *card = static_cast<UpNextCard *>(m_upNext);
+    card->title = title;
+    card->left = seconds;
+    card->cancel->setVisible(seconds > 0);
+    card->play->setText(seconds > 0 ? QStringLiteral("Play now") : QStringLiteral("Play"));
+    card->lay();
+    card->update();
+    if (seconds > 0)
+        card->tick.start();
+    else
+        card->tick.stop();
+    m_upNextOn = true;
+}
+
+void VideoPage::hideUpNext()
+{
+    auto *card = static_cast<UpNextCard *>(m_upNext);
+    card->tick.stop();
+    m_upNextOn = false;
+    card->hide();
+}
+
+void VideoPage::placeUpNext(const QRect &picture)
+{
+    if (!m_upNextOn || picture.width() < 300 || picture.height() < 200) {
+        m_upNext->hide();
+        return;
+    }
+    const QSize size(qMin(420, picture.width() - 40), 160);
+    m_upNext->setGeometry(QRect(picture.center() - QPoint(size.width() / 2, size.height() / 2), size));
+    m_upNext->show();
+    m_upNext->raise();
 }
 
 void VideoPage::setRepeat(bool on)

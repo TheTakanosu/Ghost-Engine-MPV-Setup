@@ -84,6 +84,15 @@ public:
     // into, with its buttons on top. All owned by the main window.
     QWidget *controls() const { return m_controls; }
     QWidget *corners() const { return m_corners; }
+    // The Up next card over the picture when a video has ended: the next
+    // one's name, and with Autoplay on a count down to it (Batin,
+    // 2026-11-20). `seconds` 0: no count, only Play.
+    QWidget *upNext() const { return m_upNext; }
+    void showUpNext(const QString &title, int seconds);
+    void hideUpNext();
+    bool upNextShown() const { return m_upNextOn; }
+    void placeUpNext(const QRect &picture);   // global; hidden when empty
+    void setAutoplay(bool on);
     // Just opened by a click elsewhere: that click's release is not a
     // click on the picture.
     void ignorePictureClicks();
@@ -168,6 +177,8 @@ public:
     std::function<void(const QVariant &sid)> onSubtitle;   // a track id, or "no"
     std::function<void(int height)> onQuality;       // 0: best
     std::function<void()> onRepeat;                  // repeat this video on or off
+    std::function<void()> onAutoplay;                // Autoplay on or off
+    std::function<void()> onUpNextPlay;              // the Up next card's Play / its count reached 0
     std::function<void(bool on)> onListenOnly;       // sound only, or the video again
     std::function<void(double speed)> onSpeed;
     std::function<void(int volume)> onVolume;
@@ -242,6 +253,9 @@ private:
     QSlider *m_volume;
     QPushButton *m_subs;
     QPushButton *m_repeat;
+    QPushButton *m_autoplay;
+    QWidget *m_upNext = nullptr;
+    bool m_upNextOn = false;
     QPushButton *m_listen;
     QPushButton *m_backToVideo;   // on the picture's place while listening only
     bool m_listenOnly = false;

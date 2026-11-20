@@ -512,6 +512,9 @@ private:
     void extendSingleVideo(const QString &list, const QString &id);   // a lone video's side list: what YouTube suggests next
     QSet<QString> m_extendedLists;
     bool searchOpen() const;
+    void offerNextVideo();   // a video ended: the Up next card
+    QString m_keepOpen;      // what mpv's keep-open was set to here
+    bool m_playNextUnpaused = false;   // Up next's Play: unpause the next once it begins
     bool openPlayingChannel(bool always = false);   // a playing YouTube video's channel, on the YouTube side   // the search box over the window
     bool videoShowing() const;
     QTimer *m_placeTimer = nullptr;
