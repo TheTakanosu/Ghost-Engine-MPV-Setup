@@ -157,13 +157,14 @@ bool Playlist::writeDescription(const QString &path, const QString &text)
     return true;
 }
 
-bool Playlist::create(const QString &path, const QString &name, bool radio)
+bool Playlist::create(const QString &path, const QString &name, bool radio, bool audio)
 {
     QFile file(path);
     if (file.exists() || !file.open(QIODevice::WriteOnly))
         return false;
-    file.write(QStringLiteral("#EXTM3U\r\n#GHOST_AUDIO\r\n#PLAYLIST:%1\r\n%2")
-                   .arg(name, radio ? QStringLiteral("#GHOST_RADIO\r\n") : QString()).toUtf8());
+    file.write(QStringLiteral("#EXTM3U\r\n%1#PLAYLIST:%2\r\n%3")
+                   .arg(audio ? QStringLiteral("#GHOST_AUDIO\r\n") : QString(), name,
+                        radio ? QStringLiteral("#GHOST_RADIO\r\n") : QString()).toUtf8());
     return true;
 }
 

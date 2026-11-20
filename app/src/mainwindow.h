@@ -165,7 +165,7 @@ private:
     void saveSongOrder();
     void removeSelectedSongs();
     void addSelectedSongsTo(const QString &path);
-    void newPlaylist(const QString &folder = QString(), bool addSelected = false);
+    void newPlaylist(const QString &folder = QString(), bool addSelected = false, bool audio = true);
     void toast(const QString &text, int ms = 2600);
     void songFailed(int entryId);
     // Updates (update.ps1 -Check once a day, or asked for) and the tray.
@@ -311,7 +311,8 @@ private:
     void playFound(const QVector<ytmusic::Item> &items, const QString &name, int start, bool shuffle, bool audio);
     void saveFound(const QString &name, const QVector<ytmusic::Item> &items);
     void foundMenu(const QVector<ytmusic::Item> &items, const QPoint &global);
-    void fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip = QString());
+    // `videos`: only video lists (the YouTube side's), else only song lists.
+    void fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip = QString(), bool videos = false);
     bool likedHas(const QString &target);
     void likeMenu(const QString &target, const QString &title, const QPoint &global);
     void copyLink(const QString &id, bool song);

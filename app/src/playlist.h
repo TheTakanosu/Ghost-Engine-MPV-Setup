@@ -51,6 +51,7 @@ public:
     // A new, empty song list, and songs added to the end of one. Each added
     // song carries the moment it was added, so "Date added" means that song
     // and not the whole file; players skip the line as a comment.
-    static bool create(const QString &path, const QString &name, bool radio = false);
+    // A song list (#GHOST_AUDIO) unless `audio` is false: a video list.
+    static bool create(const QString &path, const QString &name, bool radio = false, bool audio = true);
     static bool append(const QString &path, const QVector<PlaylistEntry> &entries);
 };

@@ -2599,15 +2599,16 @@ QWidget *MainWindow::buildPlaylistPage()
             menu.addAction("Play next", this, [this, picked] { queueSongs(picked, true); });
         }
         QMenu *to = menu.addMenu(count > 1 ? QStringLiteral("Add %1 songs to playlist").arg(count) : QStringLiteral("Add to playlist"));
-        to->addAction("New playlist...", this, [this] { newPlaylist(QString(), true); });
+        to->addAction("New playlist...", this, [this] { newPlaylist(QString(), true, m_library.playlists().value(m_open).audio); });
         to->addSeparator();
         const QString here = m_library.playlists().value(m_open).path;
+        const bool hereAudio = m_library.playlists().value(m_open).audio;
         const QString home = Library::homeFolder();
         for (const Playlist &p : m_library.playlists()) {
             const QString dir = QDir::cleanPath(QFileInfo(p.path).absolutePath());
             const bool ours = dir.compare(home, Qt::CaseInsensitive) == 0 || dir.startsWith(home + '/', Qt::CaseInsensitive);
-            if (p.path == here || !ours)
-                continue;   // lists outside the library are the bot's to write
+            if (p.path == here || !ours || p.audio != hereAudio)
+                continue;   // outside the library: the bot's to write; the other kind: the other side's
             const QString path = p.path;
             to->addAction(p.folder.isEmpty() ? p.name : p.folder + QStringLiteral("  ›  ") + p.name,
                           this, [this, path] { addSelectedSongsTo(path); });
@@ -5812,14 +5813,14 @@ void MainWindow::addSelectedSongsTo(const QString &path)
     rescan();
 }
 
-void MainWindow::newPlaylist(const QString &folder, bool addSelected)
+void MainWindow::newPlaylist(const QString &folder, bool addSelected, bool audio)
 {
     bool ok = false;
     const QString name = QInputDialog::getText(this, "New playlist", "Playlist name:", QLineEdit::Normal,
                                                QString(), &ok).trimmed();
     if (!ok || name.isEmpty())
         return;
-    const QString path = m_library.createPlaylist(name, folder);
+    const QString path = m_library.createPlaylist(name, folder, false, audio);
     if (path.isEmpty()) {
         QMessageBox::warning(this, "New playlist", "The playlist couldn't be made.");
         return;
@@ -7702,13 +7703,13 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
     QVector<PlaylistEntry> entries;
     for (const ytmusic::Item &it : items)
         entries << PlaylistEntry{it.lineTitle(), it.target(), {}};
-    fillAddTo(to, entries);
+    fillAddTo(to, entries, QString(), videos);
     menu.exec(global);
 }
 
 
 // "New playlist...", then every list of the library these can be added to.
-void MainWindow::fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip)
+void MainWindow::fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, const QString &skip, bool videos)
 {
     const auto addTo = [this, entries](const QString &path) {
         const Playlist target = Playlist::peek(path);
@@ -7733,12 +7734,12 @@ void MainWindow::fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, con
                                  : QStringLiteral("%1 songs added to %2").arg(adding.size()).arg(target.name));
         rescan();
     };
-    to->addAction("New playlist...", this, [this, addTo] {
+    to->addAction("New playlist...", this, [this, addTo, videos] {
         bool ok = false;
         const QString name = QInputDialog::getText(this, "New playlist", "Playlist name:", QLineEdit::Normal, QString(), &ok).trimmed();
         if (!ok || name.isEmpty())
             return;
-        const QString path = m_library.createPlaylist(name, QString());
+        const QString path = m_library.createPlaylist(name, QString(), false, !videos);
         if (path.isEmpty()) {
             QMessageBox::warning(this, "New playlist", "The playlist couldn't be made.");
             return;
@@ -7752,6 +7753,10 @@ void MainWindow::fillAddTo(QMenu *to, const QVector<PlaylistEntry> &entries, con
         const bool ours = dir.compare(home, Qt::CaseInsensitive) == 0 || dir.startsWith(home + '/', Qt::CaseInsensitive);
         if (!ours || p.path == skip)
             continue;   // lists outside the library are the bot's to write
+        // Each side its own lists: a Spotify user's many song lists buried
+        // the few video lists on the YouTube side (Batin, 2026-11-20).
+        if (p.audio == videos)
+            continue;
         const QString path = p.path;
         to->addAction(p.folder.isEmpty() ? p.name : p.folder + QStringLiteral("  ›  ") + p.name, this, [addTo, path] { addTo(path); });
     }

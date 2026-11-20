@@ -42,10 +42,10 @@ static QString freshPath(const QString &dir, const QString &suffix)
     return target;
 }
 
-QString Library::createPlaylist(const QString &name, const QString &folder, bool radio)
+QString Library::createPlaylist(const QString &name, const QString &folder, bool radio, bool audio)
 {
     const QString target = freshPath(folder.isEmpty() ? homeFolder() : homeFolder() + '/' + folder, QStringLiteral("m3u"));
-    return Playlist::create(target, name, radio) ? target : QString();
+    return Playlist::create(target, name, radio, audio) ? target : QString();
 }
 
 QString Library::importFile(const QString &path)
