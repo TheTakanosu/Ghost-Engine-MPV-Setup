@@ -1983,8 +1983,12 @@ void VideoPage::placeScreen()
     const QRect area = m_player->rect();
     QRect r = area;
     if (!m_full) {
-        const int w = qMin(area.width(), int(area.height() * m_aspect));
-        const int h = qMin(area.height(), int(w / m_aspect));
+        // At least 16:9: a square or upright video gets black bands at its
+        // sides (mpv keeps its shape inside) rather than a narrower player,
+        // whose controls ran into each other (Batin, 2026-11-20).
+        const double frame = qMax(m_aspect, 16.0 / 9.0);
+        const int w = qMin(area.width(), int(area.height() * frame));
+        const int h = qMin(area.height(), int(w / frame));
         r = QRect(area.x() + (area.width() - w) / 2, area.y() + (area.height() - h) / 2, w, h);
     }
     m_screen->setGeometry(r);

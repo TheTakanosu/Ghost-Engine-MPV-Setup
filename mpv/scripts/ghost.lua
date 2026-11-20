@@ -108,7 +108,11 @@ mp.add_hook("on_load", 9, function()
     -- is sound already): no picture track and a sound-only format, for this
     -- and the next videos until it is switched off. File-local, so nothing
     -- outlives the entry it was set for.
-    if not on and mp.get_property_native("user-data/ghost/listen-only") == true
+    -- An mpv the app started for listening (to free the picture's memory)
+    -- has it as an option until the app says otherwise.
+    local listen = mp.get_property_native("user-data/ghost/listen-only")
+    if listen == nil then listen = mp.get_opt("ghost-listen") == "yes" end
+    if not on and listen == true
             and mp.get_property_native("user-data/ghost/audio") ~= true then
         mp.set_property("file-local-options/vid", "no")
         mp.set_property("file-local-options/ytdl-format", "bestaudio/best")

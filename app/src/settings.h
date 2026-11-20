@@ -124,6 +124,10 @@ private:
     class ToggleSwitch *m_miniOnLeave;
     class ToggleSwitch *m_instantPlay;
     class ToggleSwitch *m_rememberTabs;
+    class ToggleSwitch *m_collapsedTabs;
+public:
+    std::function<void()> onTabsChanged;   // Collapsed tabs turned on or off
+private:
     QComboBox *m_covers;
     ToggleSwitch *m_volumeNumber;
     ToggleSwitch *m_presenceSongs;

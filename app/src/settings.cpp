@@ -868,6 +868,17 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         if (!m_loading)
             QSettings().setValue("youtube/rememberTabs", on);
     });
+    m_collapsedTabs = new ToggleSwitch;
+    addRow(window, "Collapsed tabs",
+           "All your video tabs behind one button in the top bar; rest the mouse on it or click it to see them.",
+           m_collapsedTabs);
+    connect(m_collapsedTabs, &QAbstractButton::toggled, this, [this](bool on) {
+        if (m_loading)
+            return;
+        QSettings().setValue("youtube/collapsedTabs", on);
+        if (onTabsChanged)
+            onTabsChanged();
+    });
 
     QVBoxLayout *downloads;
     auto *downloadsCard = card("Downloads", downloads);
@@ -1464,6 +1475,7 @@ void SettingsPage::load()
     m_miniOnLeave->setChecked(QSettings().value("video/miniOnLeave", false).toBool());
     m_instantPlay->setChecked(QSettings().value("video/instantPlay", false).toBool());
     m_rememberTabs->setChecked(QSettings().value("youtube/rememberTabs", true).toBool());
+    m_collapsedTabs->setChecked(QSettings().value("youtube/collapsedTabs", false).toBool());
     m_layoutSwitch->setCurrentIndex(qMax(0, m_layoutSwitch->findData(QSettings().value("look/layoutSwitch", "ghost").toString())));
     m_region->setCurrentIndex(qMax(0, m_region->findData(QSettings().value("search/region").toString().toUpper())));
     m_startup->setChecked(QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),

@@ -25,6 +25,7 @@ public:
     std::function<void()> onOpen;       // to the video's page
     std::function<void()> onMini;       // the corner player instead
     std::function<void()> onPlayPause;  // when set, instead of cycling mpv's pause
+    std::function<void()> onStop;       // the card's X: what plays is closed
     // The free stretch of the top bar, left and right x in the window: the
     // pill sits in its middle and no wider (it lay over the search box in a
     // narrow window, Impeccable review B1, 2026-11-10).
@@ -58,4 +59,5 @@ private:
     icons::IconButton *m_play;
     QPushButton *m_openButton;
     QPushButton *m_miniButton;
+    QPushButton *m_closeButton = nullptr;
 };

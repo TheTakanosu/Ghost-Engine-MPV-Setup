@@ -112,6 +112,21 @@ NowIsland::NowIsland(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
         if (onMini)
             onMini();
     });
+    // Closes what plays (Batin, 2026-11-20), at the card's top right.
+    m_closeButton = new QPushButton(QString(QChar(0xE711)), this);
+    m_closeButton->setCursor(Qt::PointingHandCursor);
+    m_closeButton->setToolTip("Stop and close the player");
+    m_closeButton->setFixedSize(z(28), z(28));
+    m_closeButton->setStyleSheet(QStringLiteral(
+        "QPushButton { border: none; border-radius: %1px; background: transparent; color: rgba(255,255,255,170);"
+        " font-family: 'Segoe Fluent Icons'; font-size: %2px; }"
+        "QPushButton:hover { background: rgba(255,255,255,45); color: white; }").arg(z(14)).arg(z(11)));
+    m_closeButton->hide();
+    connect(m_closeButton, &QPushButton::clicked, this, [this] {
+        closeNow();
+        if (onStop)
+            onStop();
+    });
     const auto fitFont = [this] {
         QFont f = font();
         f.setPointSizeF(10 * theme::chromeZoom());
@@ -213,6 +228,10 @@ void NowIsland::place()
     for (QWidget *button : {static_cast<QWidget *>(m_play), static_cast<QWidget *>(m_openButton),
                             static_cast<QWidget *>(m_miniButton)})
         button->setVisible(shown && !(m_audio && button == m_miniButton));
+    m_closeButton->move(int(b.right()) - m_closeButton->width() - 8, int(b.top()) + 8);
+    m_closeButton->setVisible(shown);
+    if (shown)
+        m_closeButton->raise();
 }
 
 bool NowIsland::eventFilter(QObject *watched, QEvent *event)

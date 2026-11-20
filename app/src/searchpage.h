@@ -182,6 +182,11 @@ private:
     QSet<QString> m_homeSeen;
     class RemotePictures *m_avatars = nullptr;
     QHash<QString, QString> m_avatarOf;   // channel id -> its picture URL, for rows without one (feeds)
+    // A channel's name (lower case) -> its picture URL, kept between starts:
+    // History knows only the channel's name (Batin, 2026-11-20: its rows
+    // had empty circles).
+    QHash<QString, QString> m_avatarByName;
+    bool m_avatarNamesDirty = false;
     QSet<QString> m_homeSeeded;   // videos already asked beside
     QString m_homeChannel;        // the chip picked; empty: All
     QString m_homeNext;           // a chip's search, its next page

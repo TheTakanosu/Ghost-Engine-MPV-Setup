@@ -6,6 +6,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTimer>
 
 namespace {
 
@@ -32,6 +33,13 @@ TabStrip::TabStrip(bool vertical, QWidget *parent) : QWidget(parent), m_vertical
 {
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
+    m_hoverOpen = new QTimer(this);
+    m_hoverOpen->setSingleShot(true);
+    m_hoverOpen->setInterval(450);
+    connect(m_hoverOpen, &QTimer::timeout, this, [this] {
+        if (collapsed && onMore && rect().contains(mapFromGlobal(QCursor::pos())))
+            onMore(mapToGlobal(QPoint(m_more.right(), m_more.bottom() + z(6))));
+    });
     if (vertical) {
         setFixedWidth(z(kListWidth));
     } else {
@@ -59,6 +67,8 @@ void TabStrip::changed()
 
 int TabStrip::smallest() const
 {
+    if (collapsed)
+        return z(96);
     return tabs.size() <= 1 ? z(kMinWidth) : z(kMinWidth) + z(kGap) + z(kMoreWidth);
 }
 
@@ -66,6 +76,8 @@ QSize TabStrip::sizeHint() const
 {
     if (m_vertical)
         return QSize(z(kListWidth), int(tabs.size()) * z(kRow) + z(8));
+    if (collapsed)
+        return QSize(z(96), z(kHeight));
     return QSize(int(tabs.size()) * (z(kMaxWidth) + z(kGap)), z(kHeight));
 }
 
@@ -93,6 +105,10 @@ void TabStrip::lay()
             m_shown.append({i, QRect(z(4), z(4) + i * z(kRow), width() - z(8), z(kRow) - z(4))});
         return;
     }
+    if (collapsed) {
+        m_more = QRect(0, 0, z(96), height());
+        return;
+    }
     const int gap = z(kGap);
     int fit = (width() + gap) / (z(kMinWidth) + gap);
     QVector<int> which;
@@ -104,10 +120,17 @@ void TabStrip::lay()
         fit = qMax(1, (width() - z(kMoreWidth)) / (z(kMinWidth) + gap));
         for (int i = 0; i < n && which.size() < fit; ++i)
             which << i;
-        if (current >= fit) {
-            which.removeLast();
-            which << current;
-        }
+        // What shows (a tab's page) and what plays always among them.
+        for (int keep : {viewing, current})
+            if (keep >= 0 && keep < n && !which.contains(keep)) {
+                for (int k = int(which.size()) - 1; k >= 0; --k)
+                    if (which[k] != viewing && which[k] != current) {
+                        which.removeAt(k);
+                        break;
+                    }
+                which << keep;
+            }
+        std::sort(which.begin(), which.end());
     }
     const int room = which.size() < n ? width() - z(kMoreWidth) - gap : width();
     const int w = qBound(z(kMinWidth), (room - (int(which.size()) - 1) * gap) / int(which.size()), z(kMaxWidth));
@@ -145,12 +168,13 @@ void TabStrip::paintEvent(QPaintEvent *)
     for (const auto &[i, r] : std::as_const(m_shown)) {
         const VideoTab &t = tabs[i];
         const bool now = i == current;
+        const bool shown = viewing >= 0 ? i == viewing : now;   // the page that is open
         const bool hover = i == m_hover;
         QPainterPath box;
         box.addRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), z(10), z(10));
         const QColor rest = m_vertical ? QColor(Qt::transparent) : c.card;
-        p.fillPath(box, now ? c.cardSelected : hover ? c.raised : rest);
-        if (now && !m_vertical) {
+        p.fillPath(box, shown ? c.cardSelected : hover ? c.raised : rest);
+        if (shown && !m_vertical) {
             p.setPen(QPen(c.accent, 1.2));
             p.drawPath(box);
         }
@@ -183,7 +207,7 @@ void TabStrip::paintEvent(QPaintEvent *)
         // The name (and in the list the channel under it), then the close
         // mark on the one under the mouse.
         const QRect close = closeRect(r);
-        const bool showClose = hover || (now && !m_vertical);
+        const bool showClose = hover || (shown && !m_vertical);
         const int textLeft = thumb.right() + z(10);
         const int textRight = showClose ? close.left() - z(4) : r.right() - z(10);
         const QString name = t.title.isEmpty() ? t.target : t.title;
@@ -212,12 +236,14 @@ void TabStrip::paintEvent(QPaintEvent *)
         }
         if (showClose) {
             if (hover && m_hoverClose) {
+                // A clear white mark under the mouse (Batin, 2026-11-20: the
+                // grey one went unseen).
                 QPainterPath dot;
                 dot.addEllipse(QRectF(close));
-                p.fillPath(dot, c.raisedHover);
+                p.fillPath(dot, QColor(255, 255, 255, 60));
             }
             p.setFont(icons(z(9)));
-            p.setPen(hover && m_hoverClose ? c.strong : c.dim);
+            p.setPen(hover && m_hoverClose ? QColor(Qt::white) : c.dim);
             p.drawText(close, Qt::AlignCenter, QString(QChar(0xE8BB)));
         }
         p.restore();
@@ -226,10 +252,20 @@ void TabStrip::paintEvent(QPaintEvent *)
         QPainterPath chip;
         chip.addRoundedRect(QRectF(m_more).adjusted(0.5, 0.5, -0.5, -0.5), z(10), z(10));
         p.fillPath(chip, m_hoverMore ? c.raised : c.card);
-        p.setFont(f);
         p.setPen(c.text);
-        int hidden = int(tabs.size()) - int(m_shown.size());
-        p.drawText(m_more, Qt::AlignCenter, QStringLiteral("+%1").arg(hidden));
+        if (collapsed) {
+            // The tabs mark and how many.
+            const QRect mark(m_more.left() + z(12), m_more.top(), z(18), m_more.height());
+            p.setFont(icons(z(14)));
+            p.drawText(mark, Qt::AlignCenter, QString(QChar(0xE737)));
+            p.setFont(f);
+            p.drawText(m_more.adjusted(z(36), 0, -z(8), 0), Qt::AlignVCenter | Qt::AlignLeft,
+                       QStringLiteral("Tabs %1").arg(tabs.size()));
+        } else {
+            p.setFont(f);
+            const int hidden = int(tabs.size()) - int(m_shown.size());
+            p.drawText(m_more, Qt::AlignCenter, QStringLiteral("+%1").arg(hidden));
+        }
     }
 }
 
@@ -295,8 +331,15 @@ void TabStrip::mouseReleaseEvent(QMouseEvent *event)
     }
 }
 
+void TabStrip::enterEvent(QEnterEvent *)
+{
+    if (collapsed)
+        m_hoverOpen->start();
+}
+
 void TabStrip::leaveEvent(QEvent *)
 {
+    m_hoverOpen->stop();
     m_hover = -1;
     m_hoverClose = false;
     m_hoverMore = false;

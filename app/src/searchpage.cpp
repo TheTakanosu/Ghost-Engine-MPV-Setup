@@ -487,6 +487,11 @@ SearchPage::SearchPage(ThumbnailCache &covers, QWidget *parent) : QWidget(parent
     // Channel pictures: one small image per channel from YouTube's picture
     // server, once a session, as a browser fetches them on youtube.com.
     m_avatars = new RemotePictures(this);
+    {
+        const QVariantMap saved = QSettings().value("youtube/avatarsByName").toMap();
+        for (auto it = saved.cbegin(); it != saved.cend(); ++it)
+            m_avatarByName.insert(it.key(), it.value().toString());
+    }
     m_homeCards->avatarFor = [this](const QModelIndex &index) {
         return m_avatars->get(index.data(tiles::kAvatarRole).toString());
     };
@@ -947,6 +952,22 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
             m_avatarOf.insert(it.channelId, avatar);
         if (avatar.isEmpty())
             avatar = m_avatarOf.value(it.channelId);
+        const QString nameKey = it.artist.trimmed().toLower();
+        if (!avatar.isEmpty() && !nameKey.isEmpty() && m_avatarByName.value(nameKey) != avatar) {
+            m_avatarByName.insert(nameKey, avatar);
+            if (!m_avatarNamesDirty) {
+                m_avatarNamesDirty = true;
+                QTimer::singleShot(3000, this, [this] {
+                    m_avatarNamesDirty = false;
+                    QVariantMap keep;
+                    for (auto a = m_avatarByName.cbegin(); a != m_avatarByName.cend() && keep.size() < 800; ++a)
+                        keep.insert(a.key(), a.value());
+                    QSettings().setValue("youtube/avatarsByName", keep);
+                });
+            }
+        }
+        if (avatar.isEmpty() && !nameKey.isEmpty())
+            avatar = m_avatarByName.value(nameKey);
         row->setData(tiles::kAvatarRole, avatar);
         row->setToolTip(it.title + QStringLiteral("\n") + byline);
         m_homeGrid->addItem(row);
@@ -1169,9 +1190,19 @@ void SearchPage::homeMore()
     // top four: further down YouTube's side list drifts off the subject (a
     // German speech beside a German-themed video, Batin 2026-11-20), and
     // eight at a time filled the first rows from the one video watched last.
+    // Again until the grid runs past the window's bottom: more came only
+    // with the scroll bar near its end, and twelve cards that fit the
+    // window left nothing to scroll (Batin, 2026-11-20: Home stopped at 12).
     const auto again = [this](bool added) {
-        if (!added || m_homeGrid->count() < 12)
+        if (!added || m_homeGrid->count() < 12) {
             QTimer::singleShot(0, this, &SearchPage::homeMore);
+            return;
+        }
+        QTimer::singleShot(120, this, [this] {
+            const QScrollBar *bar = m_homeGrid->verticalScrollBar();
+            if (bar->maximum() - bar->value() < 600)
+                homeMore();
+        });
     };
     const int turn = m_homeTurn++ % 4;
     if (turn == 1 && !m_homeFollow.isEmpty()) {
@@ -1196,7 +1227,7 @@ void SearchPage::homeMore()
         const QString query = m_homeQueries.takeFirst();
         m_homeLoading = true;
         m_client.searchYouTube(query, QString(), [add, again](QVector<ytmusic::Item> items, QString) {
-            again(add(items.mid(0, 4)));
+            again(add(items.mid(0, 6)));
         });
         return;
     }
@@ -1221,7 +1252,7 @@ void SearchPage::homeMore()
     m_homeSeeded.insert(seed);
     m_homeLoading = true;
     m_client.related(seed, [add, again](QVector<ytmusic::Item> items) {
-        again(add(items.mid(0, 4)));
+        again(add(items.mid(0, 6)));
     });
 }
 

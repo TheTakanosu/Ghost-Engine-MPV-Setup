@@ -224,7 +224,14 @@ private:
     bool m_loadPaused = false;       // the next play() opens paused (a tab, Instant Play off)
     QString m_coverTarget;           // the tab whose cover stands in for its picture
     QString m_coverId;
-    bool m_coverArrived = false;     // mpv has the tab's entry (a later one ends the cover)
+    bool m_coverArrived = false;
+    // A tab's page shown while something else plays (Batin, 2026-11-20).
+    bool m_preview = false;
+    VideoTab m_previewTab;
+    QVector<ytmusic::Item> m_previewItems;   // its suggestions, when it has no list
+    void startPreview(int index);
+    void endPreview(bool showPlaying = true);
+    void playPreview(const QString &target = {});   // empty: the tab's own video     // mpv has the tab's entry (a later one ends the cover)
     void togglePause();              // at a video's end: from its start again
     // Back and Forward between videos on the video page (Batin, 2026-11-20).
     QHash<QString, double> m_videoSeconds;   // where each video was left

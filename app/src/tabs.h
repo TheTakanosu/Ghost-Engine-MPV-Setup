@@ -29,6 +29,10 @@ public:
 
     QVector<VideoTab> tabs;
     int current = -1;    // the tab that is what plays; -1: none is
+    int viewing = -1;    // the tab whose page shows without playing (Batin: what plays goes on)
+    // Collapsed Tabs (Settings): every tab behind one button, opened by a
+    // click or by resting the mouse on it.
+    bool collapsed = false;
 
     std::function<QPixmap(const QString &id)> cover;
     std::function<void(int index)> onPick;
@@ -51,6 +55,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *) override;
+    void enterEvent(QEnterEvent *) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
@@ -65,4 +70,5 @@ private:
     bool m_hoverMore = false;
     int m_pressed = -1;
     bool m_pressedMore = false;
+    class QTimer *m_hoverOpen = nullptr;
 };
