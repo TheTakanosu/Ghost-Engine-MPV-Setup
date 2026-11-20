@@ -546,3 +546,5 @@ try {
         Read-Host "  Press Enter to close" | Out-Null
     }
 }
+# The app's Update window reads this: 0 said "Done" even when a part had failed.
+if ($failed) { exit 1 }

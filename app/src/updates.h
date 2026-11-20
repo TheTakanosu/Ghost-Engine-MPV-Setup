@@ -68,6 +68,11 @@ public:
     std::function<void()> onQuitForUpdate;
     std::function<void()> onStopPlayer;
 
+    // Once, on the first start after the app closed for its own update: if
+    // it is still older than what was being installed, says so, with the
+    // release's page and setup as the way on. True: "Try again" was pressed.
+    static bool showIfUnfinished(QWidget *parent);
+
 protected:
     // Frameless and rounded like the rest of the app, dragged by any spot
     // that is not a control.

@@ -144,7 +144,106 @@ QLabel *text(const QString &html, qreal points, const QColor &colour, int weight
     return label;
 }
 
+// The update to a version that did not land (1.6, update safety): what is
+// installed still runs, and the way on is shown without the script, which
+// may be what broke: the release's page and its setup, which installs over
+// this one and keeps the playlists, settings and mpv.conf.
+class UnfinishedDialog : public QDialog {
+public:
+    UnfinishedDialog(const QString &now, const QString &wanted, const QString &page, QWidget *parent)
+        : QDialog(parent)
+    {
+        setWindowTitle("Update");
+        setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setFixedWidth(430);
+        const QString link = QStringLiteral("color: %1; text-decoration: none;").arg(theme::accentText().name());
+        const QString setup = QStringLiteral("https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/releases/download/v%1/"
+                                             "Ghost-Engine-MPV-Setup.zip").arg(wanted);
+        auto *title = text(QStringLiteral("The update to %1 didn't finish").arg(wanted.toHtmlEscaped()), 13,
+                           theme::c().textBright, QFont::DemiBold);
+        auto *about = text(QStringLiteral("Ghost Engine is still %1 and works as before. Try again from Updates; "
+                                          "the update window's red lines said what stopped it.").arg(now.toHtmlEscaped()),
+                           10, theme::c().textBody);
+        auto *way = text(QStringLiteral("If it stops again: download the <a href='%1' style='%3'>%2 setup</a>, unzip it "
+                                        "and run install.bat. It installs over this one; your playlists, settings and "
+                                        "mpv.conf stay. <a href='%4' style='%3'>Release page</a>")
+                             .arg(setup, wanted.toHtmlEscaped(), link, page),
+                         10, theme::c().textBody);
+        way->setTextFormat(Qt::RichText);
+        way->setOpenExternalLinks(true);
+        auto *later = new QPushButton("Close");
+        auto *again = new QPushButton("Try again");
+        const QString shape = QStringLiteral("min-height: 36px; max-height: 36px; padding: 0 20px; border-radius: 9px;"
+                                             " font-size: 10.5pt; font-weight: 600;");
+        theme::style(later, QStringLiteral("QPushButton { %1 color: %2; background: transparent; border: 1px solid @tick; }"
+                                           "QPushButton:hover { background: @raised; }").arg(shape, theme::c().textBright.name()));
+        theme::style(again, QStringLiteral("QPushButton { %1 color: @onAccent; background: %2; border: none; }"
+                                           "QPushButton:hover { background: @accentHover; }").arg(shape, theme::accent().name()));
+        for (QPushButton *b : {later, again})
+            b->setCursor(Qt::PointingHandCursor);
+        connect(later, &QPushButton::clicked, this, &QDialog::reject);
+        connect(again, &QPushButton::clicked, this, &QDialog::accept);
+        auto *buttons = new QHBoxLayout;
+        buttons->setSpacing(10);
+        buttons->addStretch();
+        buttons->addWidget(later);
+        buttons->addWidget(again);
+        auto *box = new QVBoxLayout(this);
+        box->setContentsMargins(24, 18, 24, 22);
+        box->setSpacing(0);
+        box->addWidget(title);
+        box->addSpacing(8);
+        box->addWidget(about);
+        box->addSpacing(10);
+        box->addWidget(way);
+        box->addSpacing(18);
+        box->addLayout(buttons);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(theme::c().line, 1));
+        p.setBrush(theme::c().popup);
+        p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+    }
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton)
+            m_dragFrom = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        QDialog::mousePressEvent(event);
+    }
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if ((event->buttons() & Qt::LeftButton) && !m_dragFrom.isNull())
+            move(event->globalPosition().toPoint() - m_dragFrom);
+    }
+
+private:
+    QPoint m_dragFrom;
+};
+
 } // namespace
+
+bool UpdateDialog::showIfUnfinished(QWidget *parent)
+{
+    QSettings settings;
+    const QString wanted = settings.value("updates/pending").toString();
+    const QString page = settings.value("updates/pendingPage").toString();
+    settings.remove("updates/pending");
+    settings.remove("updates/pendingPage");
+    const QString now = QStringLiteral(GHOST_VERSION);
+    if (wanted.isEmpty() || QVersionNumber::fromString(now) >= QVersionNumber::fromString(wanted))
+        return false;
+    UnfinishedDialog dialog(now, wanted,
+                            page.isEmpty() ? QStringLiteral("https://github.com/TheTakanosu/Ghost-Engine-MPV-Setup/releases/tag/v%1").arg(wanted)
+                                           : page,
+                            parent);
+    return dialog.exec() == QDialog::Accepted;
+}
 
 UpdateDialog::UpdateDialog(const QList<updates::Part> &parts, QWidget *parent) : QDialog(parent)
 {
@@ -312,11 +411,20 @@ void UpdateDialog::start()
         const QString reopen = QFileInfo::exists(installed) ? installed : QCoreApplication::applicationFilePath();
         const QStringList args = updates::powershell({"-Only", keys.join(','), "-Unattended",
                                                       "-Reopen", QDir::toNativeSeparators(reopen)});
+        // What it is meant to become, for the app that opens afterwards: still
+        // older than this, it says so and shows the way on (showIfUnfinished).
+        for (const auto &[part, tick] : m_rows)
+            if (part.key == "ghost" && !part.latest.isEmpty()) {
+                QSettings().setValue("updates/pending", part.latest);
+                QSettings().setValue("updates/pendingPage", part.notes);
+            }
         if (QProcess::startDetached("powershell.exe", args)) {
             accept();
             if (onQuitForUpdate)
                 onQuitForUpdate();
         } else {
+            QSettings().remove("updates/pending");
+            QSettings().remove("updates/pendingPage");
             m_status->setText("Could not start update.ps1. Run update.bat in the mpv folder instead.");
             m_status->show();
         }
@@ -338,8 +446,10 @@ void UpdateDialog::start()
                 m_log->appendPlainText(line.trimmed());
     });
     connect(m_process, &QProcess::finished, this, [this](int code) {
+        // update.ps1 exits with 1 when a part was not updated (1.6; before, 0 always).
         m_status->setText(code == 0 ? "Done. A list that is playing picks the new yt-dlp up from its next song."
-                                    : "update.ps1 stopped with an error; the lines above say why.");
+                                    : "Something was not updated; the lines above say why. Try again later, or run "
+                                      "update.bat in the mpv folder.");
         m_status->show();
         m_update->hide();
         m_later->setText("Close");
