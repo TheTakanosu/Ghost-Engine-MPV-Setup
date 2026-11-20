@@ -7142,7 +7142,12 @@ void MainWindow::refreshPanel()
                 return;
             const songinfo::Facts facts = songinfo::parse(printed);
             m_panel->setCredits(facts.credits, true);
-            const QString artist = playingSong().first;
+            // A YouTube video (not a song) is about its channel, as the card
+            // says: MusicCat's "Lady Gaga - Paparazzi (Lyrics)" showed Lady
+            // Gaga under "About the channel" (Batin, 2026-11-20). A song,
+            // or a song's video, keeps its artist.
+            const bool youtubeVideo = !m_mpv.property("user-data/ghost/audio").toBool();
+            const QString artist = youtubeVideo ? QString() : playingSong().first;
             m_panelChannelId = facts.channelId;
             m_panelChannelName = artist.isEmpty() ? m_mpv.property("metadata/by-key/uploader").toString() : artist;
             updateFollowButton();

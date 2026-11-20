@@ -1062,6 +1062,17 @@ void SearchPage::fillHome(bool reset)
         m_homeTurn = 0;
         // What was searched on the YouTube side lately, beside what was
         // watched: the home follows both (Batın, 2026-11-12).
+        // The channels followed: their newest videos take a turn too.
+        m_homeFollow.clear();
+        m_homeFollowAll.clear();
+        if (m_homeChannel.isEmpty())
+            for (const QString &line : QSettings().value("youtube/following").toStringList()) {
+                const QString id = line.section(QLatin1Char(0x09), 0, 0).trimmed();
+                if (id.startsWith(QLatin1String("UC"))) {
+                    m_homeFollow << id;
+                    m_homeFollowAll.insert(id);
+                }
+            }
         m_homeQueries.clear();
         if (m_homeChannel.isEmpty())
             for (const QString &q : QSettings().value("search/recentYouTube").toStringList())
@@ -1147,34 +1158,64 @@ void SearchPage::homeMore()
         });
         return;
     }
-    // All, by turns: what YouTube shows beside a watched video (twice), then
-    // the top of a recent search's results (once); a few of each, so no one
-    // video or search fills the page (Batın, 2026-11-12: it followed the
-    // last video watched only). Once those are used, beside the videos the
-    // grid itself shows, so it goes on.
-    const bool searchTurn = !m_homeQueries.isEmpty() && (m_homeTurn++ % 3 == 2 || m_homeSeeds.isEmpty());
-    if (searchTurn) {
-        const QString query = m_homeQueries.takeFirst();
+    // All, by turns: beside a watched video, a followed channel's newest,
+    // beside another watched video, a recent search's top. Four of each, the
+    // top four: further down YouTube's side list drifts off the subject (a
+    // German speech beside a German-themed video, Batin 2026-11-20), and
+    // eight at a time filled the first rows from the one video watched last.
+    const auto again = [this](bool added) {
+        if (!added || m_homeGrid->count() < 12)
+            QTimer::singleShot(0, this, &SearchPage::homeMore);
+    };
+    const int turn = m_homeTurn++ % 4;
+    if (turn == 1 && !m_homeFollow.isEmpty()) {
+        const QString channel = m_homeFollow.takeFirst();
         m_homeLoading = true;
-        m_client.searchYouTube(query, QString(), [this, add](QVector<ytmusic::Item> items, QString) {
-            if (!add(items.mid(0, 8)) || m_homeGrid->count() < 12)
-                QTimer::singleShot(0, this, &SearchPage::homeMore);
+        m_client.channelVideos(channel, QString(), [this, add, again, serial, channel](ytmusic::ChannelPage page) {
+            if (serial != m_homeSerial)
+                return;
+            for (ytmusic::Item &it : page.videos) {
+                if (it.artist.isEmpty())
+                    it.artist = page.name;
+                if (it.channelId.isEmpty())
+                    it.channelId = channel;
+                if (it.avatar.isEmpty())
+                    it.avatar = page.avatar;
+            }
+            again(add(page.videos.mid(0, 3)));
         });
         return;
     }
-    if (m_homeSeeds.isEmpty())
-        for (int i = 0; i < m_home.size() && m_homeSeeds.size() < 6; i += 4)
-            if (!m_homeSeeded.contains(m_home[i].id))
-                m_homeSeeds << m_home[i].id;
-    if (m_homeSeeds.isEmpty())
+    if ((turn == 3 || m_homeSeeds.isEmpty()) && !m_homeQueries.isEmpty()) {
+        const QString query = m_homeQueries.takeFirst();
+        m_homeLoading = true;
+        m_client.searchYouTube(query, QString(), [add, again](QVector<ytmusic::Item> items, QString) {
+            again(add(items.mid(0, 4)));
+        });
         return;
+    }
+    // The watched videos used up: beside the grid's own cards, but only
+    // those of a channel watched or followed. Beside any card, the page
+    // wandered from one side list to the next, off what was watched.
+    if (m_homeSeeds.isEmpty()) {
+        QSet<QString> known;
+        for (const QString &name : watchedChannels ? watchedChannels() : QStringList())
+            known.insert(name.trimmed().toLower());
+        for (int i = 0; i < m_home.size() && m_homeSeeds.size() < 6; ++i)
+            if (!m_homeSeeded.contains(m_home[i].id) &&
+                (known.contains(m_home[i].artist.trimmed().toLower()) || m_homeFollowAll.contains(m_home[i].channelId)))
+                m_homeSeeds << m_home[i].id;
+    }
+    if (m_homeSeeds.isEmpty()) {
+        if (!m_homeFollow.isEmpty() || !m_homeQueries.isEmpty())
+            QTimer::singleShot(0, this, &SearchPage::homeMore);
+        return;
+    }
     const QString seed = m_homeSeeds.takeFirst();
     m_homeSeeded.insert(seed);
     m_homeLoading = true;
-    m_client.related(seed, [this, add](QVector<ytmusic::Item> items) {
-        // Few new ones (a side list much like the last): ask beside the next.
-        if (!add(items.mid(0, 8)) || m_homeGrid->count() < 12)
-            QTimer::singleShot(0, this, &SearchPage::homeMore);
+    m_client.related(seed, [add, again](QVector<ytmusic::Item> items) {
+        again(add(items.mid(0, 4)));
     });
 }
 
