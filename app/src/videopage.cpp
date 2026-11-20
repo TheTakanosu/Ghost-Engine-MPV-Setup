@@ -763,6 +763,9 @@ public:
     }
     void setOn(bool on) { m_on = on; update(); }
     void setPip(bool pip) { m_pip = pip; update(); }   // a small screen in a big one
+    // What a click gives: 1 the cinema (a wide screen), 2 the normal view
+    // (a screen with the list beside it).
+    void setView(int view) { m_view = view; update(); }
 
     QSize sizeHint() const override
     {
@@ -809,6 +812,22 @@ protected:
                                      screen.width() / 2 - 2.5, screen.height() / 2 - 2.5), 1, 1);
             return;
         }
+        if (m_view) {
+            const qreal w = height() * 0.56, h = height() * (m_view == 1 ? 0.3 : 0.4);
+            const QRectF screen = QRectF(box.center().x() - w / 2, box.center().y() - h / 2, w, h).toAlignedRect()
+                                      .toRectF().adjusted(0.5, 0.5, -0.5, -0.5);
+            p.setPen(QPen(ink, 1.4));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(screen, 2, 2);
+            if (m_view == 2) {
+                // The list's column on the right.
+                p.setPen(Qt::NoPen);
+                p.setBrush(ink);
+                p.drawRoundedRect(QRectF(screen.right() - screen.width() * 0.3, screen.top() + 2.5,
+                                         screen.width() * 0.3 - 2.5, screen.height() - 5), 1, 1);
+            }
+            return;
+        }
         p.setPen(ink);
         p.drawText(rect(), Qt::AlignCenter, text());
     }
@@ -819,6 +838,7 @@ private:
     qreal m_point;
     bool m_on = false;
     bool m_pip = false;
+    int m_view = 0;
 };
 
 QPushButton *glyphButton(const QString &glyph, const QString &tip, qreal pointSize = 10.5)
@@ -1487,8 +1507,15 @@ QWidget *VideoPage::buildControls()
     row->addWidget(m_subs);
     row->addWidget(m_quality);
     row->addWidget(m_speed);
+    // Cinema or the normal view (Batin, 2026-11-21), beside full screen as
+    // on YouTube.
+    m_cinemaButton = glyphButton(QString(), m_cinema ? QStringLiteral("Normal view (T)") : QStringLiteral("Cinema view (T)"));
+    static_cast<FlatButton *>(m_cinemaButton)->setView(m_cinema ? 2 : 1);
+    connect(m_cinemaButton, &QPushButton::clicked, this, [this] { if (onCinema) onCinema(); });
+    row->addWidget(m_cinemaButton);
     row->addWidget(full);
-    m_wideOnly = {back10, fwd10, m_volume, m_autoplay, m_repeat, m_listen, miniplayer, m_subs, m_quality, m_speed};
+    m_wideOnly = {back10, fwd10, m_volume, m_autoplay, m_repeat, m_listen, miniplayer, m_subs, m_quality, m_speed,
+                  m_cinemaButton};
     m_seekTip = new QLabel(bar);
     m_seekTip->setObjectName("seekTip");
     m_seekTip->setAlignment(Qt::AlignCenter);
@@ -1856,6 +1883,10 @@ void VideoPage::setFullScreen(bool full)
 void VideoPage::setCinema(bool cinema)
 {
     m_cinema = cinema;
+    if (m_cinemaButton) {
+        static_cast<FlatButton *>(m_cinemaButton)->setView(cinema ? 2 : 1);
+        m_cinemaButton->setToolTip(cinema ? QStringLiteral("Normal view (T)") : QStringLiteral("Cinema view (T)"));
+    }
     m_info->setVisible(!m_full);
     m_side->setVisible(!m_full);
     // Full screen is the picture alone: nothing to scroll to.

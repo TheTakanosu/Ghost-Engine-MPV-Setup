@@ -687,6 +687,15 @@ MainWindow::MainWindow()
     // Autoplay (Batin, 2026-11-20): off, a video stops at its end with the
     // next one offered; on, the next one plays after a count of 8.
     m_videoPage->setAutoplay(QSettings().value("video/autoplay", false).toBool());
+    // Cinema or the normal view (Batin, 2026-11-21): the bar's button and T,
+    // kept for the next video.
+    m_videoPage->setCinema(QSettings().value("video/cinema", false).toBool());
+    m_videoPage->onCinema = [this] {
+        const bool on = !m_videoPage->cinema();
+        QSettings().setValue("video/cinema", on);
+        m_videoPage->setCinema(on);
+        schedulePlace();   // mpv's window follows the player's new size
+    };
     m_videoPage->onAutoplay = [this] {
         const bool on = !QSettings().value("video/autoplay", false).toBool();
         QSettings().setValue("video/autoplay", on);
@@ -2204,9 +2213,8 @@ void MainWindow::setLibraryCompact(bool compact)
     m_collapse->setText(QString(compact ? kIconExpand : kIconCollapse));
     m_collapse->setToolTip(compact ? "Expand library" : "Collapse library");
     m_rowDelegate->setCompact(compact);
-    // The video page with the library folded away: a cinema.
-    if (m_videoPage)
-        m_videoPage->setCinema(compact);
+    // The video page's cinema is its own button's now (Batin, 2026-11-21),
+    // not the library's folding.
     // A scroll bar in a cover-wide panel would cut the covers off.
     m_libraryList->setVerticalScrollBarPolicy(compact ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
     m_libraryList->doItemsLayout();
@@ -4361,6 +4369,9 @@ void MainWindow::runShortcut(const QString &action)
     else if (action == QLatin1String("fullScreen")) {
         if (m_videoFull || m_pages->currentWidget() == m_videoPage)
             setVideoFullScreen(!m_videoFull);
+    } else if (action == QLatin1String("cinema")) {
+        if (!m_videoFull && m_pages->currentWidget() == m_videoPage && m_videoPage->onCinema)
+            m_videoPage->onCinema();
     } else if (action == QLatin1String("mini")) {
         if (m_videoPage->onMinimize && m_pages->currentWidget() == m_videoPage)
             m_videoPage->onMinimize();
@@ -6880,7 +6891,7 @@ void MainWindow::showVideoPage()
     static const QRegularExpression cap(QStringLiteral(R"(height<=(\d+))"));
     m_videoPage->setQualityCap(cap.match(m_mpv.property("ytdl-format").toString()).captured(1).toInt());
     m_videoPage->setVolume(int(m_mpv.property("volume").toDouble()), m_mpv.property("mute").toBool());
-    m_videoPage->setCinema(m_compact);
+    m_videoPage->setCinema(QSettings().value("video/cinema", false).toBool());
     m_miniClosed = false;
     m_pictureAway = false;
     m_miniAsked = false;

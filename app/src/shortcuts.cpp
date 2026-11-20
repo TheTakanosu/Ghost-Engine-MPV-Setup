@@ -40,6 +40,7 @@ const QVector<Action> &actions()
         {"shuffle", "Shuffle", "Playback", "Ctrl+S"},
         {"repeat", "Repeat", "Playback", "Ctrl+R"},
         {"fullScreen", "Full screen", "Video", "F"},
+        {"cinema", "Cinema / normal view", "Video", "T"},
         {"mini", "Mini player", "Video", "I"},
         {"subtitles", "Subtitles on / off", "Video", "C"},
         {"search", "Search", "Go to", "Ctrl+K", true},

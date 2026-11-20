@@ -141,8 +141,11 @@ public:
     // The controls over the small picture in the now playing view: play,
     // the time and full screen, without what only fits the page's width.
     void setControlsCompact(bool compact);
-    // Only the player, as large as the page lets it be.
+    // Only the player, as large as the page lets it be. The bar's cinema
+    // button (T) asks for it or for the normal view, the list beside.
     void setCinema(bool cinema);
+    bool cinema() const { return m_cinema; }
+    std::function<void()> onCinema;
     void refreshCovers() const;
 
     std::function<QPixmap(const QString &target)> coverFor;
@@ -268,6 +271,7 @@ private:
     QPushButton *m_subs;
     QPushButton *m_repeat;
     QPushButton *m_autoplay;
+    QPushButton *m_cinemaButton = nullptr;
     QWidget *m_upNext = nullptr;
     bool m_upNextOn = false;
     QPushButton *m_listen;
