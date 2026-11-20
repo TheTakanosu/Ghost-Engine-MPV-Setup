@@ -1887,6 +1887,10 @@ void VideoPage::setCinema(bool cinema)
         static_cast<FlatButton *>(m_cinemaButton)->setView(cinema ? 2 : 1);
         m_cinemaButton->setToolTip(cinema ? QStringLiteral("Normal view (T)") : QStringLiteral("Cinema view (T)"));
     }
+    // The seek line moves from under the mouse: its picture was left hanging
+    // over the video (seen, 2026-11-21).
+    if (m_seekPreview)
+        hideSeekPreview();
     m_info->setVisible(!m_full);
     m_side->setVisible(!m_full);
     // Full screen is the picture alone: nothing to scroll to.
