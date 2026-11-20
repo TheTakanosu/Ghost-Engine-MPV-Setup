@@ -952,7 +952,10 @@ int SearchPage::appendHome(const QVector<ytmusic::Item> &items)
             m_avatarOf.insert(it.channelId, avatar);
         if (avatar.isEmpty())
             avatar = m_avatarOf.value(it.channelId);
-        const QString nameKey = it.artist.trimmed().toLower();
+        // "FearZ - Topic" on a card is "FearZ" in History: one key for both.
+        QString nameKey = it.artist.trimmed().toLower();
+        if (nameKey.endsWith(QLatin1String(" - topic")))
+            nameKey.chop(8);
         if (!avatar.isEmpty() && !nameKey.isEmpty() && m_avatarByName.value(nameKey) != avatar) {
             m_avatarByName.insert(nameKey, avatar);
             if (!m_avatarNamesDirty) {

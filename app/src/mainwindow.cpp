@@ -555,7 +555,9 @@ MainWindow::MainWindow()
         menu.addAction("Play", this, [this, target] { m_videoPage->onPick(target); });
         // Kept with the list it is in, so its tab goes on from there.
         menu.addAction("Open in new tab", this, [this, target, title, id] {
-            const QString channel = m_videoPage->channelFor ? m_videoPage->channelFor(target) : QString();
+            // The row's line under the name is "channel  ·  when": the channel only.
+            const QString channel = (m_videoPage->channelFor ? m_videoPage->channelFor(target) : QString())
+                                        .section(QStringLiteral("  ·  "), 0, 0).trimmed();
             openInTab(VideoTab{target, id, title, channel, playingListPath(), 0});
         });
         if (!id.isEmpty())
@@ -1341,7 +1343,8 @@ MainWindow::MainWindow()
         if (name == "path" || name == "media-title" || name == "metadata/by-key/uploader" ||
             name == "playlist-path" || name == "user-data/ghost/source")
             updateVideoPage();
-        if (name == "user-data/ghost/audio")
+        // The video's shape known: a narrow one keeps it in the 16:9 frame.
+        if (name == "user-data/ghost/audio" || name == "video-params/aspect")
             schedulePlace();
         if (name == "path" || name == "user-data/ghost/source" || name == "media-title" || name == "playlist-pos" ||
             name == "playlist" || name == "playlist-path" || name == "user-data/ghost/audio" ||
@@ -1534,6 +1537,11 @@ MainWindow::MainWindow()
         if (!on) {
             m_mpvEmbedded = false;
             m_failedSongs.clear();   // the next mpv numbers its entries anew
+            // Nothing plays: no tab is what plays.
+            if (m_tabStrip && m_tabStrip->current >= 0 && !m_restartPlay) {
+                m_tabStrip->current = -1;
+                tabsChanged();
+            }
             if (m_restartPlay) {
                 const QueuedPlay q = *m_restartPlay;
                 m_restartPlay.reset();

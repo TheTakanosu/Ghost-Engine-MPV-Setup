@@ -1614,6 +1614,7 @@ void VideoPage::setCover(bool on, const QPixmap &cover)
     }
     m_coverOn = on;
     m_coverPlay->setVisible(on);
+    m_backToVideo->setVisible(m_listenOnly && !on);   // the cover's play button, not that one
     m_screen->update();
 }
 
@@ -1624,7 +1625,7 @@ void VideoPage::setListenOnly(bool on)
     m_listenOnly = on;
     static_cast<FlatButton *>(m_listen)->setOn(on);
     m_listen->setToolTip(on ? QStringLiteral("Back to video") : QStringLiteral("Listen only audio"));
-    m_backToVideo->setVisible(on);
+    m_backToVideo->setVisible(on && !m_coverOn);
     m_quality->setEnabled(!on);
     setQualityCap(m_cap);
     m_screen->update();

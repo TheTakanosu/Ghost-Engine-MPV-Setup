@@ -865,8 +865,11 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
            "Your video tabs are kept when you close Ghost Engine, and are there the next time it starts.",
            m_rememberTabs);
     connect(m_rememberTabs, &QAbstractButton::toggled, this, [this](bool on) {
-        if (!m_loading)
-            QSettings().setValue("youtube/rememberTabs", on);
+        if (m_loading)
+            return;
+        QSettings().setValue("youtube/rememberTabs", on);
+        if (onTabsChanged)
+            onTabsChanged();   // kept, or forgotten, at once
     });
     m_collapsedTabs = new ToggleSwitch;
     addRow(window, "Collapsed tabs",

@@ -55,6 +55,29 @@ protected:
     }
 };
 
+// The card's X, painted like the pills (a style sheet does not hold here).
+class CloseMark : public QPushButton {
+public:
+    explicit CloseMark(QWidget *parent) : QPushButton(parent) { setAttribute(Qt::WA_Hover); }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        if (underMouse() || isDown()) {
+            QPainterPath dot;
+            dot.addEllipse(QRectF(rect()).adjusted(1, 1, -1, -1));
+            p.fillPath(dot, QColor(255, 255, 255, isDown() ? 80 : 50));
+        }
+        QFont g(QStringLiteral("Segoe Fluent Icons"));
+        g.setPixelSize(qMax(9, height() * 2 / 5));
+        p.setFont(g);
+        p.setPen(underMouse() ? QColor(Qt::white) : QColor(255, 255, 255, 170));
+        p.drawText(rect(), Qt::AlignCenter, QString(QChar(0xE711)));
+    }
+};
+
 QColor mixed(const QColor &a, const QColor &b, qreal t)
 {
     return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t,
@@ -113,14 +136,10 @@ NowIsland::NowIsland(MpvClient *mpv, ThumbnailCache *covers, QWidget *parent)
             onMini();
     });
     // Closes what plays (Batin, 2026-11-20), at the card's top right.
-    m_closeButton = new QPushButton(QString(QChar(0xE711)), this);
+    m_closeButton = new CloseMark(this);
     m_closeButton->setCursor(Qt::PointingHandCursor);
     m_closeButton->setToolTip("Stop and close the player");
     m_closeButton->setFixedSize(z(28), z(28));
-    m_closeButton->setStyleSheet(QStringLiteral(
-        "QPushButton { border: none; border-radius: %1px; background: transparent; color: rgba(255,255,255,170);"
-        " font-family: 'Segoe Fluent Icons'; font-size: %2px; }"
-        "QPushButton:hover { background: rgba(255,255,255,45); color: white; }").arg(z(14)).arg(z(11)));
     m_closeButton->hide();
     connect(m_closeButton, &QPushButton::clicked, this, [this] {
         closeNow();
@@ -356,7 +375,7 @@ void NowIsland::paintEvent(QPaintEvent *)
             p.restore();
         }
         // Words beside it: what is playing, two lines; the channel.
-        const QRectF words(thumb.right() + 14, thumb.top(), b.right() - thumb.right() - 26, 64);
+        const QRectF words(thumb.right() + 14, thumb.top(), b.right() - thumb.right() - 26 - z(30), 64);   // short of the X
         bars(words.left(), words.top() + 7, 1);
         p.setFont(font());
         p.setPen(c.muted);
