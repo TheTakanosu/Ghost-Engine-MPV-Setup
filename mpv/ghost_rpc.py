@@ -437,6 +437,7 @@ def run_advanced_ghost_presence() -> None:
     last_title = ""
     last_pause_state = None
     last_loading = None
+    last_has_video = None
     last_position = 0.0
     anchor = 0          # the epoch Discord is counting from
     is_cleared = True
@@ -508,6 +509,9 @@ def run_advanced_ghost_presence() -> None:
             state["title"] != last_title
             or state["paused"] != last_pause_state
             or state["loading"] != last_loading
+            # "Listen only audio" turns the picture off on the same video:
+            # Watching becomes Listening (Batin, 2026-11-20).
+            or state["has_video"] != last_has_video
             or time_jumped
             or drifted
             or is_cleared
@@ -538,6 +542,7 @@ def run_advanced_ghost_presence() -> None:
                 last_title = state["title"]
                 last_pause_state = state["paused"]
                 last_loading = state["loading"]
+                last_has_video = state["has_video"]
                 is_cleared = False
             else:
                 anchor = 0

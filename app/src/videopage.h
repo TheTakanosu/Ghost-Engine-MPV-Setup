@@ -265,7 +265,8 @@ private:
     QPushButton *m_listen;
     QPushButton *m_backToVideo;
     QPushButton *m_coverPlay = nullptr;
-    bool m_coverOn = false;   // on the picture's place while listening only
+    bool m_coverOn = false;
+    QPixmap m_coverPix;   // its own: the still is the playing video's, set while the window is sized   // on the picture's place while listening only
     bool m_listenOnly = false;
     int m_corner = 12;            // the picture's, for what stands in its place
     QPushButton *m_quality;

@@ -894,6 +894,14 @@ void SearchPage::showYouTubeHome()
         fillHome(true);
     }
     QTimer::singleShot(0, this, &SearchPage::fitHomeGrid);
+    // Back on Home: the loading that stopped while it was out of sight
+    // (a video's page) goes on until the window is full again (Batin,
+    // 2026-11-20: ten cards and nothing to scroll for more).
+    QTimer::singleShot(200, this, [this] {
+        const QScrollBar *bar = m_homeGrid->verticalScrollBar();
+        if (m_homeGrid->isVisible() && bar->maximum() - bar->value() < 600)
+            homeMore();
+    });
     noteView(QStringLiteral("ythome"), [this] { showYouTubeHome(); });
 }
 

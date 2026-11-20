@@ -127,6 +127,37 @@ protected:
     }
 };
 
+// The play button on a tab's cover: a dark disc, smaller than the glyph
+// button was, and a triangle drawn in its optical middle (Batin,
+// 2026-11-20: the disc too big, the glyph off centre).
+class CoverPlayButton : public QPushButton {
+public:
+    explicit CoverPlayButton(QWidget *parent) : QPushButton(parent) { setAttribute(Qt::WA_Hover); }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, underMouse() ? 190 : 140));
+        p.drawEllipse(r);
+        // The triangle's centre of mass at the disc's centre: its box is
+        // moved right by a sixth of its width.
+        const qreal h = r.height() * 0.36;
+        const qreal w = h * 0.9;
+        const QPointF c = r.center() + QPointF(w / 6, 0);
+        QPainterPath tri;
+        tri.moveTo(c.x() - w / 2, c.y() - h / 2);
+        tri.lineTo(c.x() + w / 2, c.y());
+        tri.lineTo(c.x() - w / 2, c.y() + h / 2);
+        tri.closeSubpath();
+        p.setBrush(Qt::white);
+        p.drawPath(tri);
+    }
+};
+
 // Over the middle of the picture when a video has ended: "Up next", the
 // next video's name, the count, and its two buttons (children placed by
 // hand). Painted here: a style sheet does not hold on these floating windows.
@@ -911,14 +942,10 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_backToVideo->setParent(m_screen);
     m_backToVideo->hide();
     connect(m_backToVideo, &QPushButton::clicked, this, [this] { if (onListenOnly) onListenOnly(false); });
-    m_coverPlay = new QPushButton(QString(QChar(0xF5B0)), m_screen);
+    m_coverPlay = new CoverPlayButton(m_screen);
     m_coverPlay->setCursor(Qt::PointingHandCursor);
     m_coverPlay->setToolTip(QStringLiteral("Play"));
-    m_coverPlay->setFixedSize(72, 72);
-    m_coverPlay->setStyleSheet(QStringLiteral(
-        "QPushButton { border: none; border-radius: 36px; background: rgba(0,0,0,150); color: white;"
-        " font-family: 'Segoe Fluent Icons'; font-size: 26px; padding-left: 4px; }"
-        "QPushButton:hover { background: rgba(0,0,0,200); }"));
+    m_coverPlay->setFixedSize(56, 56);
     m_coverPlay->hide();
     connect(m_coverPlay, &QPushButton::clicked, this, [this] { if (onCoverPlay) onCoverPlay(); });
 
@@ -1607,7 +1634,7 @@ void VideoPage::setRepeat(bool on)
 void VideoPage::setCover(bool on, const QPixmap &cover)
 {
     if (on && !cover.isNull())
-        m_still = cover;
+        m_coverPix = cover;
     if (on == m_coverOn) {
         m_screen->update();
         return;
@@ -1902,12 +1929,12 @@ bool VideoPage::eventFilter(QObject *watched, QEvent *event)
         card.addRoundedRect(QRectF(m_screen->rect()), m_corner, m_corner);
         p.setClipPath(card);
         p.fillRect(m_screen->rect(), Qt::black);
-        if (!m_still.isNull()) {
+        if (!m_coverPix.isNull()) {
             const QSizeF box = m_screen->size();
-            const QSizeF from = m_still.size();
+            const QSizeF from = m_coverPix.size();
             const qreal scale = qMax(box.width() / from.width(), box.height() / from.height());
             const QSizeF cut(box.width() / scale, box.height() / scale);
-            p.drawPixmap(QRectF(QPointF(0, 0), box), m_still,
+            p.drawPixmap(QRectF(QPointF(0, 0), box), m_coverPix,
                          QRectF(QPointF((from.width() - cut.width()) / 2, (from.height() - cut.height()) / 2), cut));
         }
         p.fillRect(m_screen->rect(), QColor(0, 0, 0, 60));

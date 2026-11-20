@@ -1105,8 +1105,15 @@ MainWindow::MainWindow()
         QWidget *leftmost = m_search->isVisible() ? static_cast<QWidget *>(m_search) : m_searchButton;
         QWidget *rightmost = m_updateButton->isVisible() ? m_updateButton
                            : m_profileButton->isVisible() ? m_profileButton : m_gearButton;
-        const int left = leftmost->mapTo(this, QPoint(leftmost->width(), 0)).x();
+        int left = leftmost->mapTo(this, QPoint(leftmost->width(), 0)).x();
         const int right = rightmost->mapTo(this, QPoint(0, 0)).x();
+        // A narrow window: the tabs (folded) reach past the island's half,
+        // so it starts after them and narrows rather than covering them.
+        if (m_tabStrip && m_tabStrip->isVisible()) {
+            const int tabsRight = m_tabStrip->mapTo(this, QPoint(m_tabStrip->width(), 0)).x() + 8;
+            if (tabsRight > (left + right) / 2 - qRound(235 * theme::chromeZoom()))
+                left = tabsRight;
+        }
         return QPair<int, int>(left, right);
     };
     m_island->onStop = [this] {
@@ -1210,6 +1217,18 @@ MainWindow::MainWindow()
     restoreGeometry(settings.value("window/geometry").toByteArray());
     m_split->restoreState(settings.value("window/split").toByteArray());
     setSearchMiddle(settings.value("search/middle", false).toBool());
+    // A theme, accent or zoom put the YouTube menu's buttons back to their
+    // first style (names left-aligned): folded, its icons stood off centre
+    // until the window was resized (Batin, 2026-11-20).
+    theme::whenChanged(this, [this] {
+        QTimer::singleShot(0, this, [this] {
+            if (!m_ytSidebar)
+                return;
+            setYtCompact(m_ytCompact);
+            m_ytChannelPad = -1;
+            padYtChannels();
+        });
+    });
     m_visitSoon.setSingleShot(true);
     m_visitSoon.setInterval(0);
     connect(&m_visitSoon, &QTimer::timeout, this, &MainWindow::noteVisit);
@@ -1343,6 +1362,23 @@ MainWindow::MainWindow()
         if (name == "path" || name == "media-title" || name == "metadata/by-key/uploader" ||
             name == "playlist-path" || name == "user-data/ghost/source")
             updateVideoPage();
+        // YouTube's volume is its own (Batin, 2026-11-20): the level a video
+        // was left at is where the next one plays, and music keeps its own;
+        // switching between them puts each back.
+        if (name == "volume" && m_mpv.connected() && !m_mpv.property("path").toString().isEmpty())
+            QSettings().setValue(m_mpv.property("user-data/ghost/audio").toBool() ? "music/volume" : "youtube/volume",
+                                 m_mpv.property("volume").toDouble());
+        if (name == "user-data/ghost/audio" && m_mpv.connected()) {
+            // A video always at YouTube's level; songs at theirs only when
+            // coming back from a video in the same mpv (a new one starts at
+            // Settings > Starting volume, which is the music side's).
+            const bool audio = m_mpv.property("user-data/ghost/audio").toBool();
+            const QVariant want = QSettings().value(audio ? "music/volume" : "youtube/volume");
+            if (want.isValid() && (!audio || m_lastKindVideo) &&
+                qAbs(want.toDouble() - m_mpv.property("volume").toDouble()) > 0.5)
+                m_mpv.setProperty("volume", want.toDouble());
+            m_lastKindVideo = !audio;
+        }
         // The video's shape known: a narrow one keeps it in the 16:9 frame.
         if (name == "user-data/ghost/audio" || name == "video-params/aspect")
             schedulePlace();
@@ -1373,10 +1409,33 @@ MainWindow::MainWindow()
         // read as 0 it wrote over the second the video was left at.
         const QVariant timePos = name == "time-pos" ? m_mpv.property("time-pos") : QVariant();
         const bool timeKnown = timePos.isValid() && !timePos.isNull() && timePos.toDouble() > 0.5;
+        // Left in its last seconds, a video is kept as watched: it opens
+        // from its start again, as on YouTube (it ended at once otherwise).
+        const double runs = m_mpv.property("duration").toDouble();
+        const double kept = timeKnown && runs > 30 && timePos.toDouble() > runs - 10 ? 0.0 : timePos.toDouble();
         if (timeKnown && m_mpv.property("path").toString() == m_lastPath)
-            m_lastPos = timePos.toDouble();
+            m_lastPos = kept;
+        if (!m_frameWaitPath.isEmpty() && name == "time-pos" && timePos.isValid() && !timePos.isNull() &&
+            m_mpv.property("path").toString() == m_frameWaitPath && m_mpv.property("video-params/aspect").isValid()) {
+            m_frameWaitPath.clear();   // its first frame is up
+            schedulePlace();
+        }
         if (name == "path") {
             const QString path = m_mpv.property("path").toString();
+            // Another video in the app: its thumbnail until its first frame.
+            if (!path.isEmpty() && path != m_lastPath && m_mpvEmbedded && !m_videoPage->listenOnly() &&
+                !m_mpv.property("user-data/ghost/audio").toBool() && !path.endsWith(QLatin1String(".m3u"), Qt::CaseInsensitive)) {
+                m_frameWaitPath = path;
+                const QString id = youtube::videoId(path);
+                m_videoPage->setStill(id.isEmpty() ? QPixmap() : m_covers.get(id, ThumbnailCache::Size::Hero));
+                QTimer::singleShot(8000, this, [this, path] {
+                    if (m_frameWaitPath == path) {
+                        m_frameWaitPath.clear();
+                        schedulePlace();
+                    }
+                });
+                schedulePlace();
+            }
             if (!path.isEmpty() && path != m_lastPath) {
                 if (!m_lastPath.isEmpty())
                     m_videoSeconds.insert(m_lastPath, m_lastPos);
@@ -1391,7 +1450,7 @@ MainWindow::MainWindow()
         if (timeKnown && m_tabStrip->current >= 0) {
             VideoTab &tab = m_tabStrip->tabs[m_tabStrip->current];
             if (tab.target == m_mpv.property("path").toString())
-                tab.seconds = m_mpv.property("time-pos").toDouble();
+                tab.seconds = kept;
         }
         if (name == "path" || name == "user-data/ghost/audio" || name == "media-title" ||
             name == "user-data/ghost/source" || name == "metadata/by-key/uploader")
@@ -1561,6 +1620,7 @@ MainWindow::MainWindow()
         m_mpvEmbedded = m_launching.isValid() && m_launchEmbedded;
         m_keepAspect = -1;
         sendWindowChoice();
+        m_lastKindVideo = false;
         // Listening only goes on in a new mpv too.
         if (m_videoPage->listenOnly())
             m_mpv.setProperty("user-data/ghost/listen-only", true);
@@ -4054,7 +4114,25 @@ void MainWindow::exportPlaylist(int index)
 
 void MainWindow::changeZoom(qreal step)
 {
-    theme::setZoom(*static_cast<QApplication *>(QCoreApplication::instance()), step == 0 ? 1.0 : theme::zoom() + step);
+    // Wheel steps gathered and applied once the wheel rests: each step
+    // restyled and laid out every page, and a quick turn of the wheel froze
+    // the app until Windows called it not responding (Batin, 2026-11-20).
+    const qreal from = m_zoomSoon && m_zoomSoon->isActive() ? m_zoomTarget : theme::zoom();
+    m_zoomTarget = step == 0 ? 1.0 : qBound(0.7, qRound((from + step) * 10) / 10.0, 1.6);
+    if (!m_zoomSoon) {
+        m_zoomSoon = new QTimer(this);
+        m_zoomSoon->setSingleShot(true);
+        m_zoomSoon->setInterval(150);
+        connect(m_zoomSoon, &QTimer::timeout, this, [this] { applyZoom(m_zoomTarget); });
+    }
+    m_zoomSoon->start();
+}
+
+void MainWindow::applyZoom(qreal zoom)
+{
+    if (qFuzzyCompare(zoom, theme::zoom()))
+        return;
+    theme::setZoom(*static_cast<QApplication *>(QCoreApplication::instance()), zoom);
     QSettings().setValue("window/zoom", theme::zoom());
     for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_topLists, m_songs})
         v->doItemsLayout();
@@ -6637,6 +6715,8 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         // (or a resume) at its second, for that entry only.
         m_resetStart = false;
         if (m_startSeconds > 1) {
+            m_resumePath = QStringLiteral("*");   // the entry that loads next
+            m_resumeClock.start();
             m_mpv.setProperty("start", QString::number(m_startSeconds, 'f', 1));
             armStartReset(startAt);
         } else {
@@ -6679,6 +6759,7 @@ void MainWindow::play(const QString &path, bool shuffle, int startAt, const QVec
         args << QStringLiteral("--playlist-start=%1").arg(startAt);
     if (m_startSeconds > 1) {
         args << QStringLiteral("--start=%1").arg(m_startSeconds, 0, 'f', 1);
+        m_resumeClock.start();
         // --start is mpv's for every file it opens, not this one's: left
         // set, each later song began at that second, past the end of a short
         // one, and failed (Batin, 2026-11-12: nothing would play, every
@@ -6999,7 +7080,9 @@ void MainWindow::placeSurface()
     } else {
         m_videoPage->hideMini();
     }
-    surface->setVisible((onPage && !listen) || (mini && !m_videoPage->miniSizing()) || (inPanel && !visible.isEmpty()));
+    const bool framed = m_frameWaitPath.isEmpty();
+    surface->setVisible((onPage && !listen && framed) || (mini && !m_videoPage->miniSizing() && framed) ||
+                        (inPanel && !visible.isEmpty()));
     m_surfaceOnPage = onPage || inPanel;   // the controls come over it on hover
 
     // mpv fills its window when the window already has the video's shape,
@@ -7010,7 +7093,11 @@ void MainWindow::placeSurface()
         // shape kept with black at its sides.
         const double shape = m_mpv.property("video-params/aspect").isValid()
                                  ? m_mpv.property("video-params/aspect").toDouble() : 16.0 / 9.0;
-        const int keep = onPage && (m_videoFull || shape < 16.0 / 9.0 - 0.02) ? 1 : 0;
+        // Kept too while the shape is not yet known or the window is being
+        // sized (opened, restored with Win+3): stretched to the frame for a
+        // moment, then banded, it flickered (Batin, 2026-11-20).
+        const bool known = m_mpv.property("video-params/aspect").isValid() && m_frameWaitPath.isEmpty();
+        const int keep = onPage && (m_videoFull || !known || shape < 16.0 / 9.0 - 0.02) ? 1 : 0;
         if (keep != m_keepAspect) {
             m_keepAspect = keep;
             m_mpv.setProperty("keepaspect", bool(keep));
@@ -7031,7 +7118,10 @@ void MainWindow::placeSurface()
     // The controls sit on the picture's bottom edge, so only while that is
     // in view.
     QWidget *controls = m_videoPage->controls();
-    m_barFits = (onPage || inPanel) && !m_videoArea.isEmpty() && m_videoArea.bottom() >= global.bottom() - 1;
+    // Not over a tab's cover: those are the other video's controls
+    // (Batin, 2026-11-20: its timeline could be dragged from a tab's page).
+    m_barFits = (onPage || inPanel) && !m_videoArea.isEmpty() && m_videoArea.bottom() >= global.bottom() - 1 &&
+                !m_videoPage->coverShown();
     if (m_barFits) {
         const int h = controls->sizeHint().height();
         controls->setGeometry(global.left(), global.bottom() + 1 - h, global.width(), h);
@@ -7072,6 +7162,16 @@ bool MainWindow::openPlayingChannel(bool always)
 
 void MainWindow::offerNextVideo()
 {
+    // Opened at a kept second that was its very end: from its start, not
+    // the Up next card a moment after Play (Batin, 2026-11-20).
+    if (m_resumeClock.isValid() && m_resumeClock.elapsed() < 15000 && m_mpv.property("eof-reached").toBool() &&
+        m_mpvEmbedded && !m_mpv.property("user-data/ghost/audio").toBool()) {
+        m_resumeClock.invalidate();
+        m_videoPage->hideUpNext();
+        m_mpv.command({"seek", 0, "absolute"});
+        m_mpv.setProperty("pause", false);
+        return;
+    }
     // A YouTube video ended (keep-open stopped it): the next entry offered
     // on the Up next card, counted down when Autoplay is on.
     if (!m_mpvEmbedded || m_mpv.property("user-data/ghost/audio").toBool() ||
@@ -8441,8 +8541,13 @@ void MainWindow::fitTabs()
     // The island is centred between the two; the tabs end before its half.
     const int centre = (left - 8 + right) / 2;
     const int half = qRound(235 * theme::chromeZoom());
-    m_tabStrip->collapsed = QSettings().value("youtube/collapsedTabs", false).toBool();
-    const int room = qMax(m_tabStrip->smallest(), centre - half - left - 12);
+    const int space = centre - half - left - 12;
+    // Folded behind "Tabs N" by the setting, or when not even one tab and
+    // the "+N" chip fit beside the island.
+    m_tabStrip->collapsed = false;
+    const int unfolded = m_tabStrip->smallest();
+    m_tabStrip->collapsed = QSettings().value("youtube/collapsedTabs", false).toBool() || space < unfolded;
+    const int room = qMax(m_tabStrip->smallest(), space);
     m_tabStrip->changed();
     if (m_tabStrip->maximumWidth() != room) {
         m_tabStrip->setMaximumWidth(room);

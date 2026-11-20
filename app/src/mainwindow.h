@@ -287,6 +287,15 @@ private:
     void openPlayingList();
     void exportPlaylist(int index);
     void changeZoom(qreal step);
+    void applyZoom(qreal zoom);   // changeZoom gathers wheel steps, this applies them once
+    QTimer *m_zoomSoon = nullptr;
+    bool m_lastKindVideo = false;
+    // A new video's first frame awaited: its thumbnail shows meanwhile, not
+    // the last frame of the one before (Batin, 2026-11-20).
+    QString m_frameWaitPath;
+    QElapsedTimer m_resumeClock;     // a video opened at a kept second...
+    QString m_resumePath;            // ...this one; ended at once, it starts over   // what this mpv played last was a video (volumes per side)
+    qreal m_zoomTarget = 1.0;
     static QString relativeTime(const QDateTime &when);
     QString videoByline(const QString &id);
     void deletePlaylist(int index);
