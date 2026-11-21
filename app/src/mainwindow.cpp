@@ -532,6 +532,35 @@ MainWindow::MainWindow()
         m_shortcutsScroll = scroll;
         m_pages->addWidget(scroll);
     }
+    {
+        // The YouTube side's Playlists (Batin, 2026-11-21): every video list
+        // as a tile, its count on the cover, "..." for its menu.
+        auto *page = new QWidget;
+        page->setObjectName("panel");
+        page->setAttribute(Qt::WA_StyledBackground);   // the page's card, as the other pages have
+        auto *box = new QVBoxLayout(page);
+        box->setContentsMargins(24, 20, 16, 8);
+        box->setSpacing(12);
+        auto *title = new QLabel(QStringLiteral("Playlists"));
+        title->setObjectName("videoTitle");
+        box->addWidget(title);
+        m_ytPlaylistsGrid = makeShelf();
+        m_ytPlaylistsGrid->setWrapping(true);
+        m_ytPlaylistsGrid->setResizeMode(QListView::Adjust);
+        m_ytPlaylistsGrid->setMinimumHeight(0);
+        m_ytPlaylistsGrid->setMaximumHeight(QWIDGETSIZE_MAX);
+        m_ytPlaylistsGrid->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        m_ytPlaylistsGrid->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+        m_ytPlaylistsGrid->setContextMenuPolicy(Qt::CustomContextMenu);
+        m_ytPlaylistsGrid->viewport()->installEventFilter(this);
+        connect(m_ytPlaylistsGrid, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+            if (QListWidgetItem *item = m_ytPlaylistsGrid->itemAt(pos))
+                playlistTileMenu(item->data(tiles::kIndexRole).toInt(), m_ytPlaylistsGrid->viewport()->mapToGlobal(pos));
+        });
+        box->addWidget(m_ytPlaylistsGrid, 1);
+        m_ytPlaylistsPage = page;
+        m_pages->addWidget(page);
+    }
     m_videoPage->coverFor = [this](const QString &target) {
         return m_covers.get(idForTarget(target), ThumbnailCache::Size::Card);
     };
@@ -685,11 +714,23 @@ MainWindow::MainWindow()
     m_videoPage->onScrub = [this](double s) { m_mpv.command({"seek", s, "absolute+keyframes"}); };
     m_videoPage->onSubtitle = [this](const QVariant &sid) { m_mpv.setProperty("sid", sid); };
     m_videoPage->onSpeed = [this](double s) { m_mpv.setProperty("speed", s); };
+    // The dub's language for this and the next videos (empty: as YouTube
+    // gives it, the original), this one reopened at the same second.
+    m_videoPage->onAudioLanguage = [this](const QString &lang) {
+        m_audioLang = lang;
+        static const QRegularExpression cap(QStringLiteral(R"(height<=(\d+))"));
+        const int height = cap.match(m_mpv.property("ytdl-format").toString()).captured(1).toInt();
+        m_mpv.setProperty("ytdl-format", videoFormat(height));
+        m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
+        armStartReset(m_mpv.property("playlist-pos").toInt());
+        m_mpv.command({"playlist-play-index", m_mpv.property("playlist-pos").toInt()});
+        toast(lang.isEmpty() ? QStringLiteral("Audio: original") : QStringLiteral("Audio: %1 (when a video has it)").arg(
+                                   QLocale::languageToString(QLocale(lang).language())));
+    };
     m_videoPage->onQuality = [this](int height) {
         // The cap for this and the next videos, this one reopened at the
         // same second (quality.lua does the same when it steps down).
-        const QString format = height > 0 ? QStringLiteral("bestvideo[height<=%1]+bestaudio/best").arg(height)
-                                          : QStringLiteral("bestvideo+bestaudio/best");
+        const QString format = videoFormat(height);
         m_mpv.setProperty("ytdl-format", format);
         m_mpv.setProperty("start", QString::number(m_mpv.property("time-pos").toDouble(), 'f', 1));
         armStartReset(m_mpv.property("playlist-pos").toInt());
@@ -698,6 +739,20 @@ MainWindow::MainWindow()
     // Autoplay (Batin, 2026-11-20): off, a video stops at its end with the
     // next one offered; on, the next one plays after a count of 8.
     m_videoPage->setAutoplay(QSettings().value("video/autoplay", false).toBool());
+    m_videoPage->onSave = [this](const QPoint &at) {
+        const ytmusic::Item it = playingVideoItem();
+        if (it.id.isEmpty())
+            return;
+        QMenu menu(this);
+        bool kept = false;
+        for (const ytmusic::Item &w : watchLater())
+            kept = kept || w.id == it.id;
+        menu.addAction(kept ? QStringLiteral("Remove from Watch later") : QStringLiteral("Save to Watch later"), this,
+                       [this, it, kept] { setWatchLater({it}, !kept); });
+        menu.addSeparator();
+        fillAddTo(&menu, {PlaylistEntry{it.lineTitle(), it.target(), {}}}, QString(), true);
+        menu.exec(at);
+    };
     m_videoPage->onRate = [this](int r) {
         if (m_ratedId.isEmpty())
             return;
@@ -712,6 +767,18 @@ MainWindow::MainWindow()
             disliked.prepend(m_ratedId);
         settings.setValue("youtube/liked", liked.mid(0, 500));
         settings.setValue("youtube/disliked", disliked.mid(0, 2000));
+        // With its name and channel, for the Liked videos page.
+        QJsonArray kept;
+        if (r == 1) {
+            const ytmusic::Item it = playingVideoItem();
+            kept.append(QJsonObject{{"id", m_ratedId}, {"title", it.title}, {"channel", it.artist}, {"channelId", it.channelId}});
+        }
+        for (const QJsonValue &v : QJsonDocument::fromJson(settings.value("youtube/likedVideos").toByteArray()).array())
+            if (v.toObject().value("id").toString() != m_ratedId && kept.size() < 500)
+                kept.append(v);
+        settings.setValue("youtube/likedVideos", QJsonDocument(kept).toJson(QJsonDocument::Compact));
+        if (m_ytNav.size() > 4 && m_ytNav[4]->isChecked())
+            showLikedVideos();
         m_videoPage->setRating(r);
         toast(r == 1 ? QStringLiteral("Liked: more like this on your home")
                      : r == -1 ? QStringLiteral("Disliked: it won't be on your home") : QStringLiteral("Rating removed"));
@@ -738,7 +805,12 @@ MainWindow::MainWindow()
         // again at once, still at the end: the next one is unpaused once it
         // has begun (seen, 2026-11-20).
         m_playNextUnpaused = true;
-        m_mpv.command({"playlist-next"});
+        // The one the card named: disliked ones between are passed over.
+        const int count = m_mpv.property("playlist-count").toInt();
+        if (m_upNextPos > m_mpv.property("playlist-pos").toInt() + 1 && m_upNextPos < count)
+            m_mpv.command({"playlist-play-index", m_upNextPos});
+        else
+            m_mpv.command({"playlist-next"});
     };
     m_videoPage->onRepeat = [this] {
         m_mpv.setProperty("loop-file", mpvLooping(m_mpv.property("loop-file")) ? "no" : "inf");
@@ -919,6 +991,16 @@ MainWindow::MainWindow()
     });
     QTimer::singleShot(0, this, &MainWindow::showResume);
     // After an update, once: what the new version brings.
+    // Notifications: 15 s after opening, then every 30 minutes.
+    m_notifyTimer.setInterval(30 * 60 * 1000);
+    connect(&m_notifyTimer, &QTimer::timeout, this, &MainWindow::checkNotifications);
+    m_notifyTimer.start();
+    QTimer::singleShot(15000, this, &MainWindow::checkNotifications);
+    refreshBell();
+    m_videoPage->onNotify = [this] {
+        if (!m_videoChannelId.isEmpty())
+            setNotify(m_videoChannelId, m_videoPage->channelText(), !notifyChannels().contains(m_videoChannelId));
+    };
     // Or, its own update having stopped short, the way on (1.6).
     QTimer::singleShot(1500, this, [this] {
         if (UpdateDialog::showIfUnfinished(this)) {
@@ -1609,7 +1691,7 @@ MainWindow::MainWindow()
     connect(new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this), &QShortcut::activated, this, [this] { changeZoom(0); });
     const qreal savedZoom = QSettings().value("window/zoom", 1.0).toReal();
     if (!qFuzzyCompare(savedZoom, 1.0))
-        QTimer::singleShot(0, this, [this, savedZoom] { changeZoom(savedZoom - theme::zoom()); });
+        QTimer::singleShot(0, this, [this, savedZoom] { applyZoom(qBound(0.7, qRound(savedZoom * 10) / 10.0, 1.6)); });   // no "120%" at opening
 
     applyLook();
     buildTray();
@@ -1965,6 +2047,17 @@ QWidget *MainWindow::buildTopBar()
     row->addWidget(m_tabStrip, 3);
     row->addStretch(2);
     row->addWidget(m_updateButton);
+    // New videos of the channels whose bell is on (Batin, 2026-11-21), where
+    // the profile was on the YouTube side; a red dot while some are unread.
+    m_bellButton = glyphButton(QChar(0xEA8F), "Notifications", "pill");
+    m_bellDot = new QLabel(m_bellButton);
+    m_bellDot->setFixedSize(8, 8);
+    m_bellDot->setStyleSheet(QStringLiteral("background: #ff4d4d; border-radius: 4px;"));
+    m_bellDot->move(m_bellButton->sizeHint().width() - 13, 5);
+    m_bellDot->hide();
+    connect(m_bellButton, &QPushButton::clicked, this, &MainWindow::showNotifications);
+    m_chromeButtons << m_bellButton;   // clicked, not a place to drag the window by
+    row->addWidget(m_bellButton);
     row->addWidget(m_profileButton);
     row->addWidget(gear);
     row->addSpacing(10);
@@ -3266,6 +3359,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (shown)
             shade->raise();
     }
+    // A Playlists tile's "...": its menu, not the list opened.
+    if (m_ytPlaylistsGrid && watched == m_ytPlaylistsGrid->viewport() &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)) {
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        QListWidgetItem *item = m_ytPlaylistsGrid->itemAt(mouse->position().toPoint());
+        if (item && mouse->button() == Qt::LeftButton &&
+            tiles::TileDelegate::moreRect(m_ytPlaylistsGrid->visualItemRect(item)).contains(mouse->position())) {
+            if (event->type() == QEvent::MouseButtonRelease)
+                playlistTileMenu(item->data(tiles::kIndexRole).toInt(), mouse->globalPosition().toPoint());
+            return true;
+        }
+    }
     // The YouTube menu's card leaves its last 8 px for its shadow, the dark
     // gap's left half: the splitter's handle is only its right half, and
     // the gap could not be taken from its left (Batin, 2026-11-21). That
@@ -4205,14 +4310,34 @@ void MainWindow::changeZoom(qreal step)
     // Wheel steps gathered and applied once the wheel rests: each step
     // restyled and laid out every page, and a quick turn of the wheel froze
     // the app until Windows called it not responding (Batin, 2026-11-20).
+    // A turn of the wheel is one change (Batin, 2026-11-21: it still jerked
+    // through every step): the percentage shows at once, what it applies to
+    // waits until the wheel has rested 350 ms, and is drawn in one go.
     const qreal from = m_zoomSoon && m_zoomSoon->isActive() ? m_zoomTarget : theme::zoom();
     m_zoomTarget = step == 0 ? 1.0 : qBound(0.7, qRound((from + step) * 10) / 10.0, 1.6);
     if (!m_zoomSoon) {
         m_zoomSoon = new QTimer(this);
         m_zoomSoon->setSingleShot(true);
-        m_zoomSoon->setInterval(150);
-        connect(m_zoomSoon, &QTimer::timeout, this, [this] { applyZoom(m_zoomTarget); });
+        m_zoomSoon->setInterval(350);
+        connect(m_zoomSoon, &QTimer::timeout, this, [this] {
+            applyZoom(m_zoomTarget);
+            QTimer::singleShot(700, m_zoomPill, &QWidget::hide);
+        });
     }
+    if (!m_zoomPill) {
+        m_zoomPill = new QLabel(centralWidget());
+        m_zoomPill->setAlignment(Qt::AlignCenter);
+        m_zoomPill->setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
+    // Fixed pixels, not the theme's: it must not change with what it shows.
+    // The theme's raised card and its line: dark on dark was not seen.
+    m_zoomPill->setStyleSheet(theme::css(QStringLiteral("QLabel { background: @raisedHover; color: @textBright; border: 1px solid @tick;"
+                                                        " border-radius: 22px; font-size: 15px; font-weight: 700; padding: 0 22px; }")));
+    m_zoomPill->setText(QStringLiteral("%1%").arg(qRound(m_zoomTarget * 100)));
+    m_zoomPill->resize(120, 44);
+    m_zoomPill->move((centralWidget()->width() - 120) / 2, 70);
+    m_zoomPill->show();
+    m_zoomPill->raise();
     m_zoomSoon->start();
 }
 
@@ -4220,6 +4345,10 @@ void MainWindow::applyZoom(qreal zoom)
 {
     if (qFuzzyCompare(zoom, theme::zoom()))
         return;
+    // Nothing drawn half restyled: the old frame stays until the new one is
+    // laid out whole (buttons stood shifted for a moment, and the window
+    // looked broken while it restyled).
+    setUpdatesEnabled(false);
     theme::setZoom(*static_cast<QApplication *>(QCoreApplication::instance()), zoom);
     QSettings().setValue("window/zoom", theme::zoom());
     for (QListWidget *v : {m_libraryList, m_recentAdded, m_recentPlayed, m_topLists, m_songs})
@@ -4241,6 +4370,10 @@ void MainWindow::applyZoom(qreal zoom)
     layoutHeader();
     if (m_settings)
         m_settings->showZoom(theme::zoom());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    setUpdatesEnabled(true);
+    update();
+    schedulePlace();   // mpv's picture follows the page's new sizes
 }
 
 void MainWindow::tieToApp(qint64 pid)
@@ -4932,10 +5065,17 @@ QWidget *MainWindow::buildYouTubeSidebar()
     QPushButton *followingNav = nav(QChar(0xE734), "Following");
     m_ytNav << home;
     sectionTitle("Collection");
+    // As YouTube's "You" (Batin, 2026-11-21): Playlists instead of the list
+    // of video lists, and Liked videos.
     QPushButton *history = nav(QChar(0xE81C), "History");
+    QPushButton *playlists = nav(QChar(0xE8FD), "Playlists");
     QPushButton *later = nav(QChar(0xE823), "Watch later");
-    m_ytNav << history << followingNav << later;   // indexes kept: 0 Home, 1 History, 2 Following, 3 Watch later
+    QPushButton *liked = nav(QChar(0xE8E1), "Liked videos");
+    // indexes kept: 0 Home, 1 History, 2 Following, 3 Watch later, 4 Liked videos, 5 Playlists
+    m_ytNav << history << followingNav << later << liked << playlists;
     connect(later, &QPushButton::clicked, this, &MainWindow::showWatchLater);
+    connect(liked, &QPushButton::clicked, this, &MainWindow::showLikedVideos);
+    connect(playlists, &QPushButton::clicked, this, &MainWindow::showYtPlaylists);
     connect(home, &QPushButton::clicked, this, &MainWindow::showYouTube);
     connect(history, &QPushButton::clicked, this, &MainWindow::showVideoHistory);
     connect(followingNav, &QPushButton::clicked, this, [this] { showFollowing(); });
@@ -4945,7 +5085,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
         "QListWidget::item { min-height: 34px; padding-left: 12px; border-radius: 8px; color: @text; }"
         "QListWidget::item:hover { background: @raised; }"
         "QListWidget::item:selected { background: @raisedHover; color: @textBright; }");
-    sectionTitle("Your video lists");
+    // Kept for marking the list open, never shown: the Playlists page has them.
     m_ytLists = new QListWidget;
     m_ytLists->setObjectName("songs");
     m_ytLists->setFrameShape(QFrame::NoFrame);
@@ -4955,8 +5095,7 @@ QWidget *MainWindow::buildYouTubeSidebar()
     connect(m_ytLists, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         openPlaylist(item->data(Qt::UserRole).toInt());
     });
-    box->addWidget(m_ytLists, 1);
-    m_ytWide << m_ytLists;
+    m_ytLists->hide();
 
     sectionTitle("Channels you follow");
     m_ytChannels = new QListWidget;
@@ -4997,6 +5136,9 @@ QWidget *MainWindow::buildYouTubeSidebar()
                 markYouTubeMenu(-1, -1, id);
                 m_searchPage->showChannel(id, name);
             });
+        const bool bell = notifyChannels().contains(id);
+        menu.addAction(bell ? QStringLiteral("Turn off notifications") : QStringLiteral("Notify me of new videos"), this,
+                       [this, id, name, bell] { setNotify(id, name, !bell); });
         menu.addAction(QStringLiteral("Unfollow %1").arg(name), this, [this, id, name] { setFollowing(id, name, false); });
         menu.exec(m_ytChannels->viewport()->mapToGlobal(pos));
     });
@@ -5086,6 +5228,7 @@ void MainWindow::padYtChannels()
 void MainWindow::fillYouTubeSidebar()
 {
     // The library's video lists (the song lists stay in the music layout).
+    fillYtPlaylists();
     m_ytLists->clear();
     const auto &all = m_library.playlists();
     for (int i = 0; i < all.size(); ++i) {
@@ -5291,6 +5434,11 @@ void MainWindow::setFollowing(const QString &channelId, const QString &name, boo
 {
     if (channelId.isEmpty())
         return;
+    if (!on) {   // unfollowed: its bell goes with it
+        QStringList bells = notifyChannels();
+        if (bells.removeAll(channelId))
+            QSettings().setValue("youtube/notify", bells);
+    }
     QStringList lines;
     for (const auto &[id, n] : following())
         if (id != channelId)
@@ -5398,8 +5546,10 @@ void MainWindow::showFollowing(const QString &onlyChannel)
 
 void MainWindow::updateFollowButton()
 {
-    if (!m_videoChannelId.isEmpty())
+    if (!m_videoChannelId.isEmpty()) {
         m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
+        m_videoPage->setNotify(notifyChannels().contains(m_videoChannelId));
+    }
     m_panel->setFollow(!m_panelChannelId.isEmpty(), follows(m_panelChannelId));
     m_searchPage->refreshFollow();
 }
@@ -5785,6 +5935,8 @@ void MainWindow::setYouTubeLayout(bool youtube, bool animate, const std::functio
     // music side (Batin, 2026-11-20).
     if (m_profileButton)
         m_profileButton->setVisible(!youtube);
+    if (m_bellButton)
+        m_bellButton->setVisible(youtube);
     SearchPopup::setYouTube(youtube);
     {
         const int wanted = QSettings().value(youtube ? "layout/ytWidth" : "layout/libraryWidth", -1).toInt();
@@ -7334,11 +7486,19 @@ void MainWindow::offerNextVideo()
             return;
         }
     }
-    if (pos < 0 || pos + 1 >= entries.size()) {
+    // The next one not disliked here (Batin, 2026-11-21: Dislike reaches
+    // Up next too).
+    int nextPos = pos + 1;
+    const QStringList disliked = QSettings().value("youtube/disliked").toStringList();
+    while (nextPos < entries.size() &&
+           disliked.contains(youtube::videoId(entries[nextPos].toMap().value("filename").toString())))
+        ++nextPos;
+    m_upNextPos = nextPos;
+    if (pos < 0 || nextPos >= entries.size()) {
         m_videoPage->hideUpNext();   // the last: nothing comes next
         return;
     }
-    const QVariantMap next = entries[pos + 1].toMap();
+    const QVariantMap next = entries[nextPos].toMap();
     const QString target = next.value("filename").toString();
     QString title = next.value("title").toString();
     if (title.isEmpty())
@@ -7438,8 +7598,10 @@ void MainWindow::extendSingleVideo(const QString &list, const QString &id)
             return;
         QVector<PlaylistEntry> add;
         QSet<QString> seen{id};
+        // A video disliked here is not suggested again (Batin, 2026-11-21).
+        const QStringList disliked = QSettings().value("youtube/disliked").toStringList();
         for (const ytmusic::Item &it : items) {
-            if (it.id.isEmpty() || seen.contains(it.id))
+            if (it.id.isEmpty() || seen.contains(it.id) || disliked.contains(it.id))
                 continue;
             seen.insert(it.id);
             add << PlaylistEntry{it.lineTitle(), it.target(), {}};
@@ -7476,19 +7638,61 @@ void MainWindow::describeVideo(const QString &id)
             if (!m_preview || m_previewTab.id != id)
                 m_storyboard.setVideo(id, formats.toUtf8());
         }
+        // Then every format's language and note: a video dubbed into other
+        // languages has a sound format for each (Batin, 2026-11-21).
+        if (printed.startsWith(QLatin1Char('['))) {
+            const qsizetype end = printed.indexOf(QLatin1Char('\n'));
+            const QJsonArray all = QJsonDocument::fromJson(printed.left(end < 0 ? printed.size() : end).toUtf8()).array();
+            printed = end < 0 ? QString() : printed.mid(end + 1);
+            QList<QPair<QString, QString>> tracks;   // code, as shown
+            QString original;
+            for (const QJsonValue &v : all) {
+                const QJsonObject f = v.toObject();
+                const QString lang = f.value("language").toString();
+                if (lang.isEmpty() || f.value("vcodec").toString() != QLatin1String("none") ||
+                    f.value("acodec").toString() == QLatin1String("none"))
+                    continue;
+                const QString note = f.value("format_note").toString();
+                if (note.contains(QLatin1String("original"), Qt::CaseInsensitive))
+                    original = lang;
+                bool known = false;
+                for (const auto &t : tracks)
+                    known = known || t.first == lang;
+                if (!known) {
+                    const QLocale locale(lang);
+                    QString name = locale.language() == QLocale::C ? lang : QLocale::languageToString(locale.language());
+                    if (lang.contains(QLatin1Char('-')))
+                        name += QStringLiteral(" (%1)").arg(lang.section(QLatin1Char('-'), 1));   // zh-Hans, zh-Hant
+                    tracks.append({lang, name});
+                }
+            }
+            if (!m_preview || m_previewTab.id == id)
+                m_videoPage->setAudioTracks(tracks.size() > 1 ? tracks : QList<QPair<QString, QString>>(), original, m_audioLang);
+        }
         const qsizetype newline = printed.indexOf('\n');
         const QStringList facts = printed.left(newline < 0 ? printed.size() : newline).split('|');
         const QString text = newline < 0 ? QString() : printed.mid(newline + 1);
+        // Short ("607K views · 1 day ago"), the whole when the box is opened
+        // (Batin, 2026-11-21).
         const QLocale english(QLocale::English);
-        QStringList meta;
+        QStringList meta, full;
         bool counted = false;
         const qlonglong views = facts.value(0).toLongLong(&counted);
-        if (counted)
-            meta << english.toString(views) + (views == 1 ? " view" : " views");
+        if (counted) {
+            meta << VideoPage::compactCount(views) + (views == 1 ? " view" : " views");
+            full << english.toString(views) + (views == 1 ? " view" : " views");
+        }
         const QDate date = QDate::fromString(facts.value(1).trimmed(), QStringLiteral("yyyyMMdd"));
-        if (date.isValid())
-            meta << english.toString(date, QStringLiteral("MMM d, yyyy"));
-        m_videoPage->setDescription(text, meta.join(QStringLiteral("  ·  ")));
+        if (date.isValid()) {
+            const qint64 days = date.daysTo(QDate::currentDate());
+            const auto ago = [](qint64 n, const char *unit) {
+                return QStringLiteral("%1 %2%3 ago").arg(n).arg(QLatin1String(unit)).arg(n == 1 ? "" : "s");
+            };
+            meta << (days <= 0 ? QStringLiteral("today") : days < 7 ? ago(days, "day") : days < 31 ? ago(days / 7, "week")
+                     : days < 365 ? ago(days / 30, "month") : ago(days / 365, "year"));
+            full << english.toString(date, QStringLiteral("MMM d, yyyy"));
+        }
+        m_videoPage->setDescription(text, meta.join(QStringLiteral("  ·  ")), full.join(QStringLiteral("  ·  ")));
         // "144, 240, 360, ...": the heights of every format the video has.
         int tallest = 0;
         for (const QString &h : facts.value(3).split(QLatin1Char(',')))
@@ -7496,9 +7700,34 @@ void MainWindow::describeVideo(const QString &id)
         m_videoPage->setAvailableHeight(tallest);
         m_videoChannelId = facts.value(2).trimmed().startsWith(QLatin1String("UC")) ? facts.value(2).trimmed() : QString();
         m_videoPage->setChannel(m_videoChannelId, follows(m_videoChannelId));
+        m_videoPage->setNotify(notifyChannels().contains(m_videoChannelId));
+        // The subscribers as YouTube's own page words them ("527M
+        // subscribers"), once a channel: yt-dlp's count lost the M for
+        // MrBeast (527), so it is only what is shown when that page fails.
         bool known = false;
         const qlonglong subscribers = facts.value(4).trimmed().toLongLong(&known);
-        m_videoPage->setSubscribers(known ? subscribers : -1);
+        const qlonglong fallback = known ? subscribers : -1;
+        if (m_videoChannelId.isEmpty()) {
+            m_videoPage->setSubscribers(fallback);
+        } else if (m_subscriberText.contains(m_videoChannelId)) {
+            m_videoPage->setSubscribersText(m_subscriberText.value(m_videoChannelId));
+        } else {
+            m_videoPage->setSubscribers(-1);
+            const QString channelId = m_videoChannelId;
+            m_ytClient.channelVideos(channelId, {}, [this, channelId, fallback](ytmusic::ChannelPage page) {
+                static const QRegularExpression words(QStringLiteral(R"(([\d.,]+\s*[KMB]?)\s*subscribers?)"),
+                                                      QRegularExpression::CaseInsensitiveOption);
+                const QRegularExpressionMatch m = words.match(page.about);
+                if (m.hasMatch())
+                    m_subscriberText.insert(channelId, m.captured(0).trimmed());
+                if (m_videoChannelId != channelId)
+                    return;
+                if (m.hasMatch())
+                    m_videoPage->setSubscribersText(m.captured(0).trimmed());
+                else
+                    m_videoPage->setSubscribers(fallback);
+            });
+        }
         // Its name, when mpv had none for it (a live stream has no uploader).
         const QString name = facts.mid(5).join(QLatin1Char('|')).trimmed();
         if (!name.isEmpty() && name != QLatin1String("NA"))
@@ -7537,6 +7766,8 @@ void MainWindow::describeVideo(const QString &id)
                 {"--skip-download", "--no-playlist", "--no-warnings", "--encoding", "utf-8",
                  // First line: the first formats, where the storyboards are.
                  "--print", "%(formats.0:6)j",
+                 // Second: each format's language, note and codecs, for dubs.
+                 "--print", "%(formats.:.{language,format_note,vcodec,acodec})j",
                  "--print", "%(view_count)s|%(upload_date)s|%(channel_id)s|%(formats.:.height)l|%(channel_follower_count)s|%(channel)s",
                  "--print", "description",
                  QStringLiteral("https://www.youtube.com/watch?v=") + id});
@@ -8266,6 +8497,235 @@ void MainWindow::foundMenu(const QVector<ytmusic::Item> &items, const QPoint &gl
     menu.exec(global);
 }
 
+// -- notifications ---------------------------------------------------------------
+// The channels with their bell on are asked for their newest videos through
+// their public feed (one small request each), 15 s after the app opens and
+// every 30 minutes; what was not there the last time is a notification. A
+// channel's first look only learns what it has, so turning a bell on does not
+// bring its whole page in.
+
+QStringList MainWindow::notifyChannels() const
+{
+    return QSettings().value("youtube/notify").toStringList();
+}
+
+void MainWindow::setNotify(const QString &channelId, const QString &name, bool on)
+{
+    QStringList ids = notifyChannels();
+    ids.removeAll(channelId);
+    if (on)
+        ids << channelId;
+    QSettings().setValue("youtube/notify", ids);
+    if (on)
+        checkNotifications();   // learns what it has now
+    toast(on ? QStringLiteral("You'll be told about new videos from %1").arg(name)
+             : QStringLiteral("No more notifications from %1").arg(name));
+    if (m_videoChannelId == channelId)
+        m_videoPage->setNotify(on);
+}
+
+void MainWindow::checkNotifications()
+{
+    const QStringList ids = notifyChannels();
+    for (const QString &channelId : ids) {
+        m_ytClient.channelFeed(channelId, [this, channelId](QVector<ytmusic::Item> items) {
+            if (items.isEmpty() || !notifyChannels().contains(channelId))
+                return;
+            QSettings settings;
+            QVariantMap seenAll = settings.value("youtube/notifySeen").toMap();
+            const bool first = !seenAll.contains(channelId);
+            QStringList seen = seenAll.value(channelId).toStringList();
+            QJsonArray news = QJsonDocument::fromJson(settings.value("youtube/notifications").toByteArray()).array();
+            int added = 0;
+            QString lastTitle, lastChannel;
+            for (const ytmusic::Item &it : items) {
+                if (it.id.isEmpty() || seen.contains(it.id))
+                    continue;
+                seen.prepend(it.id);
+                if (first)
+                    continue;
+                news.prepend(QJsonObject{{"id", it.id}, {"title", it.title}, {"channel", it.artist}, {"channelId", channelId},
+                                         {"published", double(it.published ? it.published : QDateTime::currentSecsSinceEpoch())},
+                                         {"unread", true}});
+                ++added;
+                lastTitle = it.title;
+                lastChannel = it.artist;
+            }
+            seenAll[channelId] = seen.mid(0, 30);
+            settings.setValue("youtube/notifySeen", seenAll);
+            while (news.size() > 60)
+                news.removeLast();
+            settings.setValue("youtube/notifications", QJsonDocument(news).toJson(QJsonDocument::Compact));
+            refreshBell();
+            if (added == 1)
+                toast(QStringLiteral("New from %1: %2").arg(lastChannel, lastTitle));
+            else if (added > 1)
+                toast(QStringLiteral("%1 new videos from the channels you get notified about").arg(added));
+        });
+    }
+}
+
+void MainWindow::refreshBell()
+{
+    if (!m_bellDot)
+        return;
+    int unread = 0;
+    for (const QJsonValue &v : QJsonDocument::fromJson(QSettings().value("youtube/notifications").toByteArray()).array())
+        unread += v.toObject().value("unread").toBool();
+    m_bellDot->setVisible(unread > 0);
+    m_bellButton->setToolTip(unread ? QStringLiteral("Notifications: %1 new").arg(unread) : QStringLiteral("Notifications"));
+}
+
+void MainWindow::showNotifications()
+{
+    QSettings settings;
+    QJsonArray news = QJsonDocument::fromJson(settings.value("youtube/notifications").toByteArray()).array();
+    QMenu menu(this);
+    menu.setToolTipsVisible(true);
+    if (news.isEmpty()) {
+        QAction *none = menu.addAction(notifyChannels().isEmpty()
+                                           ? QStringLiteral("No notifications. Turn on a channel's bell, next to Follow under its video.")
+                                           : QStringLiteral("No new videos yet from the channels with their bell on."));
+        none->setEnabled(false);
+    }
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (const QJsonValue &v : std::as_const(news)) {
+        const QJsonObject o = v.toObject();
+        const qint64 ago = now - qint64(o.value("published").toDouble());
+        const QString when = ago < 3600 ? QStringLiteral("%1 min ago").arg(qMax<qint64>(1, ago / 60))
+                           : ago < 86400 ? QStringLiteral("%1 h ago").arg(ago / 3600)
+                           : QStringLiteral("%1 d ago").arg(ago / 86400);
+        QString title = o.value("title").toString();
+        if (title.size() > 70)
+            title = title.left(68) + QStringLiteral("...");
+        QAction *a = menu.addAction(QStringLiteral("%1%2  ·  %3  ·  %4").arg(o.value("unread").toBool() ? QStringLiteral("● ") : QString(),
+                                                                          title, o.value("channel").toString(), when));
+        a->setToolTip(o.value("title").toString());
+        ytmusic::Item it;
+        it.kind = ytmusic::Kind::Video;
+        it.id = o.value("id").toString();
+        it.title = o.value("title").toString();
+        it.artist = o.value("channel").toString();
+        it.channelId = o.value("channelId").toString();
+        connect(a, &QAction::triggered, this, [this, it] { playFound({it}, it.title, 0, false, false); });
+    }
+    if (!news.isEmpty()) {
+        menu.addSeparator();
+        menu.addAction("Clear notifications", this, [this] {
+            QSettings().remove("youtube/notifications");
+            refreshBell();
+        });
+    }
+    // Seen now: the dot goes.
+    for (int i = 0; i < news.size(); ++i) {
+        QJsonObject o = news[i].toObject();
+        o["unread"] = false;
+        news[i] = o;
+    }
+    settings.setValue("youtube/notifications", QJsonDocument(news).toJson(QJsonDocument::Compact));
+    refreshBell();
+    menu.exec(m_bellButton->mapToGlobal(QPoint(m_bellButton->width() - menu.sizeHint().width(), m_bellButton->height() + 4)));
+}
+
+QString MainWindow::videoFormat(int height) const
+{
+    // The picture up to its cap, the sound in the dub's language when one
+    // was picked and the video has it, otherwise as YouTube gives it.
+    const QString picture = height > 0 ? QStringLiteral("bestvideo[height<=%1]").arg(height) : QStringLiteral("bestvideo");
+    if (m_audioLang.isEmpty())
+        return picture + QStringLiteral("+bestaudio/best");
+    return QStringLiteral("%1+bestaudio[language=%2]/%1+bestaudio/best").arg(picture, m_audioLang);
+}
+
+ytmusic::Item MainWindow::playingVideoItem() const
+{
+    // The video the page shows: its own when a tab's page is previewed, else
+    // the one mpv plays.
+    ytmusic::Item it;
+    it.kind = ytmusic::Kind::Video;
+    if (!m_ratedId.isEmpty()) {
+        it.id = m_ratedId;
+    } else {
+        const QString source = m_mpv.property("user-data/ghost/source").toString();
+        it.id = youtube::videoId(source.isEmpty() ? m_mpv.property("path").toString() : source);
+    }
+    it.title = m_videoPage->titleText();
+    it.artist = m_videoPage->channelText();
+    it.channelId = m_videoChannelId;
+    return it;
+}
+
+QVector<ytmusic::Item> MainWindow::likedVideos() const
+{
+    QVector<ytmusic::Item> out;
+    for (const QJsonValue &v : QJsonDocument::fromJson(QSettings().value("youtube/likedVideos").toByteArray()).array()) {
+        const QJsonObject o = v.toObject();
+        ytmusic::Item it;
+        it.kind = ytmusic::Kind::Video;
+        it.id = o.value("id").toString();
+        it.title = o.value("title").toString();
+        it.artist = o.value("channel").toString();
+        it.channelId = o.value("channelId").toString();
+        if (!it.id.isEmpty())
+            out << it;
+    }
+    return out;
+}
+
+void MainWindow::showYtPlaylists()
+{
+    showYouTube();
+    fillYtPlaylists();
+    m_pages->setCurrentWidget(m_ytPlaylistsPage);
+    markYouTubeMenu(5);
+}
+
+void MainWindow::fillYtPlaylists()
+{
+    if (!m_ytPlaylistsGrid)
+        return;
+    const auto &all = m_library.playlists();
+    m_ytPlaylistsGrid->clear();
+    for (int i = 0; i < all.size(); ++i) {
+        if (all[i].audio)
+            continue;
+        auto *tile = new QListWidgetItem(all[i].name);
+        tile->setData(tiles::kIndexRole, i);
+        tile->setData(tiles::kSubtitleRole, QStringLiteral("Playlist"));
+        tile->setData(tiles::kBadgeRole, all[i].count == 1 ? QStringLiteral("1 video") : QStringLiteral("%1 videos").arg(all[i].count));
+        tile->setData(tiles::kMoreRole, true);
+        m_ytPlaylistsGrid->addItem(tile);
+    }
+}
+
+void MainWindow::playlistTileMenu(int index, const QPoint &global)
+{
+    const auto &all = m_library.playlists();
+    if (index < 0 || index >= all.size())
+        return;
+    const Playlist p = all[index];
+    QMenu menu(this);
+    menu.addAction("Play", this, [this, p] { play(p.path); });
+    menu.addAction("Shuffle", this, [this, p] { play(p.path, true); });
+    menu.addAction("Add to queue", this, [this, p] { queueSongs(p.readEntries(), false); });
+    menu.addAction("Play next", this, [this, p] { queueSongs(p.readEntries(), true); });
+    menu.addSeparator();
+    menu.addAction("Remove from library", this, [this, index] {
+        deletePlaylist(index);
+        fillYtPlaylists();
+    });
+    menu.exec(global);
+}
+
+void MainWindow::showLikedVideos()
+{
+    showYouTube();
+    markYouTubeMenu(4);
+    const QVector<ytmusic::Item> items = likedVideos();
+    m_searchPage->showVideos(items.isEmpty() ? QStringLiteral("Liked videos: nothing yet. Press Like under a video.")
+                                             : QStringLiteral("Liked videos"), items);
+}
+
 int MainWindow::rating(const QString &id)
 {
     QSettings settings;
@@ -8553,8 +9013,9 @@ void MainWindow::startPreview(int index)
                 self.artist = m_previewTab.channel;
                 QVector<ytmusic::Item> all{self};
                 QSet<QString> seen{id};
+                const QStringList disliked = QSettings().value("youtube/disliked").toStringList();
                 for (const ytmusic::Item &it : items)
-                    if (!it.id.isEmpty() && !seen.contains(it.id) && all.size() < 21) {
+                    if (!it.id.isEmpty() && !seen.contains(it.id) && !disliked.contains(it.id) && all.size() < 21) {
                         seen.insert(it.id);
                         all << it;
                     }

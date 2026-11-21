@@ -227,12 +227,35 @@ void TileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const QRectF cover(cell.left() + 8, cell.top() + 8, cell.width() - 16, cell.width() - 16);
     const QString name = index.data(Qt::DisplayRole).toString();
     paintCollage(*painter, cover, m_coversFor(index), name, 8);
+    const QString badge = index.data(kBadgeRole).toString();
+    if (!badge.isEmpty()) {
+        QFont small = option.font;
+        small.setPointSizeF(small.pointSizeF() * 0.85);
+        small.setWeight(QFont::DemiBold);
+        const QFontMetricsF fm(small);
+        const qreal w = fm.horizontalAdvance(badge) + 14, h = fm.height() + 6;
+        const QRectF pill(cover.right() - w - 6, cover.bottom() - h - 6, w, h);
+        QPainterPath round;
+        round.addRoundedRect(pill, h / 2, h / 2);
+        painter->fillPath(round, QColor(0, 0, 0, 170));
+        painter->setFont(small);
+        painter->setPen(Qt::white);
+        painter->drawText(pill, Qt::AlignCenter, badge);
+    }
+    const bool more = index.data(kMoreRole).toBool();
+    if (more && (hover || selected)) {
+        const QRectF dots = moreRect(option.rect);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(theme::text());
+        for (int i = -1; i <= 1; ++i)
+            painter->drawEllipse(QPointF(dots.center().x(), dots.center().y() + i * 5), 1.6, 1.6);
+    }
 
     QFont titleFont = option.font;
     titleFont.setWeight(QFont::DemiBold);
     painter->setFont(titleFont);
     painter->setPen(theme::text());
-    const QRectF titleRect(cover.left(), cover.bottom() + 8, cover.width(), 20);
+    const QRectF titleRect(cover.left(), cover.bottom() + 8, cover.width() - (more ? 22 : 0), 20);
     painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
                       QFontMetrics(titleFont).elidedText(name, Qt::ElideRight, int(titleRect.width())));
 
@@ -241,6 +264,13 @@ void TileDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     painter->drawText(QRectF(cover.left(), titleRect.bottom() + 2, cover.width(), 18),
                       Qt::AlignLeft | Qt::AlignVCenter, index.data(kSubtitleRole).toString());
     painter->restore();
+}
+
+QRectF TileDelegate::moreRect(const QRectF &itemRect)
+{
+    const QRectF cell = itemRect.adjusted(4, 4, -4, -4);
+    const QRectF cover(cell.left() + 8, cell.top() + 8, cell.width() - 16, cell.width() - 16);
+    return QRectF(cover.right() - 22, cover.bottom() + 6, 22, 24);
 }
 
 RowDelegate::RowDelegate(CoversFor coversFor, QObject *parent)

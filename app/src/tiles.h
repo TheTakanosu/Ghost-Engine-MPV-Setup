@@ -39,6 +39,10 @@ private:
 // The playlist's index in the library, kept on each tile.
 constexpr int kIndexRole = Qt::UserRole;
 constexpr int kSubtitleRole = Qt::UserRole + 1;
+// On the Playlists page (Batin, 2026-11-21): "18 videos" in a dark pill on
+// the cover's bottom right, and "..." beside the name under the mouse.
+constexpr int kBadgeRole = Qt::UserRole + 19;
+constexpr int kMoreRole = Qt::UserRole + 20;
 
 // A cover filling `rect` (cropped, not stretched) with rounded corners, or a
 // tinted block with the first letter while there is none.
@@ -78,6 +82,8 @@ public:
     QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override;
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;
+    // Where a tile's "..." is, in its item's rectangle (kMoreRole).
+    static QRectF moreRect(const QRectF &itemRect);
 
 private:
     int m_size;

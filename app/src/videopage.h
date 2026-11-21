@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QPixmap>
 #include <QString>
 #include <QVariant>
@@ -117,7 +118,8 @@ public:
     void setList(const QString &name, const QVector<Entry> &entries);
     void setPlaying(const QString &target, const QString &title, const QString &channel, const QString &link);
     // The description, and a line over it such as "1,234 views · Oct 2, 2026".
-    void setDescription(const QString &text, const QString &meta = {});
+    // meta: short ("607K views · 1d ago"); fullMeta, when the box is opened.
+    void setDescription(const QString &text, const QString &meta = {}, const QString &fullMeta = {});
     // What mpv says: position and length in seconds, paused or not, its
     // tracks (for the subtitles menu), the height cap, the speed, the
     // volume and the picture's shape.
@@ -161,9 +163,21 @@ public:
     void setChannelFace(const QPixmap &face);   // null: none
     void setChannelName(const QString &name);   // when the player had none
     void setSubscribers(qlonglong count);       // under the name; below 0: none known
+    static QString compactCount(qlonglong count);   // 1.23K, 12.3K, 1.23M
+    void setSubscribersText(const QString &text);   // as YouTube words it: "527M subscribers"
     // Like (1), dislike (-1) or neither (0), for this app only.
     void setRating(int rating);
     std::function<void(int rating)> onRate;
+    std::function<void(const QPoint &global)> onSave;   // its menu, opened there
+    // The sound's languages of a dubbed video (none: the button hides), the
+    // original's code, and the one picked; a pick reopens it at that second.
+    void setAudioTracks(const QList<QPair<QString, QString>> &tracks, const QString &original, const QString &picked);
+    std::function<void(const QString &lang)> onAudioLanguage;   // empty: the original
+    // The channel's bell beside Following (shown while followed).
+    void setNotify(bool on);
+    std::function<void()> onNotify;
+    QString titleText() const;
+    QString channelText() const;
     std::function<void()> onOpenChannel;
     std::function<void()> onFollow;
     // A song list's song shown as its video: "Switch to audio" instead of the pop out.
@@ -242,6 +256,16 @@ private:
     QLabel *m_channel;
     QLabel *m_channelFace = nullptr;
     QLabel *m_subscribers = nullptr;
+    QString m_metaShort, m_metaFull;
+    QPushButton *m_audio = nullptr;
+    QPushButton *m_bell = nullptr;
+    QList<QPair<QString, QString>> m_tracks2;   // the dubs: code, name
+    QHash<QString, QString> m_trackName;
+    QString m_originalLang, m_audioNow;
+    bool m_controlsCompactNow = false;
+    QPushButton *m_save = nullptr;
+    QPushButton *m_moreActions = nullptr;
+    bool m_songVideo = false;
     QPushButton *m_like = nullptr;
     QPushButton *m_dislike = nullptr;
     int m_rating = 0;

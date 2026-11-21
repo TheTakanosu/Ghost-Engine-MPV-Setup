@@ -704,6 +704,36 @@ void ProfilePage::setTopArtists(const QList<Artist> &artists)
 
 namespace {
 
+// A small X in a circle that shows under the mouse.
+class RoundCross : public QAbstractButton {
+public:
+    RoundCross()
+    {
+        setCursor(Qt::PointingHandCursor);
+        setAttribute(Qt::WA_Hover);
+        const int side = qRound(26 * theme::zoom());
+        setFixedSize(side, side);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF box = QRectF(rect()).adjusted(1, 1, -1, -1);
+        if (underMouse() || isDown()) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(isDown() ? theme::c().line : theme::c().raised);
+            p.drawEllipse(box);
+        }
+        const qreal arm = box.width() * 0.17;
+        p.setPen(QPen(underMouse() ? theme::c().textBright : theme::c().muted, 1.4, Qt::SolidLine, Qt::RoundCap));
+        const QPointF c = box.center();
+        p.drawLine(c + QPointF(-arm, -arm), c + QPointF(arm, arm));
+        p.drawLine(c + QPointF(arm, -arm), c + QPointF(-arm, arm));
+    }
+};
+
 void clearLayout(QLayout *layout)
 {
     while (QLayoutItem *item = layout->takeAt(0)) {
@@ -756,16 +786,11 @@ void ProfilePage::setHistory(const QList<Played> &plays, bool more, bool keeping
             line->addWidget(kind);
         }
         line->addWidget(when);
-        // Remove from history (Batin, 2026-11-21): every play of it.
-        auto *forget = new QPushButton(QChar(0xE711));
-        forget->setCursor(Qt::PointingHandCursor);
-        forget->setFixedSize(26, 26);
+        // Remove from history (Batin, 2026-11-21): every play of it. Drawn,
+        // so its hover is a circle (the sheet's radius left a square).
+        auto *forget = new RoundCross;
         forget->setToolTip(QStringLiteral("Remove from history"));
-        forget->setStyleSheet(theme::css(QStringLiteral(
-            "QPushButton { font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 8pt; color: %1;"
-            " background: transparent; border: none; border-radius: 13px; padding: 0; min-width: 0; min-height: 0; }"
-            "QPushButton:hover { background: @raised; color: %2; }").arg(theme::c().muted.name(), theme::c().textBright.name())));
-        connect(forget, &QPushButton::clicked, this, [this, i] { if (onForget) onForget(i); });
+        connect(forget, &QAbstractButton::clicked, this, [this, i] { if (onForget) onForget(i); });
         line->addWidget(forget);
         m_history->addWidget(row);
     }

@@ -190,7 +190,7 @@ private:
     // Lights the YouTube menu's row for the page that is open, and no other:
     // nav is an index of m_ytNav or kYtSearch (-1 none), list a video list's
     // index, channel a followed channel's id.
-    static constexpr int kYtSearch = 4;
+    static constexpr int kYtSearch = 100;   // past m_ytNav's indexes (4 is Liked videos now)
     void markYouTubeMenu(int nav, int list = -1, const QString &channel = QString());
     // The search: in the top bar, or the box in the middle (SearchPopup).
     void openSearch();
@@ -264,8 +264,29 @@ private:
     QString m_ratedId;               // the video its Like / Dislike are for
     QString m_healPath;              // the video last opened again after its stream ended early
     int m_heals = 0;                 // how often, for that one
-    bool m_stripDrag = false;        // the splitter dragged from the YouTube menu's shadow strip
+    bool m_stripDrag = false;
+    int m_upNextPos = -1;            // the entry the Up next card names (disliked ones passed over)        // the splitter dragged from the YouTube menu's shadow strip
     static int rating(const QString &id);   // 1 liked, -1 disliked, 0 neither
+    ytmusic::Item playingVideoItem() const;   // the video page's video
+    QString m_audioLang;             // the dub picked (empty: original)
+    QHash<QString, QString> m_subscriberText;   // channel id -> "527M subscribers", from its page
+    QString videoFormat(int height) const;   // ytdl-format for a cap and m_audioLang
+    // Notifications: new videos of the channels whose bell is on.
+    QStringList notifyChannels() const;
+    void setNotify(const QString &channelId, const QString &name, bool on);
+    void checkNotifications();
+    void refreshBell();
+    void showNotifications();
+    QPushButton *m_bellButton = nullptr;
+    QLabel *m_bellDot = nullptr;
+    QTimer m_notifyTimer;
+    QVector<ytmusic::Item> likedVideos() const;
+    void showLikedVideos();
+    void showYtPlaylists();
+    void fillYtPlaylists();
+    void playlistTileMenu(int index, const QPoint &global);   // Play, Add to queue, Remove from library
+    QWidget *m_ytPlaylistsPage = nullptr;
+    QListWidget *m_ytPlaylistsGrid = nullptr;
     void showProfile();
     void showSettings();
     void showShortcuts();
@@ -295,6 +316,7 @@ private:
     void changeZoom(qreal step);
     void applyZoom(qreal zoom);   // changeZoom gathers wheel steps, this applies them once
     QTimer *m_zoomSoon = nullptr;
+    QLabel *m_zoomPill = nullptr;   // "120%" at once, while the change waits
     bool m_lastKindVideo = false;
     // A new video's first frame awaited: its thumbnail shows meanwhile, not
     // the last frame of the one before (Batin, 2026-11-20).

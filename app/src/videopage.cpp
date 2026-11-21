@@ -6,6 +6,8 @@
 #include "tiles.h"
 
 #include <QDesktopServices>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QGridLayout>
@@ -849,6 +851,21 @@ QPushButton *glyphButton(const QString &glyph, const QString &tip, qreal pointSi
     return b;
 }
 
+// A control's menu over it, kept on the button's own screen: a tall one (a
+// dubbed video's 25 languages) ran past the screen's top, and Windows put it
+// on the main screen instead (seen, 2026-11-21: over a game being played).
+void execAbove(QMenu &menu, QWidget *button)
+{
+    const QSize size = menu.sizeHint();
+    const QRect room = button->screen() ? button->screen()->availableGeometry() : QRect();
+    QPoint at = button->mapToGlobal(QPoint(0, -size.height()));
+    if (room.isValid()) {
+        at.setY(qMax(room.top(), at.y()));
+        at.setX(qBound(room.left(), at.x(), room.right() - size.width()));
+    }
+    menu.exec(at);
+}
+
 QPushButton *textButton(const QString &text, const QString &tip)
 {
     auto *b = new FlatButton(text, false, 30, 9.5);
@@ -1086,17 +1103,48 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     m_follow->setToolTip("Its new videos on your Following page");
     m_follow->hide();
     connect(m_follow, &QPushButton::clicked, this, [this] { if (onFollow) onFollow(); });
-    auto *popOut = action(QString(QChar(0xE8A7)), "Open in mpv's window");
-    m_youtube = action(QString(QChar(0xE774)), "Watch on YouTube");
-    m_popOut = popOut;
+    // The channel's bell, beside Following (Batin, 2026-11-21): its new
+    // videos in Notifications.
+    m_bell = new QPushButton(QString(QChar(0xEA8F)));
+    m_bell->setObjectName("chip");
+    m_bell->setCheckable(true);
+    m_bell->setCursor(Qt::PointingHandCursor);
+    {
+        QFont f = m_bell->font();
+        f.setFamilies({QStringLiteral("Segoe Fluent Icons"), QStringLiteral("Segoe MDL2 Assets")});
+        m_bell->setFont(f);
+    }
+    m_bell->hide();
+    connect(m_bell, &QPushButton::clicked, this, [this] {
+        m_bell->setChecked(!m_bell->isChecked());   // the app says what it is now
+        if (onNotify)
+            onNotify();
+    });
     // A song from a song list shown as its video goes back to being a song.
     m_toAudio = action(QString(QChar(0xEC4F)), "Switch to audio");
     m_toAudio->hide();
     connect(m_toAudio, &QPushButton::clicked, this, [this] { if (onSwitchToAudio) onSwitchToAudio(); });
-    connect(popOut, &QPushButton::clicked, this, [this] { if (onPopOut) onPopOut(); });
-    connect(m_youtube, &QPushButton::clicked, this, [this] {
-        if (!m_link.isEmpty())
-            QDesktopServices::openUrl(QUrl(m_link));
+    // Save to a list or Watch later (Batin, 2026-11-21), and the rest behind
+    // "..." ("Open in mpv's window" and "Watch on YouTube" were too long a row).
+    m_save = action(QString(QChar(0xE8F4)), "Save");
+    m_save->setToolTip("Save to Watch later or a video list");
+    connect(m_save, &QPushButton::clicked, this, [this] {
+        if (onSave)
+            onSave(m_save->mapToGlobal(QPoint(0, m_save->height() + 4)));
+    });
+    m_moreActions = action(QString(QChar(0xE712)), QString());
+    m_moreActions->setText(QString(QChar(0xE712)));
+    m_moreActions->setToolTip("More");
+    connect(m_moreActions, &QPushButton::clicked, this, [this] {
+        QMenu menu(this);
+        if (!m_songVideo)
+            menu.addAction(QStringLiteral("Open in mpv's window"), this, [this] { if (onPopOut) onPopOut(); });
+        if (!m_link.isEmpty()) {
+            menu.addAction(QStringLiteral("Watch on YouTube"), this, [this] { QDesktopServices::openUrl(QUrl(m_link)); });
+            menu.addAction(QStringLiteral("Copy video link"), this, [this] { QGuiApplication::clipboard()->setText(m_link); });
+        }
+        if (!menu.isEmpty())
+            menu.exec(m_moreActions->mapToGlobal(QPoint(0, m_moreActions->height() + 4)));
     });
     // The channel's subscribers under its name, as on YouTube (Batin, 2026-11-21).
     m_subscribers = new QLabel;
@@ -1123,12 +1171,13 @@ VideoPage::VideoPage(QWidget *parent) : QWidget(parent)
     buttons->addLayout(names);
     buttons->addSpacing(6);
     buttons->addWidget(m_follow);
+    buttons->addWidget(m_bell);
     buttons->addStretch(1);
     buttons->addWidget(m_like);
     buttons->addWidget(m_dislike);
+    buttons->addWidget(m_save);
     buttons->addWidget(m_toAudio);
-    buttons->addWidget(popOut);
-    buttons->addWidget(m_youtube);
+    buttons->addWidget(m_moreActions);
 
     // The description in a box, as YouTube has it under the player: views
     // and date in bold, a few lines, the rest with "...more" or a click on
@@ -1461,7 +1510,7 @@ QWidget *VideoPage::buildControls()
             off->setChecked(!on);
             connect(off, &QAction::triggered, this, [this] { if (onSubtitle) onSubtitle(QStringLiteral("no")); });
         }
-        menu.exec(m_subs->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
+        execAbove(menu, m_subs);
     });
     m_quality = textButton(QStringLiteral("Auto"), "Quality");
     connect(m_quality, &QPushButton::clicked, this, [this] {
@@ -1479,7 +1528,7 @@ QWidget *VideoPage::buildControls()
             a->setChecked(h == m_cap);
             connect(a, &QAction::triggered, this, [this, h] { if (onQuality) onQuality(h); });
         }
-        menu.exec(m_quality->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
+        execAbove(menu, m_quality);
     });
     m_speed = textButton(QStringLiteral("1x"), "Speed");
     connect(m_speed, &QPushButton::clicked, this, [this] {
@@ -1490,7 +1539,7 @@ QWidget *VideoPage::buildControls()
             a->setChecked(qFuzzyCompare(s, m_speedNow));
             connect(a, &QAction::triggered, this, [this, s] { if (onSpeed) onSpeed(s); });
         }
-        menu.exec(m_speed->mapToGlobal(QPoint(0, -menu.sizeHint().height())));
+        execAbove(menu, m_speed);
     });
     // This glyph draws larger than the rest at the same size.
     auto *full = glyphButton(QString(QChar(0xE740)), "Full screen (F)", 9);
@@ -1526,6 +1575,28 @@ QWidget *VideoPage::buildControls()
     static_cast<FlatButton *>(miniplayer)->setPip(true);
     connect(miniplayer, &QPushButton::clicked, this, [this] { if (onMinimize) onMinimize(); });
     row->addWidget(miniplayer);
+    // The dub's language, shown only for a video dubbed into others (Batin, 2026-11-21).
+    m_audio = textButton(QStringLiteral("EN"), "Audio language");
+    m_audio->hide();
+    connect(m_audio, &QPushButton::clicked, this, [this] {
+        QMenu menu(this);
+        QAction *first = menu.addAction(m_originalLang.isEmpty() ? QStringLiteral("Original")
+                                                                 : QStringLiteral("Original (%1)").arg(m_trackName.value(m_originalLang, m_originalLang)));
+        first->setCheckable(true);
+        first->setChecked(m_audioNow.isEmpty());
+        connect(first, &QAction::triggered, this, [this] { if (onAudioLanguage) onAudioLanguage(QString()); });
+        menu.addSeparator();
+        for (const auto &[code, name] : std::as_const(m_tracks2)) {
+            if (code == m_originalLang)
+                continue;
+            QAction *a = menu.addAction(name);
+            a->setCheckable(true);
+            a->setChecked(code == m_audioNow);
+            connect(a, &QAction::triggered, this, [this, code] { if (onAudioLanguage) onAudioLanguage(code); });
+        }
+        execAbove(menu, m_audio);
+    });
+    row->addWidget(m_audio);
     row->addWidget(m_subs);
     row->addWidget(m_quality);
     row->addWidget(m_speed);
@@ -1537,7 +1608,7 @@ QWidget *VideoPage::buildControls()
     row->addWidget(m_cinemaButton);
     row->addWidget(full);
     m_wideOnly = {back10, fwd10, m_volume, m_autoplay, m_repeat, m_listen, miniplayer, m_subs, m_quality, m_speed,
-                  m_cinemaButton};
+                  m_cinemaButton};   // m_audio is shown by setAudioTracks alone
     m_seekTip = new QLabel(bar);
     m_seekTip->setObjectName("seekTip");
     m_seekTip->setAlignment(Qt::AlignCenter);
@@ -1661,9 +1732,10 @@ void VideoPage::setPlaying(const QString &target, const QString &title, const QS
         setChannelFace(QPixmap());
         setSubscribers(-1);
         setRating(0);
+        m_tracks2.clear();   // its own dubs come with its description
+        m_audio->hide();
     }
     m_link = link;
-    m_youtube->setVisible(!link.isEmpty());
     for (int i = 0; i < m_list->count(); ++i) {
         QListWidgetItem *item = m_list->item(i);
         const bool now = item->data(kTargetRole).toString() == target;
@@ -1675,7 +1747,7 @@ void VideoPage::setPlaying(const QString &target, const QString &title, const QS
 void VideoPage::setSongVideo(bool song)
 {
     m_toAudio->setVisible(song);
-    m_popOut->setVisible(!song);
+    m_songVideo = song;   // no "Open in mpv's window" in the "..." menu
     // A song's video has "Switch to audio" for that.
     m_listen->setVisible(!song);
 }
@@ -1756,8 +1828,11 @@ void VideoPage::setListenOnly(bool on)
     m_screen->update();
 }
 
-void VideoPage::setDescription(const QString &text, const QString &meta)
+void VideoPage::setDescription(const QString &text, const QString &meta, const QString &fullMeta)
 {
+    // "607K views · 1d ago", and opened the whole of it (Batin, 2026-11-21).
+    m_metaShort = meta;
+    m_metaFull = fullMeta.isEmpty() ? meta : fullMeta;
     m_meta->setText(meta);
     m_meta->setVisible(!meta.isEmpty());
     m_description->setHtml(linkify(text.trimmed()));
@@ -1770,6 +1845,7 @@ void VideoPage::setDescription(const QString &text, const QString &meta)
 void VideoPage::setExpanded(bool expanded)
 {
     m_expanded = expanded;
+    m_meta->setText(expanded ? m_metaFull : m_metaShort);
     const int collapsed = m_description->fontMetrics().lineSpacing() * kCollapsedLines + 2;
     m_description->document()->setTextWidth(m_description->viewport()->width());
     const int whole = int(m_description->document()->size().height()) + 2;
@@ -1944,6 +2020,8 @@ void VideoPage::setControlsCompact(bool compact)
 {
     for (QWidget *w : std::as_const(m_wideOnly))
         w->setVisible(!compact);
+    m_controlsCompactNow = compact;
+    m_audio->setVisible(!compact && !m_tracks2.isEmpty());
     m_controls->layout()->activate();
 }
 
@@ -2035,6 +2113,18 @@ void VideoPage::setSubscribers(qlonglong count)
         m_subscribers->hide();
         return;
     }
+    m_subscribers->setText(compactCount(count) + (count == 1 ? QStringLiteral(" subscriber") : QStringLiteral(" subscribers")));
+    m_subscribers->show();
+}
+
+void VideoPage::setSubscribersText(const QString &text)
+{
+    m_subscribers->setText(text);
+    m_subscribers->setVisible(!text.isEmpty());
+}
+
+QString VideoPage::compactCount(qlonglong count)
+{
     // YouTube's way: three figures at most, 1.23K, 12.3K, 123K, 1.23M.
     const QLocale english(QLocale::English);
     QString figure;
@@ -2056,9 +2146,37 @@ void VideoPage::setSubscribers(qlonglong count)
             figure.chop(1);
         figure += QLatin1String(units[unit]);
     }
-    m_subscribers->setText(figure + (count == 1 ? QStringLiteral(" subscriber") : QStringLiteral(" subscribers")));
-    m_subscribers->show();
+    return figure;
 }
+
+void VideoPage::setAudioTracks(const QList<QPair<QString, QString>> &tracks, const QString &original, const QString &picked)
+{
+    m_tracks2 = tracks;
+    m_originalLang = original;
+    m_trackName.clear();
+    bool has = false;
+    for (const auto &[code, name] : tracks) {
+        m_trackName.insert(code, name);
+        has = has || code == picked;
+    }
+    // The pick applies when this video has it; otherwise it plays the original.
+    m_audioNow = has ? picked : QString();
+    const QString shown = m_audioNow.isEmpty() ? original : m_audioNow;
+    m_audio->setText(shown.isEmpty() ? QStringLiteral("Audio") : shown.section(QLatin1Char('-'), 0, 0).toUpper());
+    m_audio->setToolTip(QStringLiteral("Audio language: %1").arg(m_audioNow.isEmpty() ? QStringLiteral("original")
+                                                                                     : m_trackName.value(m_audioNow)));
+    m_audio->setVisible(!tracks.isEmpty() && !m_controlsCompactNow);
+}
+
+void VideoPage::setNotify(bool on)
+{
+    m_bell->setChecked(on);
+    m_bell->setToolTip(on ? QStringLiteral("Notifications on: its new videos show under the bell at the top")
+                          : QStringLiteral("Get notified of its new videos"));
+}
+
+QString VideoPage::titleText() const { return m_title->text(); }
+QString VideoPage::channelText() const { return m_channel->text(); }
 
 void VideoPage::setRating(int rating)
 {
@@ -2071,6 +2189,7 @@ void VideoPage::setChannel(const QString &channelId, bool following)
 {
     m_channelId = channelId;
     m_follow->setVisible(!channelId.isEmpty());
+    m_bell->setVisible(!channelId.isEmpty() && following);
     m_follow->setChecked(following);
     m_follow->setText(following ? QStringLiteral("Following") : QStringLiteral("Follow"));
     for (QLabel *label : {m_channel, m_channelFace}) {
