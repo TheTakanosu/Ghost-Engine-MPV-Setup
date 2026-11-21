@@ -534,6 +534,22 @@ const QList<QPair<QString, QStringList>> &allNotes()
             "Clicking an empty spot leaves the text box you were typing in.",
             "Fixes: searching again after opening an artist shows the new results; songs no longer skip to the end one after another after a resume; the library highlights the list you opened from the player bar or the island; cleaner corners and a centred + on songs; artist names are underlined under the mouse.",
         }},
+        {QStringLiteral("1.6.0"), {
+            "Video tabs: right-click a video, then Open in new tab. A tab keeps its place; click it to look at its page while the other video plays on, and press play to switch.",
+            "Autoplay for videos: when one ends, Up next shows the next one, counting down when Autoplay is on.",
+            "Cinema view: the button next to full screen (or T) makes the video as wide as the page. Your choice is kept.",
+            "Pictures over the timeline: hover the seek bar to see where you are going.",
+            "Listen only audio: a video's sound without its picture, using far less memory. Repeat for videos too.",
+            "Like and Dislike under a video, for this app only: liked videos lead your Home, disliked ones never show up again. Liked videos has its own page.",
+            "Save a video to Watch later or a video list from under it. Playlists shows all your video lists, with a menu on each.",
+            "Notifications: turn on a channel's bell next to Following, and its new videos show under the bell at the top.",
+            "Dubbed videos get a language button on the player: pick the dub you want, or the original.",
+            "Remove from history: the X on your profile's history, or right-click on the History page. Your Home follows.",
+            "Videos show the channel's subscribers, and \"191M views, 2 years ago\"; open the description for the exact numbers.",
+            "Add to queue, Play next and Show less from this channel on videos, with Undo.",
+            "If an app update ever stops halfway, Ghost Engine tells you on its next start and shows how to finish it.",
+            "Fixes: a video that stopped early because the connection dropped picks up where it was; zoom shows its percentage at once and changes in one go; the Discord status's memory is counted in Settings.",
+        }},
     };
     return notes;
 }
