@@ -106,7 +106,8 @@ jobs:
         run: ./.github/scripts/try-update.ps1 -OldDir last -OldTag $env:LAST_TAG -NewDir dist -NewTag $env:NEW_TAG -Shell pwsh
 
       - name: Install from nothing
-        shell: pwsh
+        # Windows PowerShell, as install.bat is started by a double-click.
+        shell: powershell
         run: ./.github/scripts/try-install.ps1 -NewDir dist
 
       - name: Keep the files with the run

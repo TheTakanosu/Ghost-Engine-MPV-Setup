@@ -97,6 +97,9 @@ try {
 
     # -- the old update.ps1 runs ------------------------------------------------
     $update = Join-Path $inst "update.ps1"
+    # Windows PowerShell started from PowerShell 7 takes 7's module path and
+    # can miss its own commands; the Update button starts it from the app.
+    if ($Shell -eq "powershell") { $env:PSModulePath = [Environment]::GetEnvironmentVariable("PSModulePath", "Machine") }
     $check = & $Shell -NoProfile -ExecutionPolicy Bypass -File $update -Check -Only ghost -Feed $feed 2>&1 | Out-String
     $json = ($check -split "`r?`n" | Where-Object { $_ -match '^\{' } | Select-Object -Last 1)
     if ($json -and ($json | ConvertFrom-Json).ghost.newer) { Pass "-Check offers $feedTag" }

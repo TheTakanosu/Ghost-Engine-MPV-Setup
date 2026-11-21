@@ -39,8 +39,13 @@ try {
     if (Get-Command node.exe -ErrorAction SilentlyContinue) { throw "node is still on PATH" }
 
     # install.bat itself, so its own line (Windows PowerShell 5.1) is what runs.
+    # With the module path a double-click gives it: started from PowerShell 7,
+    # 5.1 took 7's modules and had no Get-FileHash (the 1.6.0 run).
+    $oldModules = $env:PSModulePath
+    $env:PSModulePath = [Environment]::GetEnvironmentVariable("PSModulePath", "Machine")
     $out = & cmd.exe /c "`"$(Join-Path $setup 'install.bat')`" -Unattended -InstallDir `"$InstallDir`" -AppZip `"$appZip`"" 2>&1 | Out-String
     $code = $LASTEXITCODE
+    $env:PSModulePath = $oldModules
     Write-Host $out
     $env:Path = $oldPath
 
