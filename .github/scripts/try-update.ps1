@@ -61,12 +61,21 @@ try {
     # The old release is listed too, newest first, as GitHub lists them: with
     # one release alone Windows PowerShell's function return made it a single
     # object without a Count, and "Already current" was never said.
+    # Served over HTTP from here, as GitHub serves them: PowerShell 7's
+    # Invoke-WebRequest refuses file:// (the 1.6.0 run failed on that alone).
+    $served = Join-Path $work "served"
+    $python = @("python", "py") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+    if (-not $python) { throw "no Python to serve the files with" }
+    $port = Get-Random -Minimum 20000 -Maximum 40000
     function Release-From([string]$Dir, [string]$Tag) {
         $assets = @()
+        $folder = Join-Path $served ($Tag -replace '[^\w.]', '')
+        New-Item -ItemType Directory -Force $folder | Out-Null
         foreach ($name in "Ghost-Engine-MPV-Setup.zip", "GhostEngine-win64.zip", "SHA256SUMS") {
             $file = Join-Path $Dir $name
             if (-not (Test-Path $file)) { if ($name -ne "SHA256SUMS") { throw "$file is missing" } else { continue } }
-            $uri = ([System.Uri](Resolve-Path $file).Path).AbsoluteUri
+            Copy-Item $file $folder
+            $uri = "http://127.0.0.1:$port/$(Split-Path $folder -Leaf)/$name"
             $assets += [pscustomobject]@{ name = $name; browser_download_url = $uri; url = $uri; digest = "sha256:$(Hash $file)" }
         }
         [pscustomobject]@{
@@ -76,6 +85,15 @@ try {
     }
     $feed = Join-Path $work "feed.json"
     ConvertTo-Json @((Release-From $NewDir $feedTag), (Release-From $OldDir $OldTag)) -Depth 5 | Set-Content $feed -Encoding utf8
+    $server = Start-Process $python -ArgumentList "-m", "http.server", "$port", "--bind", "127.0.0.1", "--directory", "`"$served`"" `
+                                    -PassThru -WindowStyle Hidden
+    $up = $false
+    foreach ($i in 1..40) {
+        try { Invoke-WebRequest "http://127.0.0.1:$port/" -UseBasicParsing -TimeoutSec 2 | Out-Null; $up = $true; break }
+        catch { Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $up) { throw "the local file server did not start on port $port" }
+    Write-Host "  serving the releases' files at http://127.0.0.1:$port"
 
     # -- the old update.ps1 runs ------------------------------------------------
     $update = Join-Path $inst "update.ps1"
@@ -120,6 +138,8 @@ try {
     $again = & $Shell -NoProfile -ExecutionPolicy Bypass -File $update -Unattended -Only ghost -Feed $feed 2>&1 | Out-String
     if ($again -match 'Already current') { Pass "a second run is already current" } else { Fail "a second run did not say Already current: $again" }
 } finally {
+    if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 300
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
