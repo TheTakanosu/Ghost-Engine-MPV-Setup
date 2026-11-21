@@ -2055,6 +2055,7 @@ QWidget *MainWindow::buildTopBar()
     m_bellDot->setStyleSheet(QStringLiteral("background: #ff4d4d; border-radius: 4px;"));
     m_bellDot->move(m_bellButton->sizeHint().width() - 13, 5);
     m_bellDot->hide();
+    m_bellButton->hide();   // shown by the YouTube layout (it was on the music side too, seen in Sandbox)
     connect(m_bellButton, &QPushButton::clicked, this, &MainWindow::showNotifications);
     m_chromeButtons << m_bellButton;   // clicked, not a place to drag the window by
     row->addWidget(m_bellButton);
